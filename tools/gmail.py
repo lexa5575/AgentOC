@@ -245,38 +245,46 @@ class GmailClient:
         return history
 
     def _extract_body(self, payload: dict) -> str:
-        """Extract plain text body from Gmail message payload."""
+        """Extract plain text body from Gmail message payload.
+
+        Prefers text/plain but falls back to HTML→text conversion when
+        text/plain is missing or just a stub ("does not support HTML").
+        """
         # Simple message with body directly
         if payload.get("body", {}).get("data"):
             data = self._decode_base64(payload["body"]["data"])
             mime = payload.get("mimeType", "")
             return self._html_to_text(data) if "html" in mime else data
 
-        # Multipart message — find text/plain first
-        for part in payload.get("parts", []):
-            if part.get("mimeType") == "text/plain" and part.get("body", {}).get("data"):
-                return self._decode_base64(part["body"]["data"])
+        # Collect text/plain and text/html from all parts (including nested)
+        plain_text = None
+        html_text = None
 
-        # Nested multipart (e.g., multipart/alternative inside multipart/mixed)
-        for part in payload.get("parts", []):
-            if part.get("mimeType", "").startswith("multipart/"):
-                for sub in part.get("parts", []):
-                    if sub.get("mimeType") == "text/plain" and sub.get("body", {}).get("data"):
-                        return self._decode_base64(sub["body"]["data"])
-
-        # Fallback: try text/html and convert to plain text
-        for part in payload.get("parts", []):
-            if part.get("mimeType") == "text/html" and part.get("body", {}).get("data"):
-                return self._html_to_text(self._decode_base64(part["body"]["data"]))
-
-        # Nested multipart — try text/html
+        all_parts = list(payload.get("parts", []))
         for part in payload.get("parts", []):
             if part.get("mimeType", "").startswith("multipart/"):
-                for sub in part.get("parts", []):
-                    if sub.get("mimeType") == "text/html" and sub.get("body", {}).get("data"):
-                        return self._html_to_text(self._decode_base64(sub["body"]["data"]))
+                all_parts.extend(part.get("parts", []))
 
-        return ""
+        for part in all_parts:
+            mime = part.get("mimeType", "")
+            data = part.get("body", {}).get("data")
+            if not data:
+                continue
+            if mime == "text/plain" and plain_text is None:
+                plain_text = self._decode_base64(data)
+            elif mime == "text/html" and html_text is None:
+                html_text = self._decode_base64(data)
+
+        # Use text/plain if it has real content (not just a stub)
+        if plain_text and "does not support html" not in plain_text.lower() and len(plain_text.strip()) > 20:
+            return plain_text
+
+        # Otherwise convert HTML to plain text
+        if html_text:
+            return self._html_to_text(html_text)
+
+        # Return whatever we have
+        return plain_text or ""
 
     @staticmethod
     def _html_to_text(html: str) -> str:
