@@ -192,13 +192,14 @@ def _find_value(data: dict, *keys: str):
     return None
 
 
-def classify_and_process(email_text: str) -> str:
+def classify_and_process(email_text: str, gmail_message_id: str | None = None) -> str:
     """Classify an incoming email and generate a reply draft.
     Handles classification (LLM), client lookup, and template filling (Python).
     Returns formatted result with classification, client data, and draft reply.
 
     Args:
         email_text: The full email text including From, Subject, Body etc.
+        gmail_message_id: Optional Gmail message ID for deduplication.
 
     Returns:
         Formatted classification result with draft reply if template exists.
@@ -300,6 +301,7 @@ def classify_and_process(email_text: str) -> str:
             subject=subject,
             body=email_text,
             situation=classification.situation,
+            gmail_message_id=gmail_message_id,
         )
         if result["needs_reply"] and result.get("draft_reply"):
             save_email(

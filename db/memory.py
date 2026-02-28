@@ -8,7 +8,7 @@ All database operations go through this module.
 
 import logging
 
-from db.models import Client, EmailHistory, get_session
+from db.models import Client, EmailHistory, GmailState, get_session
 
 logger = logging.getLogger(__name__)
 
@@ -167,6 +167,7 @@ def save_email(
     subject: str,
     body: str,
     situation: str,
+    gmail_message_id: str | None = None,
 ) -> None:
     """Save an email (inbound or outbound) to the history table."""
     session = get_session()
@@ -177,6 +178,7 @@ def save_email(
             subject=subject,
             body=body,
             situation=situation,
+            gmail_message_id=gmail_message_id,
         )
         session.add(record)
         session.commit()
@@ -226,5 +228,51 @@ def get_email_history(client_email: str, max_total: int = 10) -> list[dict]:
         combined.sort(key=lambda r: r.created_at)
 
         return [r.to_dict() for r in combined]
+    finally:
+        session.close()
+
+
+# ---------------------------------------------------------------------------
+# Gmail state operations
+# ---------------------------------------------------------------------------
+
+def get_gmail_state() -> str | None:
+    """Get last processed Gmail history_id."""
+    session = get_session()
+    try:
+        state = session.query(GmailState).first()
+        return state.last_history_id if state else None
+    finally:
+        session.close()
+
+
+def set_gmail_state(history_id: str) -> None:
+    """Update last processed Gmail history_id."""
+    session = get_session()
+    try:
+        state = session.query(GmailState).first()
+        if state:
+            state.last_history_id = history_id
+        else:
+            session.add(GmailState(id=1, last_history_id=history_id))
+        session.commit()
+        logger.info("Gmail state updated: history_id=%s", history_id)
+    except Exception as e:
+        logger.error("Failed to update Gmail state: %s", e)
+        session.rollback()
+    finally:
+        session.close()
+
+
+def email_already_processed(gmail_message_id: str) -> bool:
+    """Check if an email was already processed (deduplication)."""
+    session = get_session()
+    try:
+        exists = (
+            session.query(EmailHistory)
+            .filter_by(gmail_message_id=gmail_message_id)
+            .first()
+        )
+        return exists is not None
     finally:
         session.close()

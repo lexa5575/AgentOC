@@ -52,6 +52,7 @@ class EmailHistory(Base):
     subject = Column(String, default="")
     body = Column(String, default="")
     situation = Column(String, default="other")
+    gmail_message_id = Column(String, nullable=True, unique=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     def to_dict(self) -> dict:
@@ -63,6 +64,14 @@ class EmailHistory(Base):
             "situation": self.situation,
             "created_at": self.created_at,
         }
+
+
+class GmailState(Base):
+    __tablename__ = "gmail_state"
+
+    id = Column(Integer, primary_key=True)
+    last_history_id = Column(String, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 def get_session() -> Session:
