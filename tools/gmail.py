@@ -248,9 +248,11 @@ class GmailClient:
         """Extract plain text body from Gmail message payload."""
         # Simple message with body directly
         if payload.get("body", {}).get("data"):
-            return self._decode_base64(payload["body"]["data"])
+            data = self._decode_base64(payload["body"]["data"])
+            mime = payload.get("mimeType", "")
+            return self._html_to_text(data) if "html" in mime else data
 
-        # Multipart message — find text/plain
+        # Multipart message — find text/plain first
         for part in payload.get("parts", []):
             if part.get("mimeType") == "text/plain" and part.get("body", {}).get("data"):
                 return self._decode_base64(part["body"]["data"])
@@ -262,12 +264,43 @@ class GmailClient:
                     if sub.get("mimeType") == "text/plain" and sub.get("body", {}).get("data"):
                         return self._decode_base64(sub["body"]["data"])
 
-        # Fallback: try text/html
+        # Fallback: try text/html and convert to plain text
         for part in payload.get("parts", []):
             if part.get("mimeType") == "text/html" and part.get("body", {}).get("data"):
-                return self._decode_base64(part["body"]["data"])
+                return self._html_to_text(self._decode_base64(part["body"]["data"]))
+
+        # Nested multipart — try text/html
+        for part in payload.get("parts", []):
+            if part.get("mimeType", "").startswith("multipart/"):
+                for sub in part.get("parts", []):
+                    if sub.get("mimeType") == "text/html" and sub.get("body", {}).get("data"):
+                        return self._html_to_text(self._decode_base64(sub["body"]["data"]))
 
         return ""
+
+    @staticmethod
+    def _html_to_text(html: str) -> str:
+        """Convert HTML email body to readable plain text."""
+        try:
+            from lxml.html import fromstring, tostring
+            doc = fromstring(html)
+
+            # Remove script/style elements
+            for el in doc.iter("script", "style"):
+                el.drop_tree()
+
+            text = doc.text_content()
+
+            # Clean up whitespace: collapse multiple blank lines
+            import re
+            text = re.sub(r"\n{3,}", "\n\n", text)
+            return text.strip()
+        except Exception:
+            # Last resort: strip tags with regex
+            import re
+            text = re.sub(r"<[^>]+>", " ", html)
+            text = re.sub(r"\s+", " ", text)
+            return text.strip()
 
     @staticmethod
     def _decode_base64(data: str) -> str:
