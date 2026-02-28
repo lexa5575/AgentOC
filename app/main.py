@@ -8,8 +8,9 @@ Run:
     python -m app.main
 """
 
-import asyncio
 import logging
+import threading
+import time
 from os import getenv
 from pathlib import Path
 
@@ -56,32 +57,27 @@ app = agent_os.get_app()
 GMAIL_POLL_INTERVAL = 60  # seconds
 
 
-async def _gmail_poll_loop():
-    """Background loop: poll Gmail every GMAIL_POLL_INTERVAL seconds."""
+def _gmail_poll_thread():
+    """Background thread: poll Gmail every GMAIL_POLL_INTERVAL seconds."""
     from tools.gmail_poller import poll_gmail
 
-    logger.info("Gmail poller loop started (interval=%ds)", GMAIL_POLL_INTERVAL)
+    logger.info("Gmail poller thread started (interval=%ds)", GMAIL_POLL_INTERVAL)
     while True:
         try:
-            logger.info("Gmail poll cycle starting...")
             count = poll_gmail()
-            logger.info("Gmail poll cycle done: %d messages processed", count)
+            if count:
+                logger.info("Gmail poll: %d messages processed", count)
         except Exception as e:
-            logger.error("Gmail poll loop error: %s", e, exc_info=True)
-        await asyncio.sleep(GMAIL_POLL_INTERVAL)
+            logger.error("Gmail poll thread error: %s", e, exc_info=True)
+        time.sleep(GMAIL_POLL_INTERVAL)
 
 
-async def start_gmail_poller():
-    """Start Gmail polling if configured."""
-    if getenv("GMAIL_REFRESH_TOKEN", ""):
-        asyncio.create_task(_gmail_poll_loop())
-        logger.info("Gmail poller scheduled (every %ds)", GMAIL_POLL_INTERVAL)
-    else:
-        logger.info("Gmail not configured, poller disabled")
-
-
-# Register startup handler via router (works even if AgentOS overrides lifespan)
-app.router.on_startup.append(start_gmail_poller)
+# Start Gmail poller as daemon thread (dies with main process)
+if getenv("GMAIL_REFRESH_TOKEN", ""):
+    threading.Thread(target=_gmail_poll_thread, daemon=True).start()
+    logger.info("Gmail poller thread launched (every %ds)", GMAIL_POLL_INTERVAL)
+else:
+    logger.info("Gmail not configured, poller disabled")
 
 
 @app.post("/api/gmail/poll")
