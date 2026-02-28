@@ -13,6 +13,13 @@ import logging
 from os import getenv
 from pathlib import Path
 
+# Configure logging BEFORE any other imports that use loggers
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+
 from agno.os import AgentOS
 
 from agents.admin_agent import admin_agent
@@ -53,12 +60,12 @@ async def _gmail_poll_loop():
     """Background loop: poll Gmail every GMAIL_POLL_INTERVAL seconds."""
     from tools.gmail_poller import poll_gmail
 
-    logger.info("Gmail poller started (interval=%ds)", GMAIL_POLL_INTERVAL)
+    logger.info("Gmail poller loop started (interval=%ds)", GMAIL_POLL_INTERVAL)
     while True:
         try:
+            logger.info("Gmail poll cycle starting...")
             count = poll_gmail()
-            if count:
-                logger.info("Gmail poll: %d messages processed", count)
+            logger.info("Gmail poll cycle done: %d messages processed", count)
         except Exception as e:
             logger.error("Gmail poll loop error: %s", e, exc_info=True)
         await asyncio.sleep(GMAIL_POLL_INTERVAL)
@@ -69,7 +76,7 @@ async def start_gmail_poller():
     """Start Gmail polling if configured."""
     if getenv("GMAIL_REFRESH_TOKEN", ""):
         asyncio.create_task(_gmail_poll_loop())
-        logger.info("Gmail poller scheduled")
+        logger.info("Gmail poller scheduled (every %ds)", GMAIL_POLL_INTERVAL)
     else:
         logger.info("Gmail not configured, poller disabled")
 
