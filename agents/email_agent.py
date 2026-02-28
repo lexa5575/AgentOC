@@ -17,6 +17,7 @@ Run with test data:
 import json
 import logging
 import re
+from datetime import timezone
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
@@ -268,8 +269,13 @@ def classify_and_process(email_text: str, gmail_message_id: str | None = None) -
                     for gh in gmail_history:
                         if (gh["subject"], gh["direction"]) not in local_subjects:
                             history.append(gh)
-                    # Sort chronologically and limit
-                    history.sort(key=lambda h: h["created_at"])
+                    # Sort chronologically (normalize tz for comparison) and limit
+                    def _sort_key(h):
+                        dt = h["created_at"]
+                        if dt.tzinfo is not None:
+                            return dt.timestamp()
+                        return dt.replace(tzinfo=timezone.utc).timestamp()
+                    history.sort(key=_sort_key)
                     history = history[-10:]
 
             history_text = format_email_history(history)
