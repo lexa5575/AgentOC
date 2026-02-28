@@ -7,6 +7,7 @@ anyio==4.12.1
 attrs==25.4.0
 cachetools==5.5.2
 certifi==2026.1.4
+charset-normalizer==3.4.2
 cffi==2.0.0
 click==8.3.1
 ddgs==9.10.0
