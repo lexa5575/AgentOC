@@ -1,0 +1,18 @@
+chat:
+  quick_prompts:
+    knowledge-agent:
+      - "What is Agno?"
+      - "How do I create my first agent?"
+      - "What documents are in your knowledge base?"
+    mcp-agent:
+      - "What is Agno?"
+      - "What tools do you have access to?"
+      - "What are Learning Machines?"
+    email-agent:
+      - "Process this email and generate a reply: From: noreply@shipmecarton.com, Reply-To: client1@example.com, Subject: Order 23432, Body: Payment amount $220.00, Firstname: Test Client One, Email: client1@example.com"
+      - "Process this email and generate a reply: From: client2@example.com, Subject: Where is my order?, Body: Hi, I ordered last week and still haven't received tracking. Can you help?"
+      - "Process this email and generate a reply: From: unknown.person@gmail.com, Subject: Do you have Terea Silver?, Body: Hi, do you sell Terea Silver? What is the price for 3 boxes?"
+    admin-agent:
+      - "Show all clients"
+      - "Add client mike@test.com, name Mike Johnson, prepay, zelle: pay@zelle.com"
+      - "Change payment_type to postpay for client3@example.com"

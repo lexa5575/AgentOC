@@ -1,0 +1,66 @@
+services:
+  agentos-db:
+    image: agnohq/pgvector:18
+    container_name: agentos-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-ai}
+      POSTGRES_PASSWORD: ${DB_PASS:-ai}
+      POSTGRES_DB: ${DB_DATABASE:-ai}
+    volumes:
+      - pgdata:/var/lib/postgresql
+    # Port NOT exposed — only accessible within Docker network
+    networks:
+      - agentos
+
+  agentos-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${IMAGE_NAME:-agno-agentos}:${IMAGE_TAG:-latest}
+    container_name: agentos-api
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      - RUNTIME_ENV=prd
+      - AGNO_DEBUG=False
+      - PYTHONPATH=/app
+      # Database
+      - DB_HOST=agentos-db
+      - DB_PORT=5432
+      - DB_USER=${DB_USER:-ai}
+      - DB_PASS=${DB_PASS:-ai}
+      - DB_DATABASE=${DB_DATABASE:-ai}
+      - WAIT_FOR_DB=True
+      - PRINT_ENV_ON_LOAD=False
+      # API keys
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # Telegram notifications
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+    depends_on:
+      - agentos-db
+    networks:
+      - agentos
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  agentos-ui:
+    build:
+      context: .
+      dockerfile: Dockerfile.ui
+    image: agno-agentos-ui:latest
+    container_name: agentos-ui
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    networks:
+      - agentos
+
+networks:
+  agentos:
+
+volumes:
+  pgdata:

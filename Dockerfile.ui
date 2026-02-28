@@ -1,0 +1,28 @@
+# Dockerfile for Agno Agent UI (Next.js frontend)
+
+### ---- Builder Stage ----
+FROM node:20-alpine AS builder
+WORKDIR /app
+
+RUN apk add --no-cache git \
+    && corepack enable \
+    && corepack prepare pnpm@latest --activate
+
+RUN git clone --depth 1 https://github.com/agno-agi/agent-ui.git . \
+    && rm -rf .git
+
+RUN pnpm install --frozen-lockfile \
+    && pnpm run build
+
+### ---- Production Stage ----
+FROM node:20-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+
+RUN corepack enable \
+    && corepack prepare pnpm@latest --activate
+
+COPY --from=builder /app ./
+
+EXPOSE 3000
+CMD ["pnpm", "start"]
