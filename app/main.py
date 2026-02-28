@@ -71,7 +71,6 @@ async def _gmail_poll_loop():
         await asyncio.sleep(GMAIL_POLL_INTERVAL)
 
 
-@app.on_event("startup")
 async def start_gmail_poller():
     """Start Gmail polling if configured."""
     if getenv("GMAIL_REFRESH_TOKEN", ""):
@@ -79,6 +78,10 @@ async def start_gmail_poller():
         logger.info("Gmail poller scheduled (every %ds)", GMAIL_POLL_INTERVAL)
     else:
         logger.info("Gmail not configured, poller disabled")
+
+
+# Register startup handler via router (works even if AgentOS overrides lifespan)
+app.router.on_startup.append(start_gmail_poller)
 
 
 @app.post("/api/gmail/poll")
