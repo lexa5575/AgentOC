@@ -123,6 +123,21 @@ class GmailClient:
 
         return unique
 
+    def list_unread_inbox(self, max_results: int = 10) -> list[dict]:
+        """Fetch unread inbox messages (for initial catch-up).
+
+        Returns list of dicts: [{msg_id}, ...]
+        """
+        service = self._get_service()
+        result = service.users().messages().list(
+            userId="me",
+            q="is:unread in:inbox",
+            maxResults=max_results,
+        ).execute()
+
+        messages = result.get("messages", [])
+        return [{"msg_id": m["id"]} for m in messages]
+
     def get_message(self, msg_id: str) -> dict:
         """Fetch and parse a single Gmail message.
 

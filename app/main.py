@@ -46,7 +46,7 @@ app = agent_os.get_app()
 # ---------------------------------------------------------------------------
 # Gmail Poller — background task + manual trigger endpoint
 # ---------------------------------------------------------------------------
-GMAIL_POLL_INTERVAL = 120  # seconds
+GMAIL_POLL_INTERVAL = 60  # seconds
 
 
 async def _gmail_poll_loop():

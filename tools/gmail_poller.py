@@ -98,15 +98,36 @@ def poll_gmail() -> int:
         history_id = get_gmail_state()
 
         if not history_id:
-            # First run — save current position without processing old emails
+            # First run — process existing unread emails, then save position
             current = client.get_current_history_id()
+            unread = client.list_unread_inbox(max_results=10)
+            logger.info("Gmail poller first run: %d unread messages", len(unread))
+
+            if unread:
+                send_telegram(
+                    f"\u2705 <b>Gmail poller запущен!</b>\n\n"
+                    f"Найдено {len(unread)} непрочитанных писем, обрабатываю..."
+                )
+                for msg_info in unread:
+                    msg_id = msg_info["msg_id"]
+                    if email_already_processed(msg_id):
+                        continue
+                    try:
+                        msg = client.get_message(msg_id)
+                        email_text = _format_email_text(msg)
+                        result = classify_and_process(email_text, gmail_message_id=msg_id)
+                        _send_telegram_result(msg, result)
+                        processed += 1
+                    except Exception as e:
+                        logger.error("Failed to process unread message %s: %s", msg_id, e, exc_info=True)
+            else:
+                send_telegram(
+                    "\u2705 <b>Gmail poller запущен!</b>\n\n"
+                    "Непрочитанных писем нет. Отслеживаю новые."
+                )
+
             set_gmail_state(current)
-            logger.info("Gmail poller initialized: history_id=%s", current)
-            send_telegram(
-                "\u2705 <b>Gmail poller запущен!</b>\n\n"
-                "Начинаю отслеживать новые письма."
-            )
-            return 0
+            return processed
 
         # Fetch new messages since last check
         new_messages = client.get_new_messages(after_history_id=history_id)
