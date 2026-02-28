@@ -13,6 +13,7 @@ Usage:
 """
 
 import logging
+import threading
 from datetime import datetime, timezone
 from os import getenv
 
@@ -28,6 +29,7 @@ from utils.telegram import send_telegram
 logger = logging.getLogger(__name__)
 
 _gmail_client: GmailClient | None = None
+_poll_lock = threading.Lock()
 
 
 def _get_client() -> GmailClient:
@@ -84,12 +86,26 @@ def poll_gmail() -> int:
     """Poll Gmail for new messages, process each, send to Telegram.
 
     Returns number of processed messages.
+    Thread-safe: only one poll can run at a time.
     """
     # Check if Gmail is configured
     if not getenv("GMAIL_REFRESH_TOKEN", ""):
         logger.debug("Gmail not configured, skipping poll")
         return 0
 
+    # Prevent concurrent runs (background loop + manual trigger)
+    if not _poll_lock.acquire(blocking=False):
+        logger.info("Gmail poll already running, skipping")
+        return 0
+
+    try:
+        return _poll_gmail_locked()
+    finally:
+        _poll_lock.release()
+
+
+def _poll_gmail_locked() -> int:
+    """Internal poll logic (must be called under _poll_lock)."""
     client = _get_client()
     processed = 0
 
@@ -98,15 +114,17 @@ def poll_gmail() -> int:
         history_id = get_gmail_state()
 
         if not history_id:
-            # First run — process existing unread emails, then save position
+            # First run — save position FIRST, then process existing unreads
             current = client.get_current_history_id()
-            unread = client.list_unread_inbox(max_results=10)
-            logger.info("Gmail poller first run: %d unread messages", len(unread))
+            set_gmail_state(current)  # Save immediately to prevent re-processing on restart
+
+            unread = client.list_unread_inbox(max_results=5)
+            logger.info("Gmail poller first run: %d unread primary messages", len(unread))
 
             if unread:
                 send_telegram(
                     f"\u2705 <b>Gmail poller запущен!</b>\n\n"
-                    f"Найдено {len(unread)} непрочитанных писем, обрабатываю..."
+                    f"Найдено {len(unread)} непрочитанных писем (Primary), обрабатываю..."
                 )
                 for msg_info in unread:
                     msg_id = msg_info["msg_id"]
@@ -126,7 +144,6 @@ def poll_gmail() -> int:
                     "Непрочитанных писем нет. Отслеживаю новые."
                 )
 
-            set_gmail_state(current)
             return processed
 
         # Fetch new messages since last check

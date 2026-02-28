@@ -24,6 +24,16 @@ logger = logging.getLogger(__name__)
 
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 
+# Gmail category labels to skip (only process PRIMARY inbox)
+_SKIP_LABELS = {
+    "CATEGORY_PROMOTIONS",
+    "CATEGORY_SOCIAL",
+    "CATEGORY_UPDATES",
+    "CATEGORY_FORUMS",
+    "SPAM",
+    "TRASH",
+}
+
 
 class GmailClient:
     """Gmail API client using refresh_token from env."""
@@ -101,9 +111,9 @@ class GmailClient:
             for record in result.get("history", []):
                 for msg_added in record.get("messagesAdded", []):
                     msg = msg_added["message"]
-                    labels = msg.get("labelIds", [])
-                    # Only inbox messages (skip sent, drafts, spam, trash)
-                    if "INBOX" in labels and "SENT" not in labels:
+                    labels = set(msg.get("labelIds", []))
+                    # Only primary inbox (skip sent, promotions, social, etc.)
+                    if "INBOX" in labels and "SENT" not in labels and not labels & _SKIP_LABELS:
                         messages.append({
                             "msg_id": msg["id"],
                             "history_id": history_id,
@@ -124,14 +134,15 @@ class GmailClient:
         return unique
 
     def list_unread_inbox(self, max_results: int = 10) -> list[dict]:
-        """Fetch unread inbox messages (for initial catch-up).
+        """Fetch unread PRIMARY inbox messages (for initial catch-up).
 
+        Skips Promotions, Social, Updates, Forums categories.
         Returns list of dicts: [{msg_id}, ...]
         """
         service = self._get_service()
         result = service.users().messages().list(
             userId="me",
-            q="is:unread in:inbox",
+            q="is:unread in:inbox category:primary",
             maxResults=max_results,
         ).execute()
 
