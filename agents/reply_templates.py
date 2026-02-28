@@ -55,6 +55,20 @@ REPLY_TEMPLATES = {
         "Your order will be delivered in 2-4 days max.\n"
         "Thank you!"
     ),
+    ("payment_received", "prepay"): (
+        "Hello {CUSTOMER_NAME}\n"
+        "How are you?\n"
+        "Thank you very much for a prompt payment!\n"
+        "Nice doing business with you!!!\n"
+        "\n"
+        "We will ship your order today!\n"
+        "Here is the USPS tracking number:\n"
+        "{TRACKING_URL}\n"
+        "\n"
+        "{CUSTOMER_NAME}\n"
+        "{CUSTOMER_STREET}\n"
+        "{CUSTOMER_CITY_STATE_ZIP}"
+    ),
     ("new_order", "postpay"): (
         "Hello!\n"
         "Thank you very much for placing an order\n"
@@ -137,7 +151,7 @@ def process_classified_email(classification: EmailClassification) -> dict:
         result["client_data"] = client
     else:
         result["client_data"] = {"payment_type": "unknown", "name": "unknown"}
-        result["needs_ai_fallback"] = True
+        result["draft_reply"] = "(Клиент не в базе — авто-ответ не генерируется)"
         return result
 
     # Try to find a template

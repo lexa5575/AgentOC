@@ -240,12 +240,23 @@ def classify_and_process(email_text: str, gmail_message_id: str | None = None) -
         # Telegram: notify if new client (not in database)
         if not result["client_found"] and result["needs_reply"]:
             logger.warning("New client not in database: %s", classification.client_email)
+
+            details = []
+            if classification.order_id:
+                details.append(f"<b>Заказ:</b> #{classification.order_id}")
+            if classification.price:
+                details.append(f"<b>Сумма:</b> {classification.price}")
+            if classification.items:
+                details.append(f"<b>Товар:</b> {classification.items}")
+            details_text = "\n".join(details)
+
             send_telegram(
                 f"\u26a0\ufe0f <b>Новый клиент написал письмо!</b>\n\n"
-                f"От: {classification.client_email}\n"
-                f"Имя: {classification.client_name or 'не указано'}\n"
-                f"Ситуация: {classification.situation}\n\n"
-                f"Проверь и добавь в базу через Admin Agent."
+                f"<b>От:</b> {classification.client_email}\n"
+                f"<b>Имя:</b> {classification.client_name or 'не указано'}\n"
+                f"<b>Ситуация:</b> {classification.situation}\n"
+                + (f"\n{details_text}\n" if details_text else "") +
+                f"\nДобавь клиента в базу через Admin Agent."
             )
 
         # Step 3: If no template, ask fallback agent (with conversation history)
