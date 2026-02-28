@@ -28,7 +28,7 @@ from agents.reply_templates import (
     process_classified_email,
 )
 from db import get_postgres_db
-from db.memory import get_email_history, save_email
+from db.memory import get_email_history, get_gmail_thread_history, save_email
 from tools.web_search import get_search_tools
 from utils.telegram import send_telegram
 
@@ -258,8 +258,20 @@ def classify_and_process(email_text: str, gmail_message_id: str | None = None) -
             else:
                 client_info = "NEW CLIENT — not in our database"
 
-            # Fetch conversation history for this client
+            # Fetch conversation history: local DB first, then Gmail if sparse
             history = get_email_history(result["client_email"])
+            if len(history) < 3:
+                gmail_history = get_gmail_thread_history(result["client_email"], max_results=10)
+                if gmail_history:
+                    # Merge: add Gmail messages not already in local DB
+                    local_subjects = {(h["subject"], h["direction"]) for h in history}
+                    for gh in gmail_history:
+                        if (gh["subject"], gh["direction"]) not in local_subjects:
+                            history.append(gh)
+                    # Sort chronologically and limit
+                    history.sort(key=lambda h: h["created_at"])
+                    history = history[-10:]
+
             history_text = format_email_history(history)
             logger.info(
                 "AI fallback for situation=%s, history=%d messages",

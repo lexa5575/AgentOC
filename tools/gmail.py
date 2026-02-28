@@ -13,6 +13,7 @@ Usage:
 
 import base64
 import logging
+from datetime import datetime, timezone
 from email.utils import parseaddr
 from os import getenv
 
@@ -178,6 +179,70 @@ class GmailClient:
             "body": body,
             "gmail_message_id": msg_id,
         }
+
+    def search_thread_history(self, client_email: str, max_results: int = 10) -> list[dict]:
+        """Search Gmail for recent conversation with a client.
+
+        Returns list of dicts sorted oldest-first:
+        [{client_email, direction, subject, body, created_at}, ...]
+
+        Format matches get_email_history() output so format_email_history() works.
+        """
+        from email.utils import parsedate_to_datetime
+
+        service = self._get_service()
+
+        try:
+            result = service.users().messages().list(
+                userId="me",
+                q=f"from:{client_email} OR to:{client_email}",
+                maxResults=max_results,
+            ).execute()
+        except Exception as e:
+            logger.error("Gmail search failed for %s: %s", client_email, e)
+            return []
+
+        msg_ids = [m["id"] for m in result.get("messages", [])]
+        if not msg_ids:
+            return []
+
+        history = []
+        for msg_id in msg_ids:
+            try:
+                # Single API call per message (format=full includes headers + body)
+                raw = service.users().messages().get(
+                    userId="me", id=msg_id, format="full",
+                ).execute()
+
+                headers = {h["name"].lower(): h["value"] for h in raw["payload"]["headers"]}
+
+                # Parse sender
+                from_raw = headers.get("from", "")
+                _, from_email = parseaddr(from_raw)
+                direction = "inbound" if from_email.lower() == client_email.lower().strip() else "outbound"
+
+                # Parse date
+                created_at = datetime.now(timezone.utc)
+                if headers.get("date"):
+                    try:
+                        created_at = parsedate_to_datetime(headers["date"])
+                    except Exception:
+                        pass
+
+                history.append({
+                    "client_email": client_email,
+                    "direction": direction,
+                    "subject": headers.get("subject", ""),
+                    "body": self._extract_body(raw["payload"]),
+                    "situation": "unknown",
+                    "created_at": created_at,
+                })
+            except Exception as e:
+                logger.error("Failed to fetch message %s: %s", msg_id, e)
+
+        # Sort oldest first (Gmail returns newest first)
+        history.sort(key=lambda m: m["created_at"])
+        return history
 
     def _extract_body(self, payload: dict) -> str:
         """Extract plain text body from Gmail message payload."""

@@ -276,3 +276,30 @@ def email_already_processed(gmail_message_id: str) -> bool:
         return exists is not None
     finally:
         session.close()
+
+
+# ---------------------------------------------------------------------------
+# Gmail thread history (search Gmail for prior conversation)
+# ---------------------------------------------------------------------------
+
+def get_gmail_thread_history(client_email: str, max_results: int = 10) -> list[dict]:
+    """Fetch conversation history from Gmail API for a client.
+
+    Used when local DB has little or no history (e.g., new automation
+    but client has years of prior emails in Gmail).
+
+    Returns list in same format as get_email_history().
+    """
+    from tools.gmail import GmailClient
+
+    try:
+        gmail = GmailClient()
+        history = gmail.search_thread_history(client_email, max_results=max_results)
+        logger.info(
+            "Gmail thread history for %s: %d messages found",
+            client_email, len(history),
+        )
+        return history
+    except Exception as e:
+        logger.error("Failed to fetch Gmail thread history for %s: %s", client_email, e)
+        return []
