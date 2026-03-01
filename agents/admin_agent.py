@@ -9,6 +9,8 @@ Run with test data:
     python -m agents.admin_agent
 """
 
+from datetime import timezone
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
 
@@ -245,7 +247,12 @@ def email_history(client_email: str) -> str:
             for gh in gmail_history:
                 if (gh["subject"], gh["direction"]) not in local_subjects:
                     history.append(gh)
-            history.sort(key=lambda h: h["created_at"])
+            def _sort_key(h):
+                dt = h["created_at"]
+                if dt.tzinfo is not None:
+                    return dt.timestamp()
+                return dt.replace(tzinfo=timezone.utc).timestamp()
+            history.sort(key=_sort_key)
             history = history[-30:]
 
     if not history:
