@@ -55,6 +55,7 @@ app = agent_os.get_app()
 # Gmail Poller — background task + manual trigger endpoint
 # ---------------------------------------------------------------------------
 GMAIL_POLL_INTERVAL = 60  # seconds
+STOCK_SYNC_INTERVAL = int(getenv("STOCK_SYNC_INTERVAL", "300"))  # seconds (5 min default)
 
 
 def _gmail_poll_thread():
@@ -87,6 +88,48 @@ async def trigger_gmail_poll():
 
     count = poll_gmail()
     return {"processed": count}
+
+
+# ---------------------------------------------------------------------------
+# Stock Sync — background task + manual trigger endpoint
+# ---------------------------------------------------------------------------
+
+def _stock_sync_thread():
+    """Background thread: sync stock every STOCK_SYNC_INTERVAL seconds."""
+    from tools.stock_sync import sync_stock_from_sheets
+
+    # Wait a bit on startup to let the app initialize
+    time.sleep(10)
+    logger.info("Stock sync thread started (interval=%ds)", STOCK_SYNC_INTERVAL)
+
+    while True:
+        try:
+            result = sync_stock_from_sheets()
+            if result.get("status") == "ok":
+                logger.info(
+                    "Stock sync: %d items (%d available)",
+                    result.get("synced", 0), result.get("available", 0),
+                )
+        except Exception as e:
+            logger.error("Stock sync thread error: %s", e, exc_info=True)
+        time.sleep(STOCK_SYNC_INTERVAL)
+
+
+# Start stock sync as daemon thread (dies with main process)
+if getenv("STOCK_SPREADSHEET_ID", ""):
+    threading.Thread(target=_stock_sync_thread, daemon=True).start()
+    logger.info("Stock sync thread launched (every %ds)", STOCK_SYNC_INTERVAL)
+else:
+    logger.info("Stock sync not configured, disabled")
+
+
+@app.post("/api/stock/sync")
+async def trigger_stock_sync():
+    """Manual trigger for stock synchronization."""
+    from tools.stock_sync import sync_stock_from_sheets
+
+    result = sync_stock_from_sheets()
+    return result
 
 
 if __name__ == "__main__":

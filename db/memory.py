@@ -8,7 +8,7 @@ All database operations go through this module.
 
 import logging
 
-from db.models import Client, EmailHistory, GmailState, get_session
+from db.models import Client, EmailHistory, GmailState, StockBackup, StockItem, get_session
 
 logger = logging.getLogger(__name__)
 
@@ -281,6 +281,144 @@ def email_already_processed(gmail_message_id: str) -> bool:
 # ---------------------------------------------------------------------------
 # Gmail thread history (search Gmail for prior conversation)
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Stock operations
+# ---------------------------------------------------------------------------
+
+def sync_stock(warehouse: str, items: list[dict]) -> int:
+    """Sync stock data: backup current → upsert new items.
+
+    Each item dict: {category, product_name, quantity, is_fallback, source_row, source_col}.
+    Returns number of upserted records.
+    """
+    from datetime import datetime
+
+    session = get_session()
+    try:
+        # Backup current data before overwrite
+        existing = session.query(StockItem).filter_by(warehouse=warehouse).all()
+        if existing:
+            session.query(StockBackup).filter_by(warehouse=warehouse).delete()
+            for item in existing:
+                session.add(StockBackup(
+                    warehouse=item.warehouse,
+                    category=item.category,
+                    product_name=item.product_name,
+                    quantity=item.quantity,
+                    is_fallback=item.is_fallback,
+                    source_row=item.source_row,
+                    source_col=item.source_col,
+                    synced_at=item.synced_at,
+                ))
+
+        # Upsert items
+        now = datetime.utcnow()
+        count = 0
+        for item in items:
+            record = (
+                session.query(StockItem)
+                .filter_by(
+                    warehouse=warehouse,
+                    category=item["category"],
+                    product_name=item["product_name"],
+                )
+                .first()
+            )
+            if record:
+                record.quantity = item["quantity"]
+                record.is_fallback = item.get("is_fallback", False)
+                record.source_row = item.get("source_row")
+                record.source_col = item.get("source_col")
+                record.synced_at = now
+            else:
+                session.add(StockItem(
+                    warehouse=warehouse,
+                    category=item["category"],
+                    product_name=item["product_name"],
+                    quantity=item["quantity"],
+                    is_fallback=item.get("is_fallback", False),
+                    source_row=item.get("source_row"),
+                    source_col=item.get("source_col"),
+                    synced_at=now,
+                ))
+            count += 1
+
+        session.commit()
+        logger.info("Stock sync for %s: %d items upserted", warehouse, count)
+        return count
+    except Exception as e:
+        logger.error("Stock sync failed for %s: %s", warehouse, e)
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+def get_stock(product_name: str, warehouse: str | None = None) -> list[dict]:
+    """Find stock by exact product name (case-insensitive)."""
+    session = get_session()
+    try:
+        query = session.query(StockItem).filter(
+            StockItem.product_name.ilike(product_name.strip())
+        )
+        if warehouse:
+            query = query.filter_by(warehouse=warehouse)
+        return [item.to_dict() for item in query.all()]
+    finally:
+        session.close()
+
+
+def search_stock(query: str, warehouse: str | None = None) -> list[dict]:
+    """Search stock by substring match (ILIKE %query%)."""
+    session = get_session()
+    try:
+        q = session.query(StockItem).filter(
+            StockItem.product_name.ilike(f"%{query.strip()}%")
+        )
+        if warehouse:
+            q = q.filter_by(warehouse=warehouse)
+        return [item.to_dict() for item in q.all()]
+    finally:
+        session.close()
+
+
+def get_available_by_category(category: str, warehouse: str | None = None) -> list[dict]:
+    """Get all items with quantity > 0 in a category."""
+    session = get_session()
+    try:
+        q = session.query(StockItem).filter(
+            StockItem.category == category,
+            StockItem.quantity > 0,
+        )
+        if warehouse:
+            q = q.filter_by(warehouse=warehouse)
+        return [item.to_dict() for item in q.order_by(StockItem.product_name).all()]
+    finally:
+        session.close()
+
+
+def get_stock_summary(warehouse: str | None = None) -> dict:
+    """Get stock statistics: total items, available, fallback count, last sync time."""
+    session = get_session()
+    try:
+        q = session.query(StockItem)
+        if warehouse:
+            q = q.filter_by(warehouse=warehouse)
+        items = q.all()
+
+        if not items:
+            return {"total": 0, "available": 0, "fallback": 0, "synced_at": None}
+
+        return {
+            "total": len(items),
+            "available": sum(1 for i in items if i.quantity > 0),
+            "fallback": sum(1 for i in items if i.is_fallback),
+            "synced_at": max(i.synced_at for i in items if i.synced_at),
+        }
+    finally:
+        session.close()
+
 
 def get_gmail_thread_history(client_email: str, max_results: int = 10) -> list[dict]:
     """Fetch conversation history from Gmail API for a client.

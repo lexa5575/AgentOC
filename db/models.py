@@ -7,7 +7,7 @@ SQLAlchemy models for business data (clients, etc.).
 
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, Integer, String, create_engine
+from sqlalchemy import Boolean, Column, DateTime, Integer, String, UniqueConstraint, create_engine
 from sqlalchemy.orm import DeclarativeBase, Session
 
 from db.url import db_url
@@ -72,6 +72,53 @@ class GmailState(Base):
     id = Column(Integer, primary_key=True)
     last_history_id = Column(String, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class StockItem(Base):
+    """Current stock levels per product per warehouse."""
+
+    __tablename__ = "stock_items"
+    __table_args__ = (
+        UniqueConstraint("warehouse", "category", "product_name", name="uq_stock_item"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    warehouse = Column(String, nullable=False, index=True)
+    category = Column(String, nullable=False)
+    product_name = Column(String, nullable=False)
+    quantity = Column(Integer, nullable=False, default=0)
+    is_fallback = Column(Boolean, default=False)
+    source_row = Column(Integer, nullable=True)
+    source_col = Column(Integer, nullable=True)
+    synced_at = Column(DateTime, default=datetime.utcnow)
+
+    def to_dict(self) -> dict:
+        return {
+            "warehouse": self.warehouse,
+            "category": self.category,
+            "product_name": self.product_name,
+            "quantity": self.quantity,
+            "is_fallback": self.is_fallback,
+            "source_row": self.source_row,
+            "source_col": self.source_col,
+            "synced_at": self.synced_at,
+        }
+
+
+class StockBackup(Base):
+    """Previous valid stock snapshot (one backup for rollback)."""
+
+    __tablename__ = "stock_backup"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    warehouse = Column(String, nullable=False)
+    category = Column(String, nullable=False)
+    product_name = Column(String, nullable=False)
+    quantity = Column(Integer, nullable=False, default=0)
+    is_fallback = Column(Boolean, default=False)
+    source_row = Column(Integer, nullable=True)
+    source_col = Column(Integer, nullable=True)
+    synced_at = Column(DateTime, nullable=True)
 
 
 def get_session() -> Session:

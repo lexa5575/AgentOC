@@ -1,0 +1,128 @@
+"""
+Google Sheets Client
+--------------------
+
+Read-only access to Google Sheets via service account.
+Used for stock level synchronization.
+
+Usage:
+    from tools.google_sheets import SheetsClient
+    client = SheetsClient()
+    values = client.read_sheet_values(spreadsheet_id, "LA MAKS FEB")
+"""
+
+import json
+import logging
+import re
+from os import getenv
+
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+
+logger = logging.getLogger(__name__)
+
+SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+
+
+class SheetsClient:
+    """Google Sheets API client using service account from env."""
+
+    def __init__(self):
+        self._service = None
+
+    def _get_service(self):
+        """Lazy-init Sheets API service."""
+        if self._service:
+            return self._service
+
+        creds_raw = getenv("GOOGLE_SHEETS_CREDENTIALS", "")
+        if not creds_raw:
+            raise RuntimeError(
+                "Google Sheets not configured. Set GOOGLE_SHEETS_CREDENTIALS in .env"
+            )
+
+        # Support both JSON string and file path
+        if creds_raw.strip().startswith("{"):
+            creds_info = json.loads(creds_raw)
+        else:
+            with open(creds_raw) as f:
+                creds_info = json.load(f)
+
+        creds = service_account.Credentials.from_service_account_info(
+            creds_info, scopes=SCOPES,
+        )
+
+        self._service = build("sheets", "v4", credentials=creds)
+        logger.info("Google Sheets API service initialized")
+        return self._service
+
+    def get_sheet_names(self, spreadsheet_id: str) -> list[str]:
+        """Get all sheet/tab names in a spreadsheet."""
+        service = self._get_service()
+        meta = service.spreadsheets().get(
+            spreadsheetId=spreadsheet_id,
+            fields="sheets.properties.title",
+        ).execute()
+
+        names = [s["properties"]["title"] for s in meta.get("sheets", [])]
+        logger.info("Spreadsheet %s has tabs: %s", spreadsheet_id, names)
+        return names
+
+    def find_active_sheet(self, spreadsheet_id: str) -> str:
+        """Find the active (current) sheet name.
+
+        Priority:
+        1. Explicit STOCK_SHEET_NAME env var
+        2. Regex: tab matching warehouse pattern without "N/A"
+        3. Fallback: first tab without "N/A" prefix
+        """
+        explicit = getenv("STOCK_SHEET_NAME", "").strip()
+        if explicit:
+            logger.info("Using explicit sheet name: %s", explicit)
+            return explicit
+
+        names = self.get_sheet_names(spreadsheet_id)
+        warehouse_name = getenv("STOCK_WAREHOUSE_NAME", "LA MAKS").replace("_", " ")
+
+        # Priority 2: match warehouse pattern (e.g., "LA MAKS FEB") without "N/A"
+        pattern = re.compile(
+            rf"^(?!N/A).*{re.escape(warehouse_name)}",
+            re.IGNORECASE,
+        )
+        for name in names:
+            if pattern.match(name.strip()):
+                logger.info("Found active sheet by pattern: %s", name)
+                return name
+
+        # Priority 3: first tab without "N/A"
+        for name in names:
+            if not name.strip().upper().startswith("N/A"):
+                logger.info("Fallback: using first non-N/A sheet: %s", name)
+                return name
+
+        raise RuntimeError(
+            f"No active sheet found in spreadsheet {spreadsheet_id}. "
+            f"All tabs: {names}"
+        )
+
+    def read_sheet_values(
+        self, spreadsheet_id: str, sheet_name: str,
+    ) -> list[list[str]]:
+        """Read all values from a sheet as a 2D string matrix.
+
+        Returns list of rows, each row is a list of cell values (strings).
+        Empty trailing cells are omitted by the API, so rows may vary in length.
+        """
+        service = self._get_service()
+        result = service.spreadsheets().values().get(
+            spreadsheetId=spreadsheet_id,
+            range=sheet_name,
+            valueRenderOption="UNFORMATTED_VALUE",
+        ).execute()
+
+        values = result.get("values", [])
+        logger.info(
+            "Read %d rows from '%s' in spreadsheet %s",
+            len(values), sheet_name, spreadsheet_id,
+        )
+        return values
