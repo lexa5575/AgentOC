@@ -24,6 +24,8 @@ from agno.models.openai import OpenAIResponses
 
 from agents.reply_templates import (
     EmailClassification,
+    OrderItem,
+    OUT_OF_STOCK_GUIDE,
     format_email_history,
     format_result,
     process_classified_email,
@@ -73,6 +75,18 @@ false: marketing, spam, simple "Thank you!" / "Got it" / "Perfect"
 - "shipping_timeline" — asks WHEN order will be shipped
 - "other" — anything else
 
+## Rules for order_items (ONLY when situation is "new_order")
+
+When the email contains a product table or product list, extract each item:
+- product_name: full name as shown (e.g. "Tera Green made in Middle East")
+- base_flavor: ONLY the flavor/color word. Strip brand prefixes ("Tera", "Terea", "Heets")
+  and region suffixes ("made in Middle East", "EU", "Japan", "KZ").
+  Examples: "Tera Green made in Middle East" → "Green", "Tera Turquoise EU" → "Turquoise",
+  "Tera Silver" → "Silver", "ONE Green" → "ONE Green", "PRIME Black" → "PRIME Black"
+- quantity: number of units from "Qnt" column or "x 2" notation. Default 1.
+
+If no product details found in the email, set order_items to null.
+
 ## Output format
 
 Return ONLY this exact JSON structure (no markdown, no code fences, no explanation):
@@ -86,7 +100,10 @@ Return ONLY this exact JSON structure (no markdown, no code fences, no explanati
   "price": "$220.00",
   "customer_street": "123 Main St",
   "customer_city_state_zip": "Chicago, Illinois 60601",
-  "items": null
+  "items": "Tera Green made in Middle East x 2",
+  "order_items": [
+    {"product_name": "Tera Green made in Middle East", "base_flavor": "Green", "quantity": 2}
+  ]
 }
 
 Field rules:
@@ -95,9 +112,10 @@ Field rules:
 - price: include $ sign, e.g. "$220.00", or null
 - customer_street: street address only, or null
 - customer_city_state_zip: "City, State Zip" on one line, or null
-- items: what was ordered, or null
+- items: what was ordered as free text, or null
+- order_items: structured list of items (only for new_order), or null
 
-CRITICAL: Return a FLAT JSON object with exactly these field names. No nesting. No extra fields.
+CRITICAL: Return a FLAT JSON object with exactly these field names. No extra nesting beyond order_items array.
 """
 
 classifier_agent = Agent(
@@ -140,8 +158,19 @@ WHAT YOU CANNOT DO:
 - Invent prices, tracking numbers, delivery dates, or stock levels
 - Offer discounts or change payment terms
 - Tell customer to check the website — WE always check for them
+  EXCEPTION: For OUT OF STOCK situations, you MUST include the website link
+  https://shipmecarton.com as option 2 (this is part of the out-of-stock template)
 - Reveal you are AI
 - Write multiple reply variants — only ONE reply
+
+OUT-OF-STOCK REPLIES:
+- When given a TEMPLATE GUIDE, follow its structure CLOSELY
+- Replace placeholders with actual data from INSUFFICIENT ITEMS and AVAILABLE ALTERNATIVES
+- For alternative suggestions: prefer same flavor from a different origin
+  (e.g., Turquoise EU → Turquoise from Armenia/Middle East)
+- If no direct alternative exists, suggest a popular available flavor from the same category
+- Always keep option 2 (website link) exactly as provided in the template
+- Do NOT invent stock levels — only use what is provided in AVAILABLE ALTERNATIVES
 
 READING HISTORY — PRIORITIZE:
 - [WE SENT] messages are your style reference — replicate their tone and wording
@@ -217,6 +246,26 @@ def classify_and_process(email_text: str, gmail_message_id: str | None = None) -
         data = json.loads(json_str)
 
         # Robust field extraction: try expected names + common LLM variations + nested
+        # Parse order_items (structured list) before building classification
+        raw_order_items = _find_value(data, "order_items", "structured_items")
+        order_items_parsed = None
+        if raw_order_items and isinstance(raw_order_items, list):
+            try:
+                order_items_parsed = [
+                    OrderItem(
+                        product_name=item.get("product_name", ""),
+                        base_flavor=item.get("base_flavor", ""),
+                        quantity=item.get("quantity", 1),
+                    )
+                    for item in raw_order_items
+                    if item.get("base_flavor")
+                ]
+                if not order_items_parsed:
+                    order_items_parsed = None
+            except Exception as e:
+                logger.warning("Failed to parse order_items: %s", e)
+                order_items_parsed = None
+
         classification = EmailClassification(
             needs_reply=_find_value(data, "needs_reply") if _find_value(data, "needs_reply") is not None else True,
             situation=_find_value(data, "situation", "classification", "category") or "other",
@@ -226,7 +275,8 @@ def classify_and_process(email_text: str, gmail_message_id: str | None = None) -
             price=_find_value(data, "price", "payment_amount", "total", "amount"),
             customer_street=_find_value(data, "customer_street", "street", "street_address", "address"),
             customer_city_state_zip=_find_value(data, "customer_city_state_zip", "city_state_zip"),
-            items=_find_value(data, "items", "products", "order_items"),
+            items=_find_value(data, "items", "products"),
+            order_items=order_items_parsed,
         )
 
         logger.info(
@@ -257,6 +307,18 @@ def classify_and_process(email_text: str, gmail_message_id: str | None = None) -
                 f"<b>Ситуация:</b> {classification.situation}\n"
                 + (f"\n{details_text}\n" if details_text else "") +
                 f"\nДобавь клиента в базу через Admin Agent."
+            )
+
+        # Telegram: notify if stock issue detected
+        if result.get("stock_issue"):
+            insufficient = result["stock_issue"]["stock_check"]["insufficient_items"]
+            flavor_list = ", ".join(i["base_flavor"] for i in insufficient)
+            send_telegram(
+                f"\u26a0\ufe0f <b>Нет на складе!</b>\n\n"
+                f"<b>Клиент:</b> {classification.client_email}\n"
+                f"<b>Заказ:</b> #{classification.order_id or 'N/A'}\n"
+                f"<b>Нет в наличии:</b> {flavor_list}\n\n"
+                f"AI генерирует ответ с альтернативами."
             )
 
         # Step 3: If no template, ask fallback agent (with conversation history)
@@ -296,17 +358,74 @@ def classify_and_process(email_text: str, gmail_message_id: str | None = None) -
                 result["situation"], len(history),
             )
 
-            fallback_prompt = (
-                f"Situation: {result['situation']}\n"
-                f"Client: {client_info}\n"
-                f"Client name: {result['client_name'] or 'unknown'}\n\n"
-            )
-            if history_text:
-                fallback_prompt += f"{history_text}\n\n"
-            fallback_prompt += (
-                f"Original email:\n{email_text}\n\n"
-                f"Write a reply:"
-            )
+            # Build fallback prompt: enriched for out-of-stock, generic otherwise
+            if result.get("stock_issue"):
+                stock_data = result["stock_issue"]
+                stock_check = stock_data["stock_check"]
+                alternatives = stock_data["alternatives"]
+
+                # Human-readable stock context
+                insufficient_lines = []
+                for item in stock_check["insufficient_items"]:
+                    insufficient_lines.append(
+                        f"- {item['product_name']} (flavor: {item['base_flavor']}): "
+                        f"ordered {item['ordered_qty']}, available {item['total_available']}"
+                    )
+                insufficient_text = "\n".join(insufficient_lines)
+
+                alt_lines = []
+                for flavor, alts in alternatives.items():
+                    if alts:
+                        available_names = [
+                            f"{a['category']} / {a['product_name']} (qty: {a['quantity']})"
+                            for a in alts
+                        ]
+                        alt_lines.append(
+                            f"Alternatives for {flavor}: {', '.join(available_names)}"
+                        )
+                    else:
+                        alt_lines.append(
+                            f"Alternatives for {flavor}: none found in stock"
+                        )
+                alternatives_text = "\n".join(alt_lines)
+
+                fallback_prompt = (
+                    f"Situation: OUT OF STOCK (new order with insufficient stock)\n"
+                    f"Client: {client_info}\n"
+                    f"Client name: {result['client_name'] or 'unknown'}\n\n"
+                    f"INSUFFICIENT ITEMS:\n{insufficient_text}\n\n"
+                    f"AVAILABLE ALTERNATIVES (only items with qty > 0):\n"
+                    f"{alternatives_text}\n\n"
+                )
+                if history_text:
+                    fallback_prompt += f"{history_text}\n\n"
+                fallback_prompt += (
+                    f"Original email:\n{email_text}\n\n"
+                    f"TEMPLATE GUIDE (follow this structure closely):\n"
+                    f"{OUT_OF_STOCK_GUIDE}\n\n"
+                    f"INSTRUCTIONS:\n"
+                    f"- Follow the template guide structure above\n"
+                    f"- Replace {{FLAVOR_LIST}} with the actual out-of-stock flavor names\n"
+                    f"- For option 1, suggest a concrete alternative from AVAILABLE ALTERNATIVES\n"
+                    f"  (prefer same flavor from a different region)\n"
+                    f"- If multiple items are out of stock, list all and suggest alternatives\n"
+                    f"- Keep the website link https://shipmecarton.com and option 2 exactly as shown\n"
+                    f"- End with 'Please let us know what you think'\n"
+                    f"Write the reply:"
+                )
+            else:
+                fallback_prompt = (
+                    f"Situation: {result['situation']}\n"
+                    f"Client: {client_info}\n"
+                    f"Client name: {result['client_name'] or 'unknown'}\n\n"
+                )
+                if history_text:
+                    fallback_prompt += f"{history_text}\n\n"
+                fallback_prompt += (
+                    f"Original email:\n{email_text}\n\n"
+                    f"Write a reply:"
+                )
+
             fallback_response = fallback_agent.run(fallback_prompt)
             result["draft_reply"] = fallback_response.content
             result["needs_ai_fallback"] = False
@@ -415,6 +534,23 @@ if __name__ == "__main__":
             "State: Illinois\n"
             "Postcode/Zip: 60601\n"
             "Email: client2@example.com",
+        ),
+        (
+            "OUT OF STOCK — Turquoise (AI fallback with alternatives)",
+            "Process this email:\n\n"
+            "From: noreply@shipmecarton.com\n"
+            "Reply-To: client1@example.com\n"
+            "Subject: Shipmecarton - Order 23700\n\n"
+            "# Image Name Price Qnt Amount\n"
+            "1 Tera Turquoise EU $95.00 3 $285.00\n\n"
+            "Payment amount: $285.00\n"
+            "Order ID: 23700\n"
+            "Firstname: Test Client One\n"
+            "Street address1: 123 Main St\n"
+            "Town/City: Springfield\n"
+            "State: Illinois\n"
+            "Postcode/Zip: 62701\n"
+            "Email: client1@example.com",
         ),
         (
             "TRACKING question (AI fallback)",

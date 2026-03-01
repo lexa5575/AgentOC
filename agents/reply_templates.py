@@ -11,14 +11,28 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from db.memory import decrement_discount, get_client
+from db.memory import (
+    check_stock_for_order,
+    decrement_discount,
+    get_alternatives_for_flavor,
+    get_client,
+    get_stock_summary,
+)
 
 logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Pydantic model for structured classification (LLM must return this)
+# Pydantic models for structured classification (LLM must return this)
 # ---------------------------------------------------------------------------
+class OrderItem(BaseModel):
+    """Single item extracted from an order notification."""
+
+    product_name: str = Field(description="Full product name as on order, e.g. 'Tera Green made in Middle East'")
+    base_flavor: str = Field(description="Base flavor/color only, e.g. 'Green', 'Turquoise', 'Silver'")
+    quantity: int = Field(default=1, description="Number of units ordered")
+
+
 class EmailClassification(BaseModel):
     """Structured classification of an incoming email."""
 
@@ -35,7 +49,10 @@ class EmailClassification(BaseModel):
     customer_city_state_zip: Optional[str] = Field(
         default=None, description="City, State Zip on one line"
     )
-    items: Optional[str] = Field(default=None, description="What was ordered")
+    items: Optional[str] = Field(default=None, description="What was ordered (free text)")
+    order_items: Optional[list[OrderItem]] = Field(
+        default=None, description="Structured list of ordered items with base flavor and quantity"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -90,6 +107,25 @@ REPLY_TEMPLATES = {
     ),
 }
 
+# ---------------------------------------------------------------------------
+# Out-of-Stock Guide (reference for fallback LLM, NOT a Python-fill template)
+# ---------------------------------------------------------------------------
+OUT_OF_STOCK_GUIDE = (
+    "Hi!\n"
+    "How are you?\n"
+    "Unfortunately, we just ran out of flavor {FLAVOR_LIST}\n"
+    "*\n"
+    "What can we offer? Please choose one of the options below.\n"
+    "1. {ALTERNATIVE_SUGGESTION}\n"
+    "2. Check our website for substitutions and ready to ship sticks. "
+    "( follow the link below )\n"
+    "\n"
+    "Link for the sticks substitution\n"
+    "https://shipmecarton.com\n"
+    "*\n"
+    "Please let us know what you think"
+)
+
 
 # ---------------------------------------------------------------------------
 # Format email history for LLM prompt
@@ -137,6 +173,7 @@ def process_classified_email(classification: EmailClassification) -> dict:
         "template_used": False,
         "draft_reply": None,
         "needs_ai_fallback": False,
+        "stock_issue": None,
     }
 
     # No reply needed — stop here
@@ -153,6 +190,43 @@ def process_classified_email(classification: EmailClassification) -> dict:
         result["client_data"] = {"payment_type": "unknown", "name": "unknown"}
         result["draft_reply"] = "(Клиент не в базе — авто-ответ не генерируется)"
         return result
+
+    # Stock check for new_order with structured items
+    if (
+        classification.situation == "new_order"
+        and classification.order_items
+    ):
+        # Guard: skip if stock table is empty (sync hasn't run yet)
+        summary = get_stock_summary()
+        if summary["total"] > 0:
+            items_for_check = [
+                {
+                    "product_name": oi.product_name,
+                    "base_flavor": oi.base_flavor,
+                    "quantity": oi.quantity,
+                }
+                for oi in classification.order_items
+            ]
+            stock_result = check_stock_for_order(items_for_check)
+
+            if not stock_result["all_in_stock"]:
+                # Collect alternatives (only qty > 0) for each insufficient item
+                alternatives = {}
+                for insuff in stock_result["insufficient_items"]:
+                    alts = get_alternatives_for_flavor(insuff["base_flavor"])
+                    alternatives[insuff["base_flavor"]] = alts
+
+                result["stock_issue"] = {
+                    "stock_check": stock_result,
+                    "alternatives": alternatives,
+                }
+                result["needs_ai_fallback"] = True
+                logger.info(
+                    "Stock insufficient for %s: %s",
+                    classification.client_email,
+                    [i["base_flavor"] for i in stock_result["insufficient_items"]],
+                )
+                return result
 
     # Try to find a template
     payment_type = client["payment_type"]
@@ -243,6 +317,20 @@ def format_result(result: dict) -> str:
     else:
         lines.append("Status: NEW CLIENT (not in database)")
     lines.append("")
+
+    # Stock check section (if applicable)
+    if result.get("stock_issue"):
+        lines.append("=" * 50)
+        lines.append("STOCK CHECK")
+        lines.append("=" * 50)
+        stock_check = result["stock_issue"]["stock_check"]
+        for item in stock_check["items"]:
+            status = "OK" if item["is_sufficient"] else "INSUFFICIENT"
+            lines.append(
+                f"{item['base_flavor']}: ordered {item['ordered_qty']}, "
+                f"available {item['total_available']} [{status}]"
+            )
+        lines.append("")
 
     lines.append("=" * 50)
     lines.append("DRAFT REPLY")

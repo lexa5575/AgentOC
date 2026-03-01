@@ -438,6 +438,103 @@ def get_stock_summary(warehouse: str | None = None) -> dict:
         session.close()
 
 
+def check_stock_for_order(
+    order_items: list[dict],
+    warehouse: str | None = None,
+) -> dict:
+    """Check stock availability for ordered items.
+
+    Args:
+        order_items: List of dicts with keys: base_flavor, quantity, product_name.
+        warehouse: Optional warehouse filter.
+
+    Returns:
+        {
+            "all_in_stock": bool,
+            "items": [{product_name, base_flavor, ordered_qty, stock_entries, total_available, is_sufficient}],
+            "insufficient_items": [same structure, only insufficient],
+        }
+    """
+    session = get_session()
+    try:
+        results = []
+        all_ok = True
+
+        for item in order_items:
+            flavor = item["base_flavor"].strip()
+            ordered_qty = item.get("quantity", 1)
+
+            stock_entries = (
+                session.query(StockItem)
+                .filter(StockItem.product_name.ilike(f"%{flavor}%"))
+            )
+            if warehouse:
+                stock_entries = stock_entries.filter_by(warehouse=warehouse)
+            stock_entries = stock_entries.all()
+
+            total_available = sum(s.quantity for s in stock_entries if s.quantity > 0)
+            is_sufficient = total_available >= ordered_qty
+
+            entry = {
+                "product_name": item.get("product_name", flavor),
+                "base_flavor": flavor,
+                "ordered_qty": ordered_qty,
+                "stock_entries": [s.to_dict() for s in stock_entries],
+                "total_available": total_available,
+                "is_sufficient": is_sufficient,
+            }
+            results.append(entry)
+
+            if not is_sufficient:
+                all_ok = False
+
+        return {
+            "all_in_stock": all_ok,
+            "items": results,
+            "insufficient_items": [r for r in results if not r["is_sufficient"]],
+        }
+    finally:
+        session.close()
+
+
+def get_alternatives_for_flavor(
+    base_flavor: str,
+    warehouse: str | None = None,
+) -> list[dict]:
+    """Get available stock items from categories where the given flavor exists.
+
+    Returns only items with qty > 0 for the LLM to use as suggestions.
+    """
+    session = get_session()
+    try:
+        # Find categories containing this flavor
+        matching = (
+            session.query(StockItem.category)
+            .filter(StockItem.product_name.ilike(f"%{base_flavor.strip()}%"))
+            .distinct()
+            .all()
+        )
+        categories = [row[0] for row in matching]
+
+        if not categories:
+            return []
+
+        # Get all available items from those categories
+        query = session.query(StockItem).filter(
+            StockItem.category.in_(categories),
+            StockItem.quantity > 0,
+        )
+        if warehouse:
+            query = query.filter_by(warehouse=warehouse)
+
+        return [
+            item.to_dict()
+            for item in query.order_by(StockItem.category, StockItem.product_name).all()
+        ]
+    finally:
+        session.close()
+
+
 def get_gmail_thread_history(client_email: str, max_results: int = 10) -> list[dict]:
     """Fetch conversation history from Gmail API for a client.
 
