@@ -139,6 +139,7 @@ STYLE — MATCH HISTORY:
 - If history shows we use specific phrases (e.g., payment instructions, greeting patterns), reuse them verbatim
 - If no history is available: start with "Hi {name}," / "Hello,", 2-5 sentences, casual tone
 - Always end with exactly "Thank you!" — nothing after it, no name, no signature
+  EXCEPTION: For OUT OF STOCK replies, end with "Please let us know what you think" (as per template)
 
 WHAT YOU CAN DO:
 - Reference information provided in the context and conversation history
@@ -493,6 +494,21 @@ email_agent = Agent(
 # Test with sample data (like "pin data" in n8n)
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
+    # Ensure test clients exist in DB (idempotent — skips if already present)
+    from db.memory import add_client, get_client
+
+    _test_clients = [
+        {"email": "client1@example.com", "name": "Test Client One", "payment_type": "prepay",
+         "zelle_address": "pay@example.com"},
+        {"email": "client2@example.com", "name": "Test Client Two", "payment_type": "postpay"},
+        {"email": "client3@example.com", "name": "Test Client Three", "payment_type": "prepay",
+         "zelle_address": "pay3@example.com", "discount_percent": 5, "discount_orders_left": 3},
+    ]
+    for tc in _test_clients:
+        if not get_client(tc["email"]):
+            add_client(**tc)
+            print(f"  Created test client: {tc['email']}")
+
     tests = [
         (
             "PREPAY client (template)",
