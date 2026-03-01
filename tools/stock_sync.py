@@ -170,18 +170,6 @@ def _sync_locked(spreadsheet_id: str, warehouse: str) -> dict:
             count, available, fallback, len(result.warnings),
         )
 
-        # Send consistency warnings to Telegram
-        if result.warnings:
-            warnings_text = "\n".join(
-                f"• {w}" for w in result.warnings[:10]  # Limit to 10
-            )
-            send_telegram(
-                f"\u26a0\ufe0f <b>Stock sync warnings</b>\n\n"
-                f"<b>Warehouse:</b> {warehouse}\n"
-                f"<b>Warnings ({len(result.warnings)}):</b>\n"
-                f"<pre>{warnings_text}</pre>"
-            )
-
         return summary
 
     except Exception as e:
