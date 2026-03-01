@@ -17,7 +17,10 @@ from db.memory import (
     add_client as db_add_client,
     delete_client as db_delete_client,
     get_client as db_get_client,
+    get_available_by_category as db_get_available_by_category,
+    get_stock_summary as db_get_stock_summary,
     list_clients as db_list_clients,
+    search_stock as db_search_stock,
     update_client as db_update_client,
 )
 
@@ -173,18 +176,89 @@ def delete_client(email: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Tool functions for stock queries
+# ---------------------------------------------------------------------------
+
+
+def check_stock(query: str) -> str:
+    """Search for a product in stock by name (partial match).
+
+    Args:
+        query: Product name or part of it (e.g., "Amber", "ONE Red", "T Mint").
+
+    Returns:
+        Matching products with quantities.
+    """
+    items = db_search_stock(query)
+    if not items:
+        return f"No products found matching '{query}'."
+
+    lines = [f"Found {len(items)} product(s) matching '{query}':", ""]
+    for item in items:
+        status = "IN STOCK" if item["quantity"] > 0 else "OUT OF STOCK"
+        lines.append(
+            f"- {item['category']} | {item['product_name']} | "
+            f"qty: {item['quantity']} | {status}"
+        )
+    return "\n".join(lines)
+
+
+def stock_by_category(category: str) -> str:
+    """Get all available (in stock) products in a category.
+
+    Args:
+        category: Category name (e.g., "KZ_TEREA", "TEREA_JAPAN", "ONE",
+                  "STND", "PRIME", "ARMENIA", "TEREA_EUROPE", "УНИКАЛЬНАЯ_ТЕРЕА").
+
+    Returns:
+        Available products in the category.
+    """
+    items = db_get_available_by_category(category)
+    if not items:
+        return f"No available products in category '{category}'."
+
+    lines = [f"Available in '{category}': {len(items)} product(s)", ""]
+    for item in items:
+        lines.append(f"- {item['product_name']} | qty: {item['quantity']}")
+    return "\n".join(lines)
+
+
+def stock_summary() -> str:
+    """Get overall stock summary: total items, available, last sync time.
+
+    Returns:
+        Stock statistics.
+    """
+    summary = db_get_stock_summary()
+    return (
+        f"Stock summary:\n"
+        f"- Total products: {summary['total']}\n"
+        f"- In stock (qty > 0): {summary['available']}\n"
+        f"- Fallback calculations: {summary['fallback']}\n"
+        f"- Last synced: {summary['synced_at'] or 'never'}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Agent
 # ---------------------------------------------------------------------------
 admin_instructions = """\
 You are a database administrator for shipmecarton.com.
-You manage client data. You understand both Russian and English.
+You manage client data and check product stock. You understand both Russian and English.
 
-When a user asks you to manage clients, use the appropriate tool:
+CLIENT MANAGEMENT tools:
 - list_clients: show all clients
 - get_client: show details of one client
 - add_client: add a new client
 - update_client: change client data (payment_type, discount, zelle, name)
 - delete_client: remove a client
+
+STOCK QUERY tools:
+- check_stock: search products by name (e.g., "Amber", "ONE Red", "T Mint")
+- stock_by_category: get all available products in a category
+- stock_summary: overall stock statistics
+
+Categories: KZ_TEREA, TEREA_JAPAN, TEREA_EUROPE, ONE, STND, PRIME, УНИКАЛЬНАЯ_ТЕРЕА, ARMENIA
 
 RULES:
 - payment_type can only be "prepay" or "postpay"
@@ -192,6 +266,7 @@ RULES:
 - Always confirm the action after completing it
 - If the user says "prepay" or "предоплата", use payment_type="prepay"
 - If the user says "postpay" or "постоплата" or "оплата после", use payment_type="postpay"
+- When answering stock questions, always show the quantity and status (in stock / out of stock)
 """
 
 admin_agent = Agent(
@@ -200,7 +275,10 @@ admin_agent = Agent(
     model=OpenAIResponses(id="gpt-5.2"),
     db=agent_db,
     instructions=admin_instructions,
-    tools=[list_clients, get_client, add_client, update_client, delete_client],
+    tools=[
+        list_clients, get_client, add_client, update_client, delete_client,
+        check_stock, stock_by_category, stock_summary,
+    ],
     markdown=False,
 )
 
