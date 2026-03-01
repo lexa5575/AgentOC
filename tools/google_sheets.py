@@ -2,8 +2,8 @@
 Google Sheets Client
 --------------------
 
-Read-only access to Google Sheets via service account.
-Used for stock level synchronization.
+Read-only access to Google Sheets via OAuth refresh token.
+Auth pattern matches tools/gmail.py (same env var style).
 
 Usage:
     from tools.google_sheets import SheetsClient
@@ -16,7 +16,8 @@ import logging
 import re
 from os import getenv
 
-from google.oauth2 import service_account
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
 logger = logging.getLogger(__name__)
@@ -25,7 +26,7 @@ SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
 
 
 class SheetsClient:
-    """Google Sheets API client using service account from env."""
+    """Google Sheets API client using OAuth refresh_token from env."""
 
     def __init__(self):
         self._service = None
@@ -35,25 +36,28 @@ class SheetsClient:
         if self._service:
             return self._service
 
-        creds_raw = getenv("GOOGLE_SHEETS_CREDENTIALS", "")
-        if not creds_raw:
+        client_id = getenv("SHEETS_CLIENT_ID", "")
+        client_secret = getenv("SHEETS_CLIENT_SECRET", "")
+        refresh_token = getenv("SHEETS_REFRESH_TOKEN", "")
+
+        if not all([client_id, client_secret, refresh_token]):
             raise RuntimeError(
-                "Google Sheets not configured. Set GOOGLE_SHEETS_CREDENTIALS in .env"
+                "Google Sheets not configured. Set SHEETS_CLIENT_ID, "
+                "SHEETS_CLIENT_SECRET, SHEETS_REFRESH_TOKEN in .env"
             )
 
-        # Support both JSON string and file path
-        if creds_raw.strip().startswith("{"):
-            creds_info = json.loads(creds_raw)
-        else:
-            with open(creds_raw) as f:
-                creds_info = json.load(f)
-
-        creds = service_account.Credentials.from_service_account_info(
-            creds_info, scopes=SCOPES,
+        creds = Credentials(
+            token=None,
+            refresh_token=refresh_token,
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=client_id,
+            client_secret=client_secret,
+            scopes=SCOPES,
         )
+        creds.refresh(Request())
 
         self._service = build("sheets", "v4", credentials=creds)
-        logger.info("Google Sheets API service initialized")
+        logger.info("Google Sheets API service initialized (OAuth)")
         return self._service
 
     def get_sheet_names(self, spreadsheet_id: str) -> list[str]:
