@@ -105,6 +105,24 @@ class StockItem(Base):
         }
 
 
+class ClientOrderItem(Base):
+    """Structured order items for customer preference tracking."""
+
+    __tablename__ = "client_order_items"
+    __table_args__ = (
+        UniqueConstraint("client_email", "order_id", "base_flavor", name="uq_client_order_item"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    client_email = Column(String, nullable=False, index=True)
+    order_id = Column(String, nullable=True)
+    product_name = Column(String, nullable=False)
+    base_flavor = Column(String, nullable=False)
+    product_type = Column(String, nullable=False, default="stick")  # "stick" or "device"
+    quantity = Column(Integer, default=1)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class StockBackup(Base):
     """Previous valid stock snapshot (one backup for rollback)."""
 

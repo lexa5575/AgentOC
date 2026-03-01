@@ -8,9 +8,38 @@ All database operations go through this module.
 
 import logging
 
-from db.models import Client, EmailHistory, GmailState, StockBackup, StockItem, get_session
+from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
+
+from db.models import Client, ClientOrderItem, EmailHistory, GmailState, StockBackup, StockItem, get_session
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Product type constants (sticks vs devices)
+# ---------------------------------------------------------------------------
+
+DEVICE_CATEGORIES = {"ONE", "STND", "PRIME"}
+STICK_CATEGORIES = {"KZ_TEREA", "TEREA_JAPAN", "TEREA_EUROPE", "ARMENIA", "УНИКАЛЬНАЯ_ТЕРЕА"}
+
+
+def get_product_type(base_flavor: str) -> str:
+    """Determine product type from base_flavor.
+
+    Devices have brand prefix: 'ONE Green', 'STND Red', 'PRIME Black'.
+    Sticks are just flavor: 'Green', 'Silver', 'Turquoise'.
+    """
+    upper = base_flavor.upper().strip()
+    for prefix in ("ONE ", "STND ", "PRIME "):
+        if upper.startswith(prefix):
+            return "device"
+    return "stick"
+
+
+def _get_allowed_categories(product_type: str) -> set[str]:
+    """Return allowed stock categories for a product type."""
+    return DEVICE_CATEGORIES if product_type == "device" else STICK_CATEGORIES
 
 
 # ---------------------------------------------------------------------------
@@ -464,9 +493,16 @@ def check_stock_for_order(
             flavor = item["base_flavor"].strip()
             ordered_qty = item.get("quantity", 1)
 
+            # Type-filter: only search in allowed categories (sticks or devices)
+            product_type = get_product_type(flavor)
+            allowed_cats = _get_allowed_categories(product_type)
+
             stock_entries = (
                 session.query(StockItem)
-                .filter(StockItem.product_name.ilike(f"%{flavor}%"))
+                .filter(
+                    StockItem.product_name.ilike(f"%{flavor}%"),
+                    StockItem.category.in_(allowed_cats),
+                )
             )
             if warehouse:
                 stock_entries = stock_entries.filter_by(warehouse=warehouse)
@@ -503,21 +539,32 @@ def get_alternatives_for_flavor(
 ) -> list[dict]:
     """Get available stock items from categories where the given flavor exists.
 
-    Returns only items with qty > 0 for the LLM to use as suggestions.
+    Type-filtered: sticks only return stick alternatives, devices only device alternatives.
+    Returns only items with qty > 0.
     """
+    product_type = get_product_type(base_flavor)
+    allowed_cats = _get_allowed_categories(product_type)
+
     session = get_session()
     try:
-        # Find categories containing this flavor
+        # Find categories containing this flavor (within allowed type)
         matching = (
             session.query(StockItem.category)
-            .filter(StockItem.product_name.ilike(f"%{base_flavor.strip()}%"))
+            .filter(
+                StockItem.product_name.ilike(f"%{base_flavor.strip()}%"),
+                StockItem.category.in_(allowed_cats),
+            )
             .distinct()
             .all()
         )
         categories = [row[0] for row in matching]
 
         if not categories:
-            return []
+            # No exact flavor match — for devices, return all device categories
+            if product_type == "device":
+                categories = list(allowed_cats)
+            else:
+                return []
 
         # Get all available items from those categories
         query = session.query(StockItem).filter(
@@ -531,6 +578,183 @@ def get_alternatives_for_flavor(
             item.to_dict()
             for item in query.order_by(StockItem.category, StockItem.product_name).all()
         ]
+    finally:
+        session.close()
+
+
+# ---------------------------------------------------------------------------
+# Order item history (for personalized OOS alternatives)
+# ---------------------------------------------------------------------------
+
+def save_order_items(
+    client_email: str,
+    order_id: str | None,
+    order_items: list[dict],
+) -> int:
+    """Save structured order items for preference tracking.
+
+    Each item dict: {product_name, base_flavor, quantity}.
+    product_type is auto-detected from base_flavor.
+    Skips duplicates via UNIQUE constraint.
+    Returns number of saved items.
+    """
+    client_email = client_email.lower().strip()
+    session = get_session()
+    saved = 0
+    try:
+        for item in order_items:
+            base_flavor = item["base_flavor"].strip()
+            record = ClientOrderItem(
+                client_email=client_email,
+                order_id=order_id,
+                product_name=item["product_name"],
+                base_flavor=base_flavor,
+                product_type=get_product_type(base_flavor),
+                quantity=item.get("quantity", 1),
+            )
+            try:
+                session.add(record)
+                session.flush()
+                saved += 1
+            except IntegrityError:
+                session.rollback()
+                logger.debug("Order item already exists: %s / %s / %s", client_email, order_id, base_flavor)
+        session.commit()
+        if saved:
+            logger.info("Saved %d order items for %s (order %s)", saved, client_email, order_id)
+        return saved
+    except Exception as e:
+        logger.error("Failed to save order items: %s", e)
+        session.rollback()
+        return 0
+    finally:
+        session.close()
+
+
+def get_client_flavor_history(
+    client_email: str,
+    product_type: str | None = None,
+    limit: int = 20,
+) -> list[dict]:
+    """Get unique flavors ordered by this client, ranked by frequency.
+
+    Returns: [{"base_flavor": "Green", "order_count": 5, "last_ordered": datetime}, ...]
+    """
+    client_email = client_email.lower().strip()
+    session = get_session()
+    try:
+        query = (
+            session.query(
+                ClientOrderItem.base_flavor,
+                func.count(ClientOrderItem.id).label("order_count"),
+                func.max(ClientOrderItem.created_at).label("last_ordered"),
+            )
+            .filter(ClientOrderItem.client_email == client_email)
+        )
+        if product_type:
+            query = query.filter(ClientOrderItem.product_type == product_type)
+
+        rows = (
+            query
+            .group_by(ClientOrderItem.base_flavor)
+            .order_by(func.count(ClientOrderItem.id).desc(), func.max(ClientOrderItem.created_at).desc())
+            .limit(limit)
+            .all()
+        )
+        return [
+            {"base_flavor": row[0], "order_count": row[1], "last_ordered": row[2]}
+            for row in rows
+        ]
+    finally:
+        session.close()
+
+
+def select_best_alternative(
+    client_email: str,
+    base_flavor: str,
+    warehouse: str | None = None,
+) -> dict:
+    """Select the ONE best alternative for an out-of-stock flavor.
+
+    Priority:
+    1. Same flavor from a different category (e.g., Turquoise EU → Turquoise Armenia)
+    2. Flavor from customer's order history that's currently in stock
+    3. Any available item from allowed categories (fallback)
+
+    Returns: {"alternative": {...} or None, "reason": str, "order_count": int or None}
+    """
+    product_type = get_product_type(base_flavor)
+    allowed_cats = _get_allowed_categories(product_type)
+    flavor = base_flavor.strip()
+
+    session = get_session()
+    try:
+        # Priority 1: same flavor from a different category
+        same_flavor = (
+            session.query(StockItem)
+            .filter(
+                StockItem.product_name.ilike(f"%{flavor}%"),
+                StockItem.category.in_(allowed_cats),
+                StockItem.quantity > 0,
+            )
+            .order_by(StockItem.quantity.desc())
+            .first()
+        )
+        if same_flavor:
+            return {
+                "alternative": same_flavor.to_dict(),
+                "reason": "same_flavor",
+                "order_count": None,
+            }
+
+        # Priority 2: flavor from customer history that's in stock
+        history = get_client_flavor_history(client_email, product_type=product_type)
+        for h in history:
+            hist_flavor = h["base_flavor"]
+            if hist_flavor.lower() == flavor.lower():
+                continue  # skip the OOS flavor itself
+
+            stock = (
+                session.query(StockItem)
+                .filter(
+                    StockItem.product_name.ilike(f"%{hist_flavor}%"),
+                    StockItem.category.in_(allowed_cats),
+                    StockItem.quantity > 0,
+                )
+                .order_by(StockItem.quantity.desc())
+                .first()
+            )
+            if stock:
+                return {
+                    "alternative": stock.to_dict(),
+                    "reason": "history",
+                    "order_count": h["order_count"],
+                }
+
+        # Priority 3: any available from allowed categories
+        any_available = (
+            session.query(StockItem)
+            .filter(
+                StockItem.category.in_(allowed_cats),
+                StockItem.quantity > 0,
+                ~StockItem.product_name.ilike(f"%{flavor}%"),
+            )
+            .order_by(StockItem.quantity.desc())
+            .first()
+        )
+        if any_available:
+            return {
+                "alternative": any_available.to_dict(),
+                "reason": "fallback",
+                "order_count": None,
+            }
+
+        # Nothing available
+        return {
+            "alternative": None,
+            "reason": "none_available",
+            "order_count": None,
+        }
     finally:
         session.close()
 

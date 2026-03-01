@@ -14,9 +14,9 @@ from pydantic import BaseModel, Field
 from db.memory import (
     check_stock_for_order,
     decrement_discount,
-    get_alternatives_for_flavor,
     get_client,
     get_stock_summary,
+    select_best_alternative,
 )
 
 logger = logging.getLogger(__name__)
@@ -210,21 +210,25 @@ def process_classified_email(classification: EmailClassification) -> dict:
             stock_result = check_stock_for_order(items_for_check)
 
             if not stock_result["all_in_stock"]:
-                # Collect alternatives (only qty > 0) for each insufficient item
-                alternatives = {}
+                # Select ONE best alternative per insufficient item
+                best_alternatives = {}
                 for insuff in stock_result["insufficient_items"]:
-                    alts = get_alternatives_for_flavor(insuff["base_flavor"])
-                    alternatives[insuff["base_flavor"]] = alts
+                    best = select_best_alternative(
+                        client_email=classification.client_email,
+                        base_flavor=insuff["base_flavor"],
+                    )
+                    best_alternatives[insuff["base_flavor"]] = best
 
                 result["stock_issue"] = {
                     "stock_check": stock_result,
-                    "alternatives": alternatives,
+                    "best_alternatives": best_alternatives,
                 }
                 result["needs_ai_fallback"] = True
                 logger.info(
-                    "Stock insufficient for %s: %s",
+                    "Stock insufficient for %s: %s (alternatives: %s)",
                     classification.client_email,
                     [i["base_flavor"] for i in stock_result["insufficient_items"]],
+                    {k: v["reason"] for k, v in best_alternatives.items()},
                 )
                 return result
 
@@ -326,10 +330,32 @@ def format_result(result: dict) -> str:
         stock_check = result["stock_issue"]["stock_check"]
         for item in stock_check["items"]:
             status = "OK" if item["is_sufficient"] else "INSUFFICIENT"
+            shortage = ""
+            if not item["is_sufficient"] and item["total_available"] > 0:
+                shortage = " [PARTIAL]"
             lines.append(
                 f"{item['base_flavor']}: ordered {item['ordered_qty']}, "
-                f"available {item['total_available']} [{status}]"
+                f"available {item['total_available']} [{status}]{shortage}"
             )
+
+        # Show alternative decision for each OOS flavor
+        best_alts = result["stock_issue"].get("best_alternatives", {})
+        if best_alts:
+            lines.append("")
+            lines.append("ALTERNATIVE DECISION:")
+            for flavor, decision in best_alts.items():
+                alt = decision.get("alternative")
+                reason = decision.get("reason", "none_available")
+                if alt:
+                    reason_text = reason
+                    if reason == "history" and decision.get("order_count"):
+                        reason_text = f"history ({decision['order_count']}x ordered before)"
+                    lines.append(
+                        f"  {flavor} → {alt['category']} / {alt['product_name']} "
+                        f"(qty: {alt['quantity']}) [{reason_text}]"
+                    )
+                else:
+                    lines.append(f"  {flavor} → no alternative available")
         lines.append("")
 
     lines.append("=" * 50)

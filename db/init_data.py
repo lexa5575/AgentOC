@@ -10,7 +10,7 @@ Run:
 
 import logging
 
-from db.models import Base, Client, engine, get_session
+from db.models import Base, Client, ClientOrderItem, engine, get_session
 
 logger = logging.getLogger(__name__)
 

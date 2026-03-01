@@ -31,7 +31,7 @@ from agents.reply_templates import (
     process_classified_email,
 )
 from db import get_postgres_db
-from db.memory import get_email_history, get_gmail_thread_history, save_email
+from db.memory import get_email_history, get_gmail_thread_history, save_email, save_order_items
 from tools.web_search import get_search_tools
 from utils.telegram import send_telegram
 
@@ -165,19 +165,21 @@ WHAT YOU CANNOT DO:
 - Write multiple reply variants — only ONE reply
 
 OUT-OF-STOCK REPLIES:
-- When given a TEMPLATE GUIDE, follow its structure CLOSELY
-- Replace placeholders with actual data from INSUFFICIENT ITEMS and AVAILABLE ALTERNATIVES
-- For alternative suggestions: prefer same flavor from a different origin
-  (e.g., Turquoise EU → Turquoise from Armenia/Middle East)
-- If no direct alternative exists, suggest a popular available flavor from the same category
-- Always keep option 2 (website link) exactly as provided in the template
-- Do NOT invent stock levels — only use what is provided in AVAILABLE ALTERNATIVES
+- Follow the TEMPLATE GUIDE structure CLOSELY
+- Use the SELECTED ALTERNATIVE provided — do NOT choose a different product
+- If the reason is "history", mention naturally: "We have Green which you've enjoyed before"
+- If the reason is "same_flavor", mention the region: "We have Turquoise from Armenia"
+- If the reason is "fallback", just suggest it normally without extra explanation
+- If no alternative available, skip option 1 and only keep option 2 (website)
+- For PARTIAL SHORTAGE: mention "we have X available" + suggest replacement for remainder
+- ONLY mention products from SELECTED ALTERNATIVE — NEVER invent or suggest other items
+- Conversation history is for STYLE/TONE only — NOT for stock information
+- Always keep option 2 (website link) exactly as in template
 
 READING HISTORY — PRIORITIZE:
 - [WE SENT] messages are your style reference — replicate their tone and wording
-- Messages where WE discussed stock availability, offered alternatives, or quoted prices
-- Customer's ordering patterns: what they usually buy, what prices they paid
 - Most recent messages carry more weight than older ones
+- Do NOT use history to determine what is in stock — only use the data provided above
 """
 
 fallback_agent = Agent(
@@ -310,17 +312,47 @@ def classify_and_process(email_text: str, gmail_message_id: str | None = None) -
                 f"\nДобавь клиента в базу через Admin Agent."
             )
 
-        # Telegram: notify if stock issue detected
+        tg_msg = None  # Will be set for OOS, sent after AI generates draft
+
+        # Telegram: notify if stock issue detected (enhanced with alternatives + draft)
         if result.get("stock_issue"):
             insufficient = result["stock_issue"]["stock_check"]["insufficient_items"]
-            flavor_list = ", ".join(i["base_flavor"] for i in insufficient)
-            send_telegram(
+            best_alts = result["stock_issue"].get("best_alternatives", {})
+
+            # Build insufficient items text
+            oos_lines = []
+            for item in insufficient:
+                partial = f" (частично: {item['total_available']} шт)" if item["total_available"] > 0 else ""
+                oos_lines.append(
+                    f"{item['base_flavor']} (заказано {item['ordered_qty']}, на складе {item['total_available']}){partial}"
+                )
+            oos_text = "\n".join(oos_lines)
+
+            # Build alternative decision text
+            alt_lines = []
+            for flavor, decision in best_alts.items():
+                alt = decision.get("alternative")
+                reason = decision.get("reason", "none_available")
+                if alt:
+                    reason_ru = {
+                        "same_flavor": "тот же вкус",
+                        "history": f"из истории ({decision.get('order_count', '?')} заказов)",
+                        "fallback": "из наличия",
+                    }.get(reason, reason)
+                    alt_lines.append(f"{alt['category']} / {alt['product_name']} [{reason_ru}]")
+                else:
+                    alt_lines.append("не найдена")
+            alt_text = "\n".join(alt_lines)
+
+            tg_msg = (
                 f"\u26a0\ufe0f <b>Нет на складе!</b>\n\n"
                 f"<b>Клиент:</b> {classification.client_email}\n"
                 f"<b>Заказ:</b> #{classification.order_id or 'N/A'}\n"
-                f"<b>Нет в наличии:</b> {flavor_list}\n\n"
-                f"AI генерирует ответ с альтернативами."
+                f"<b>Нет в наличии:</b>\n{oos_text}\n\n"
+                f"<b>Альтернатива:</b>\n{alt_text}\n\n"
+                f"AI генерирует ответ."
             )
+            # Draft will be appended after AI generates it (see below)
 
         # Step 3: If no template, ask fallback agent (with conversation history)
         if result["needs_ai_fallback"] and result["needs_reply"]:
@@ -363,31 +395,39 @@ def classify_and_process(email_text: str, gmail_message_id: str | None = None) -
             if result.get("stock_issue"):
                 stock_data = result["stock_issue"]
                 stock_check = stock_data["stock_check"]
-                alternatives = stock_data["alternatives"]
+                best_alternatives = stock_data.get("best_alternatives", {})
 
-                # Human-readable stock context
+                # Human-readable insufficient items (with partial shortage info)
                 insufficient_lines = []
                 for item in stock_check["insufficient_items"]:
+                    partial = ""
+                    if item["total_available"] > 0:
+                        partial = f" — PARTIAL SHORTAGE (have {item['total_available']})"
                     insufficient_lines.append(
                         f"- {item['product_name']} (flavor: {item['base_flavor']}): "
-                        f"ordered {item['ordered_qty']}, available {item['total_available']}"
+                        f"ordered {item['ordered_qty']}, available {item['total_available']}{partial}"
                     )
                 insufficient_text = "\n".join(insufficient_lines)
 
+                # Selected alternative for each OOS flavor
                 alt_lines = []
-                for flavor, alts in alternatives.items():
-                    if alts:
-                        available_names = [
-                            f"{a['category']} / {a['product_name']} (qty: {a['quantity']})"
-                            for a in alts
-                        ]
+                for flavor, decision in best_alternatives.items():
+                    alt = decision.get("alternative")
+                    reason = decision.get("reason", "none_available")
+                    if alt:
+                        reason_detail = reason
+                        if reason == "history" and decision.get("order_count"):
+                            reason_detail = f"customer ordered {alt['product_name']} {decision['order_count']} times before"
+                        elif reason == "same_flavor":
+                            reason_detail = f"same flavor from {alt['category']}"
+                        elif reason == "fallback":
+                            reason_detail = "available in stock"
                         alt_lines.append(
-                            f"Alternatives for {flavor}: {', '.join(available_names)}"
+                            f"- {alt['category']} / {alt['product_name']} (qty: {alt['quantity']}) "
+                            f"— reason: {reason_detail}"
                         )
                     else:
-                        alt_lines.append(
-                            f"Alternatives for {flavor}: none found in stock"
-                        )
+                        alt_lines.append("- No alternative available")
                 alternatives_text = "\n".join(alt_lines)
 
                 fallback_prompt = (
@@ -395,7 +435,7 @@ def classify_and_process(email_text: str, gmail_message_id: str | None = None) -
                     f"Client: {client_info}\n"
                     f"Client name: {result['client_name'] or 'unknown'}\n\n"
                     f"INSUFFICIENT ITEMS:\n{insufficient_text}\n\n"
-                    f"AVAILABLE ALTERNATIVES (only items with qty > 0):\n"
+                    f"SELECTED ALTERNATIVE FOR OPTION 1:\n"
                     f"{alternatives_text}\n\n"
                 )
                 if history_text:
@@ -407,9 +447,9 @@ def classify_and_process(email_text: str, gmail_message_id: str | None = None) -
                     f"INSTRUCTIONS:\n"
                     f"- Follow the template guide structure above\n"
                     f"- Replace {{FLAVOR_LIST}} with the actual out-of-stock flavor names\n"
-                    f"- For option 1, suggest a concrete alternative from AVAILABLE ALTERNATIVES\n"
-                    f"  (prefer same flavor from a different region)\n"
-                    f"- If multiple items are out of stock, list all and suggest alternatives\n"
+                    f"- Use EXACTLY the selected alternative in option 1\n"
+                    f"- If reason is 'history', mention naturally they ordered it before\n"
+                    f"- If partial shortage, mention 'we have X available'\n"
                     f"- Keep the website link https://shipmecarton.com and option 2 exactly as shown\n"
                     f"- End with 'Please let us know what you think'\n"
                     f"Write the reply:"
@@ -430,6 +470,11 @@ def classify_and_process(email_text: str, gmail_message_id: str | None = None) -
             fallback_response = fallback_agent.run(fallback_prompt)
             result["draft_reply"] = fallback_response.content
             result["needs_ai_fallback"] = False
+
+            # Send Telegram with draft for OOS (deferred from above)
+            if result.get("stock_issue") and tg_msg:
+                draft_preview = result["draft_reply"][:500]
+                send_telegram(tg_msg + f"\n--- DRAFT ---\n<pre>{draft_preview}</pre>")
 
         # Step 4: Format the output
         logger.info(
@@ -460,6 +505,25 @@ def classify_and_process(email_text: str, gmail_message_id: str | None = None) -
                 subject=f"Re: {subject}" if subject else "",
                 body=result["draft_reply"],
                 situation=classification.situation,
+            )
+
+        # Step 6: Save structured order items for preference tracking
+        if (
+            classification.situation == "new_order"
+            and classification.order_items
+            and result["client_found"]
+        ):
+            save_order_items(
+                client_email=classification.client_email,
+                order_id=classification.order_id,
+                order_items=[
+                    {
+                        "product_name": oi.product_name,
+                        "base_flavor": oi.base_flavor,
+                        "quantity": oi.quantity,
+                    }
+                    for oi in classification.order_items
+                ],
             )
 
         return formatted
@@ -495,7 +559,7 @@ email_agent = Agent(
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     # Ensure test clients exist in DB (idempotent — skips if already present)
-    from db.memory import add_client, get_client
+    from db.memory import add_client, get_client, get_client_flavor_history
 
     _test_clients = [
         {"email": "client1@example.com", "name": "Test Client One", "payment_type": "prepay",
@@ -508,6 +572,24 @@ if __name__ == "__main__":
         if not get_client(tc["email"]):
             add_client(**tc)
             print(f"  Created test client: {tc['email']}")
+
+    # Seed order history for client1 (to test history-aware OOS alternatives)
+    _test_orders = [
+        ("client1@example.com", "23000", [
+            {"product_name": "Tera Green made in Middle East", "base_flavor": "Green", "quantity": 2},
+        ]),
+        ("client1@example.com", "23100", [
+            {"product_name": "Tera Green made in Middle East", "base_flavor": "Green", "quantity": 1},
+        ]),
+        ("client1@example.com", "23200", [
+            {"product_name": "Tera Silver EU", "base_flavor": "Silver", "quantity": 1},
+        ]),
+    ]
+    existing_history = get_client_flavor_history("client1@example.com")
+    if not existing_history:
+        for email, order_id, items in _test_orders:
+            save_order_items(email, order_id, items)
+        print("  Seeded order history for client1@example.com (Green x2, Silver x1)")
 
     tests = [
         (
