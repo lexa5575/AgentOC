@@ -18,6 +18,8 @@ from db.memory import (
     delete_client as db_delete_client,
     get_client as db_get_client,
     get_available_by_category as db_get_available_by_category,
+    get_email_history as db_get_email_history,
+    get_gmail_thread_history as db_get_gmail_thread_history,
     get_stock_summary as db_get_stock_summary,
     list_clients as db_list_clients,
     search_stock as db_search_stock,
@@ -223,6 +225,48 @@ def stock_by_category(category: str) -> str:
     return "\n".join(lines)
 
 
+def email_history(client_email: str) -> str:
+    """Show conversation history with a client (local DB + Gmail).
+
+    Args:
+        client_email: Client email address.
+
+    Returns:
+        Formatted conversation history or 'no history' message.
+    """
+    # Local DB first
+    history = db_get_email_history(client_email)
+
+    # If sparse, supplement from Gmail
+    if len(history) < 3:
+        gmail_history = db_get_gmail_thread_history(client_email, max_results=10)
+        if gmail_history:
+            local_subjects = {(h["subject"], h["direction"]) for h in history}
+            for gh in gmail_history:
+                if (gh["subject"], gh["direction"]) not in local_subjects:
+                    history.append(gh)
+            history.sort(key=lambda h: h["created_at"])
+            history = history[-15:]
+
+    if not history:
+        return f"No conversation history found for {client_email}."
+
+    lines = [f"Conversation history with {client_email}: {len(history)} message(s)", ""]
+    for msg in history:
+        ts = msg["created_at"].strftime("%Y-%m-%d %H:%M") if msg.get("created_at") else "unknown"
+        direction = "CLIENT WROTE" if msg["direction"] == "inbound" else "WE SENT"
+        subject = msg.get("subject", "")
+        body = msg.get("body", "")
+        if len(body) > 400:
+            body = body[:400] + "..."
+
+        lines.append(f"[{direction}] {ts} | {subject}")
+        lines.append(body)
+        lines.append("---")
+
+    return "\n".join(lines)
+
+
 def stock_summary() -> str:
     """Get overall stock summary: total items, available, last sync time.
 
@@ -252,6 +296,7 @@ CLIENT MANAGEMENT tools:
 - add_client: add a new client
 - update_client: change client data (payment_type, discount, zelle, name)
 - delete_client: remove a client
+- email_history: show conversation history with a client (from local DB + Gmail)
 
 STOCK QUERY tools:
 - check_stock: search products by name (e.g., "Amber", "ONE Red", "T Mint")
@@ -277,6 +322,7 @@ admin_agent = Agent(
     instructions=admin_instructions,
     tools=[
         list_clients, get_client, add_client, update_client, delete_client,
+        email_history,
         check_stock, stock_by_category, stock_summary,
     ],
     markdown=False,

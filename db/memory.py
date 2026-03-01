@@ -669,94 +669,142 @@ def get_client_flavor_history(
         session.close()
 
 
-def select_best_alternative(
+def select_best_alternatives(
     client_email: str,
     base_flavor: str,
     warehouse: str | None = None,
+    max_options: int = 3,
 ) -> dict:
-    """Select the ONE best alternative for an out-of-stock flavor.
+    """Select up to N best alternatives for an out-of-stock flavor.
 
     Priority:
     1. Same flavor from a different category (e.g., Turquoise EU → Turquoise Armenia)
-    2. Flavor from customer's order history that's currently in stock
+    2. Flavors from customer's order history that are currently in stock
     3. Any available item from allowed categories (fallback)
 
-    Returns: {"alternative": {...} or None, "reason": str, "order_count": int or None}
+    Returns:
+    {
+      "alternatives": [
+        {"alternative": {...}, "reason": "same_flavor|history|fallback", "order_count": int|None},
+        ...
+      ],
+      "reason": str,
+      "order_count": int|None,
+    }
     """
     product_type = get_product_type(base_flavor)
     allowed_cats = _get_allowed_categories(product_type)
     flavor = base_flavor.strip()
 
+    # Keep output stable even if caller passes invalid values.
+    if max_options < 1:
+        max_options = 1
+
     session = get_session()
     try:
-        # Priority 1: same flavor from a different category
-        same_flavor = (
-            session.query(StockItem)
-            .filter(
-                StockItem.product_name.ilike(f"%{flavor}%"),
-                StockItem.category.in_(allowed_cats),
-                StockItem.quantity > 0,
-            )
-            .order_by(StockItem.quantity.desc())
-            .first()
+        selected: list[dict] = []
+        seen = set()
+
+        def _push(item: StockItem, reason: str, order_count: int | None = None):
+            key = (item.category, item.product_name)
+            if key in seen:
+                return
+            seen.add(key)
+            selected.append({
+                "alternative": item.to_dict(),
+                "reason": reason,
+                "order_count": order_count,
+            })
+
+        # Priority 1: same flavor from different categories.
+        q_same = session.query(StockItem).filter(
+            StockItem.product_name.ilike(f"%{flavor}%"),
+            StockItem.category.in_(allowed_cats),
+            StockItem.quantity > 0,
         )
-        if same_flavor:
-            return {
-                "alternative": same_flavor.to_dict(),
-                "reason": "same_flavor",
-                "order_count": None,
-            }
+        if warehouse:
+            q_same = q_same.filter_by(warehouse=warehouse)
+        for item in q_same.order_by(StockItem.quantity.desc()).all():
+            _push(item, reason="same_flavor")
+            if len(selected) >= max_options:
+                break
 
-        # Priority 2: flavor from customer history that's in stock
-        history = get_client_flavor_history(client_email, product_type=product_type)
-        for h in history:
-            hist_flavor = h["base_flavor"]
-            if hist_flavor.lower() == flavor.lower():
-                continue  # skip the OOS flavor itself
+        # Priority 2: history-based alternatives currently in stock.
+        if len(selected) < max_options:
+            history = get_client_flavor_history(client_email, product_type=product_type)
+            for h in history:
+                hist_flavor = h["base_flavor"]
+                if hist_flavor.lower() == flavor.lower():
+                    continue
 
-            stock = (
-                session.query(StockItem)
-                .filter(
+                q_hist = session.query(StockItem).filter(
                     StockItem.product_name.ilike(f"%{hist_flavor}%"),
                     StockItem.category.in_(allowed_cats),
                     StockItem.quantity > 0,
                 )
-                .order_by(StockItem.quantity.desc())
-                .first()
-            )
-            if stock:
-                return {
-                    "alternative": stock.to_dict(),
-                    "reason": "history",
-                    "order_count": h["order_count"],
-                }
+                if warehouse:
+                    q_hist = q_hist.filter_by(warehouse=warehouse)
+                for item in q_hist.order_by(StockItem.quantity.desc()).all():
+                    _push(item, reason="history", order_count=h["order_count"])
+                    if len(selected) >= max_options:
+                        break
+                if len(selected) >= max_options:
+                    break
 
-        # Priority 3: any available from allowed categories
-        any_available = (
-            session.query(StockItem)
-            .filter(
+        # Priority 3: any available in allowed categories excluding OOS flavor.
+        if len(selected) < max_options:
+            q_any = session.query(StockItem).filter(
                 StockItem.category.in_(allowed_cats),
                 StockItem.quantity > 0,
                 ~StockItem.product_name.ilike(f"%{flavor}%"),
             )
-            .order_by(StockItem.quantity.desc())
-            .first()
-        )
-        if any_available:
+            if warehouse:
+                q_any = q_any.filter_by(warehouse=warehouse)
+            for item in q_any.order_by(StockItem.quantity.desc()).all():
+                _push(item, reason="fallback")
+                if len(selected) >= max_options:
+                    break
+
+        if not selected:
             return {
-                "alternative": any_available.to_dict(),
-                "reason": "fallback",
+                "alternatives": [],
+                "reason": "none_available",
                 "order_count": None,
             }
 
-        # Nothing available
         return {
-            "alternative": None,
-            "reason": "none_available",
-            "order_count": None,
+            "alternatives": selected[:max_options],
+            "reason": selected[0]["reason"],
+            "order_count": selected[0].get("order_count"),
         }
     finally:
         session.close()
+
+
+def select_best_alternative(
+    client_email: str,
+    base_flavor: str,
+    warehouse: str | None = None,
+) -> dict:
+    """Backward-compatible wrapper that returns only one best alternative."""
+    decision = select_best_alternatives(
+        client_email=client_email,
+        base_flavor=base_flavor,
+        warehouse=warehouse,
+        max_options=1,
+    )
+    if decision["alternatives"]:
+        first = decision["alternatives"][0]
+        return {
+            "alternative": first["alternative"],
+            "reason": first["reason"],
+            "order_count": first.get("order_count"),
+        }
+    return {
+        "alternative": None,
+        "reason": "none_available",
+        "order_count": None,
+    }
 
 
 def get_gmail_thread_history(client_email: str, max_results: int = 10) -> list[dict]:

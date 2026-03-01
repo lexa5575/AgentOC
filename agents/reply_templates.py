@@ -16,7 +16,7 @@ from db.memory import (
     decrement_discount,
     get_client,
     get_stock_summary,
-    select_best_alternative,
+    select_best_alternatives,
 )
 
 logger = logging.getLogger(__name__)
@@ -210,12 +210,13 @@ def process_classified_email(classification: EmailClassification) -> dict:
             stock_result = check_stock_for_order(items_for_check)
 
             if not stock_result["all_in_stock"]:
-                # Select ONE best alternative per insufficient item
+                # Select up to three alternatives per insufficient item
                 best_alternatives = {}
                 for insuff in stock_result["insufficient_items"]:
-                    best = select_best_alternative(
+                    best = select_best_alternatives(
                         client_email=classification.client_email,
                         base_flavor=insuff["base_flavor"],
+                        max_options=3,
                     )
                     best_alternatives[insuff["base_flavor"]] = best
 
@@ -228,7 +229,7 @@ def process_classified_email(classification: EmailClassification) -> dict:
                     "Stock insufficient for %s: %s (alternatives: %s)",
                     classification.client_email,
                     [i["base_flavor"] for i in stock_result["insufficient_items"]],
-                    {k: v["reason"] for k, v in best_alternatives.items()},
+                    {k: v.get("reason", "none_available") for k, v in best_alternatives.items()},
                 )
                 return result
 
@@ -344,18 +345,22 @@ def format_result(result: dict) -> str:
             lines.append("")
             lines.append("ALTERNATIVE DECISION:")
             for flavor, decision in best_alts.items():
-                alt = decision.get("alternative")
-                reason = decision.get("reason", "none_available")
-                if alt:
-                    reason_text = reason
-                    if reason == "history" and decision.get("order_count"):
-                        reason_text = f"history ({decision['order_count']}x ordered before)"
-                    lines.append(
-                        f"  {flavor} → {alt['category']} / {alt['product_name']} "
-                        f"(qty: {alt['quantity']}) [{reason_text}]"
-                    )
-                else:
+                alts = decision.get("alternatives", [])
+                if not alts:
                     lines.append(f"  {flavor} → no alternative available")
+                    continue
+
+                rendered = []
+                for opt in alts:
+                    alt = opt["alternative"]
+                    reason = opt.get("reason", "fallback")
+                    reason_text = reason
+                    if reason == "history" and opt.get("order_count"):
+                        reason_text = f"history ({opt['order_count']}x ordered before)"
+                    rendered.append(
+                        f"{alt['category']} / {alt['product_name']} (qty: {alt['quantity']}) [{reason_text}]"
+                    )
+                lines.append(f"  {flavor} → " + " | ".join(rendered))
         lines.append("")
 
     lines.append("=" * 50)

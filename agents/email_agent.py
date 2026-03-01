@@ -166,13 +166,14 @@ WHAT YOU CANNOT DO:
 
 OUT-OF-STOCK REPLIES:
 - Follow the TEMPLATE GUIDE structure CLOSELY
-- Use the SELECTED ALTERNATIVE provided — do NOT choose a different product
+- Use only products from SELECTED ALTERNATIVES — do NOT choose different products
 - If the reason is "history", mention naturally: "We have Green which you've enjoyed before"
 - If the reason is "same_flavor", mention the region: "We have Turquoise from Armenia"
 - If the reason is "fallback", just suggest it normally without extra explanation
 - If no alternative available, skip option 1 and only keep option 2 (website)
 - For PARTIAL SHORTAGE: mention "we have X available" + suggest replacement for remainder
-- ONLY mention products from SELECTED ALTERNATIVE — NEVER invent or suggest other items
+- For option 1, you may include up to 3 alternatives when provided
+- ONLY mention products from SELECTED ALTERNATIVES — NEVER invent or suggest other items
 - Conversation history is for STYLE/TONE only — NOT for stock information
 - Always keep option 2 (website link) exactly as in template
 
@@ -331,17 +332,22 @@ def classify_and_process(email_text: str, gmail_message_id: str | None = None) -
             # Build alternative decision text
             alt_lines = []
             for flavor, decision in best_alts.items():
-                alt = decision.get("alternative")
-                reason = decision.get("reason", "none_available")
-                if alt:
+                options = decision.get("alternatives", [])
+                if not options:
+                    alt_lines.append(f"{flavor}: не найдена")
+                    continue
+
+                rendered = []
+                for opt in options[:3]:
+                    alt = opt["alternative"]
+                    reason = opt.get("reason", "fallback")
                     reason_ru = {
                         "same_flavor": "тот же вкус",
-                        "history": f"из истории ({decision.get('order_count', '?')} заказов)",
+                        "history": f"из истории ({opt.get('order_count', '?')} заказов)",
                         "fallback": "из наличия",
                     }.get(reason, reason)
-                    alt_lines.append(f"{alt['category']} / {alt['product_name']} [{reason_ru}]")
-                else:
-                    alt_lines.append("не найдена")
+                    rendered.append(f"{alt['category']} / {alt['product_name']} [{reason_ru}]")
+                alt_lines.append(f"{flavor}: " + "; ".join(rendered))
             alt_text = "\n".join(alt_lines)
 
             tg_msg = (
@@ -412,22 +418,28 @@ def classify_and_process(email_text: str, gmail_message_id: str | None = None) -
                 # Selected alternative for each OOS flavor
                 alt_lines = []
                 for flavor, decision in best_alternatives.items():
-                    alt = decision.get("alternative")
-                    reason = decision.get("reason", "none_available")
-                    if alt:
-                        reason_detail = reason
-                        if reason == "history" and decision.get("order_count"):
-                            reason_detail = f"customer ordered {alt['product_name']} {decision['order_count']} times before"
-                        elif reason == "same_flavor":
-                            reason_detail = f"same flavor from {alt['category']}"
-                        elif reason == "fallback":
-                            reason_detail = "available in stock"
-                        alt_lines.append(
-                            f"- {alt['category']} / {alt['product_name']} (qty: {alt['quantity']}) "
-                            f"— reason: {reason_detail}"
-                        )
+                    options = decision.get("alternatives", [])
+                    if options:
+                        alt_lines.append(f"For {flavor}:")
+                        for i, opt in enumerate(options[:3], 1):
+                            alt = opt["alternative"]
+                            reason = opt.get("reason", "fallback")
+                            reason_detail = reason
+                            if reason == "history" and opt.get("order_count"):
+                                reason_detail = (
+                                    f"customer ordered flavor like {alt['product_name']} "
+                                    f"{opt['order_count']} times before"
+                                )
+                            elif reason == "same_flavor":
+                                reason_detail = f"same flavor from {alt['category']}"
+                            elif reason == "fallback":
+                                reason_detail = "available in stock"
+                            alt_lines.append(
+                                f"  {i}. {alt['category']} / {alt['product_name']} (qty: {alt['quantity']}) "
+                                f"— reason: {reason_detail}"
+                            )
                     else:
-                        alt_lines.append("- No alternative available")
+                        alt_lines.append(f"For {flavor}: - No alternative available")
                 alternatives_text = "\n".join(alt_lines)
 
                 fallback_prompt = (
@@ -435,7 +447,7 @@ def classify_and_process(email_text: str, gmail_message_id: str | None = None) -
                     f"Client: {client_info}\n"
                     f"Client name: {result['client_name'] or 'unknown'}\n\n"
                     f"INSUFFICIENT ITEMS:\n{insufficient_text}\n\n"
-                    f"SELECTED ALTERNATIVE FOR OPTION 1:\n"
+                    f"SELECTED ALTERNATIVES FOR OPTION 1 (up to 3 per missing flavor):\n"
                     f"{alternatives_text}\n\n"
                 )
                 if history_text:
@@ -447,7 +459,8 @@ def classify_and_process(email_text: str, gmail_message_id: str | None = None) -
                     f"INSTRUCTIONS:\n"
                     f"- Follow the template guide structure above\n"
                     f"- Replace {{FLAVOR_LIST}} with the actual out-of-stock flavor names\n"
-                    f"- Use EXACTLY the selected alternative in option 1\n"
+                    f"- For option 1, use only products from SELECTED ALTERNATIVES\n"
+                    f"- You may include up to 3 alternatives in option 1 if provided\n"
                     f"- If reason is 'history', mention naturally they ordered it before\n"
                     f"- If partial shortage, mention 'we have X available'\n"
                     f"- Keep the website link https://shipmecarton.com and option 2 exactly as shown\n"
