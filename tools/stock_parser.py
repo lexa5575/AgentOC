@@ -56,8 +56,11 @@ ZONE_CONFIG = {
         "sections": ["KZ TEREA", "TEREA JAPAN", "TEREA EUROPE"],
     },
     "middle": {
-        "col_range": (9, 17),       # columns J through Q
-        "sections": ["ONE", "STND", "PRIME", "УНИКАЛЬНАЯ TEREA"],
+        "col_range": (9, 18),       # columns J through R
+        "sections": ["УНИКАЛЬНАЯ ТЕРЕА"],
+        # ONE/STND/PRIME have no section marker — detected by product name prefix.
+        # Parsed via _parse_prefix_sections() from zone start to first marker.
+        "prefix_sections": ["ONE", "STND", "PRIME"],
     },
     "right": {
         "col_range": (17, 27),      # columns R through AA
@@ -71,8 +74,8 @@ _HEADER_WORDS = {
     "customer", "discount", "lost", "refund",
 }
 
-# Section markers that are very short — need exact cell match
-_SHORT_MARKERS = {"ONE", "STND", "PRIME"}
+# Product name prefixes that define categories (no standalone section marker)
+_PREFIX_CATEGORIES = {"ONE", "STND", "PRIME"}
 
 
 # ---------------------------------------------------------------------------
@@ -151,15 +154,9 @@ def _find_section_markers(
 
             for section in section_names:
                 section_upper = section.upper()
-
-                if section in _SHORT_MARKERS:
-                    # Short markers: exact cell match only
-                    if cell_upper == section_upper:
-                        found[section] = row_idx
-                else:
-                    # Longer markers: cell starts with or equals the marker
-                    if cell_upper == section_upper or cell_upper.startswith(section_upper + " "):
-                        found[section] = row_idx
+                # Match: cell equals marker or starts with marker + space
+                if cell_upper == section_upper or cell_upper.startswith(section_upper + " "):
+                    found[section] = row_idx
 
     return found
 
@@ -229,20 +226,20 @@ def _parse_section_products(
         if not numeric_values:
             continue  # No numbers at all — skip
 
-        # Primary: last numeric value = remaining quantity
+        # Last numeric value = remaining quantity.
+        # This is the most reliable approach: the remainder column is always
+        # the rightmost filled number in a product row.
         quantity = numeric_values[-1]
         source_col = numeric_positions[-1]
         is_fallback = False
 
-        # Fallback: if last value is empty but we have ARRIVED and sales
-        # This handles cases where the remainder cell hasn't been filled yet
-        if len(numeric_values) >= 4:
+        # Consistency check when we have enough data (5+ numbers =
+        # ARRIVED + 3 sales + REMAINDER)
+        if len(numeric_values) >= 5:
             arrived = numeric_values[0]
             sales_sum = sum(numeric_values[1:-1])
             calculated = arrived - sales_sum
-
-            # Consistency check: compare calculated vs actual remainder
-            if quantity != calculated and abs(quantity - calculated) > 2:
+            if abs(quantity - calculated) > 2:
                 warnings.append(
                     f"{section_name}/{product_name}: remainder={quantity} "
                     f"but ARRIVED({arrived}) - sales({sales_sum}) = {calculated} "
@@ -259,6 +256,83 @@ def _parse_section_products(
         ))
 
     return records, warnings
+
+
+def _parse_prefix_sections(
+    matrix: list[list],
+    col_start: int,
+    col_end: int,
+    prefixes: list[str],
+    stop_row: int,
+) -> tuple[list[StockRecord], list[str], list[str]]:
+    """Parse products whose name starts with a known prefix (ONE, STND, PRIME).
+
+    Scans ALL rows in the zone up to stop_row. Keeps the LAST occurrence
+    of each product (handles weekly transfers where old data stays above).
+
+    Returns (records, found_prefixes, warnings).
+    """
+    prefix_upper = {p.upper() for p in prefixes}
+
+    # Scan all rows, keeping last occurrence of each (category, product_name)
+    last_seen: dict[tuple[str, str], StockRecord] = {}
+    found_prefixes = set()
+
+    for row_idx in range(min(stop_row, len(matrix))):
+        subrow = _extract_subrow(matrix[row_idx], col_start, col_end)
+
+        if not any(str(c).strip() for c in subrow):
+            continue
+        if _is_header_row(subrow):
+            continue
+
+        # Find product name (first non-numeric text cell)
+        product_name = ""
+        for cell in subrow:
+            cell_str = str(cell).strip()
+            if cell_str and not _is_number(cell):
+                product_name = _normalize_name(cell_str)
+                break
+
+        if not product_name:
+            continue
+
+        # Determine category from prefix
+        category = None
+        for p in prefixes:
+            if product_name.upper().startswith(p.upper() + " "):
+                category = p.upper()
+                found_prefixes.add(p)
+                break
+
+        if not category:
+            continue
+
+        # Find numeric values
+        numeric_values = []
+        numeric_positions = []
+        for i, cell in enumerate(subrow):
+            if _is_number(cell) and str(cell).strip():
+                numeric_values.append(_to_int(cell))
+                numeric_positions.append(col_start + i)
+
+        if not numeric_values:
+            continue
+
+        quantity = numeric_values[-1]
+        source_col = numeric_positions[-1]
+
+        # Last occurrence wins (overwrites earlier transfers)
+        last_seen[(category, product_name)] = StockRecord(
+            category=category,
+            product_name=product_name,
+            quantity=quantity,
+            is_fallback=False,
+            source_row=row_idx,
+            source_col=source_col,
+        )
+
+    return list(last_seen.values()), list(found_prefixes), []
 
 
 # ---------------------------------------------------------------------------
@@ -304,7 +378,32 @@ def parse_stock(matrix: list[list]) -> ParseResult:
         # All marker rows in this zone (for stop detection)
         all_marker_rows = list(markers.values())
 
-        # Parse products for each found section
+        # Handle prefix-based sections (ONE/STND/PRIME — no standalone markers)
+        prefix_sections = zone_cfg.get("prefix_sections", [])
+        if prefix_sections:
+            # Stop row = first marker in this zone (e.g., УНИКАЛЬНАЯ ТЕРЕА)
+            stop_row = min(markers.values()) if markers else len(matrix)
+            records, found_prefixes, warnings = _parse_prefix_sections(
+                matrix, col_start, col_end, prefix_sections, stop_row,
+            )
+            all_records.extend(records)
+            all_warnings.extend(warnings)
+            for p in prefix_sections:
+                if p in found_prefixes:
+                    sections_found.append(p)
+                    logger.info(
+                        "Parsed prefix section '%s': %d products (zone=%s)",
+                        p, sum(1 for r in records if r.category == p.upper()),
+                        zone_name,
+                    )
+                else:
+                    sections_missing.append(p)
+                    logger.warning(
+                        "Prefix section '%s' not found in zone '%s' (cols %d-%d)",
+                        p, zone_name, col_start, col_end,
+                    )
+
+        # Parse products for each found marker-based section
         for section, marker_row in markers.items():
             records, warnings = _parse_section_products(
                 matrix=matrix,

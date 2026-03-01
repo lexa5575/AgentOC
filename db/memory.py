@@ -314,8 +314,12 @@ def sync_stock(warehouse: str, items: list[dict]) -> int:
 
         # Upsert items
         now = datetime.utcnow()
+        new_keys = set()
         count = 0
         for item in items:
+            key = (item["category"], item["product_name"])
+            new_keys.add(key)
+
             record = (
                 session.query(StockItem)
                 .filter_by(
@@ -344,7 +348,21 @@ def sync_stock(warehouse: str, items: list[dict]) -> int:
                 ))
             count += 1
 
+        # Delete stale items no longer in the spreadsheet
+        stale = (
+            session.query(StockItem)
+            .filter_by(warehouse=warehouse)
+            .all()
+        )
+        deleted = 0
+        for item in stale:
+            if (item.category, item.product_name) not in new_keys:
+                session.delete(item)
+                deleted += 1
+
         session.commit()
+        if deleted:
+            logger.info("Stock sync for %s: %d stale items removed", warehouse, deleted)
         logger.info("Stock sync for %s: %d items upserted", warehouse, count)
         return count
     except Exception as e:

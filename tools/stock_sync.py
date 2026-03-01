@@ -24,8 +24,12 @@ logger = logging.getLogger(__name__)
 _sheets_client: SheetsClient | None = None
 _sync_lock = threading.Lock()
 
-# Minimum required sections for a valid parse (out of 8 total)
-MIN_SECTIONS_REQUIRED = 4
+# Minimum required sections for a valid parse
+MIN_SECTIONS_REQUIRED = 6
+# Sections that MUST be present for a valid sync
+REQUIRED_SECTIONS = {"KZ_TEREA", "TEREA_JAPAN", "TEREA_EUROPE", "ARMENIA"}
+# At least one of these middle-zone sections must be present
+MIDDLE_SECTIONS = {"ONE", "STND", "PRIME", "УНИКАЛЬНАЯ_ТЕРЕА"}
 # Maximum allowed drop in item count (50%)
 MAX_ITEM_DROP_RATIO = 0.5
 
@@ -51,6 +55,22 @@ def _validate_parse(
             f"Only {len(result.sections_found)}/{MIN_SECTIONS_REQUIRED} "
             f"required sections found: {result.sections_found}. "
             f"Missing: {result.sections_missing}"
+        )
+
+    # Check mandatory sections (normalized to upper + underscore)
+    found_norm = {s.upper().replace(" ", "_") for s in result.sections_found}
+    missing_required = REQUIRED_SECTIONS - found_norm
+    if missing_required:
+        return False, (
+            f"Missing required sections: {missing_required}. "
+            f"Found: {found_norm}"
+        )
+
+    # Check at least one middle-zone section
+    if not (found_norm & MIDDLE_SECTIONS):
+        return False, (
+            f"No middle-zone sections found (need at least one of {MIDDLE_SECTIONS}). "
+            f"Found: {found_norm}"
         )
 
     # Check we have at least some records
