@@ -239,14 +239,14 @@ def email_history(client_email: str) -> str:
 
     # If sparse, supplement from Gmail
     if len(history) < 3:
-        gmail_history = db_get_gmail_thread_history(client_email, max_results=10)
+        gmail_history = db_get_gmail_thread_history(client_email, max_results=30)
         if gmail_history:
             local_subjects = {(h["subject"], h["direction"]) for h in history}
             for gh in gmail_history:
                 if (gh["subject"], gh["direction"]) not in local_subjects:
                     history.append(gh)
             history.sort(key=lambda h: h["created_at"])
-            history = history[-15:]
+            history = history[-30:]
 
     if not history:
         return f"No conversation history found for {client_email}."
