@@ -30,9 +30,10 @@ def _build_mock_matrix() -> list[list]:
     rows.append([""] * 27)
     rows.append([""] * 27)
 
-    # --- Row 3: KZ TEREA marker + ARMENIA marker (NO "ONE" marker!) ---
+    # --- Row 3: KZ TEREA marker + LA MAKS header (middle) + ARMENIA marker ---
     r = [""] * 27
     r[1] = "KZ TEREA"
+    r[13] = "LA MAKS"  # header for ONE/STND/PRIME block
     r[18] = "ARMENIA"
     rows.append(r)
 

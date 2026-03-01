@@ -258,6 +258,24 @@ def _parse_section_products(
     return records, warnings
 
 
+def _find_last_block_start(
+    matrix: list[list], col_start: int, col_end: int, stop_row: int,
+) -> int:
+    """Find the start row of the LAST prefix-product block.
+
+    Looks for the last "LA MAKS" header in the zone (appears before each
+    transfer's ONE/STND/PRIME block). Falls back to 0 if not found.
+    """
+    last_header = 0
+    for row_idx in range(min(stop_row, len(matrix))):
+        subrow = _extract_subrow(matrix[row_idx], col_start, col_end)
+        for cell in subrow:
+            if str(cell).strip().upper() == "LA MAKS":
+                last_header = row_idx
+                break
+    return last_header
+
+
 def _parse_prefix_sections(
     matrix: list[list],
     col_start: int,
@@ -267,18 +285,20 @@ def _parse_prefix_sections(
 ) -> tuple[list[StockRecord], list[str], list[str]]:
     """Parse products whose name starts with a known prefix (ONE, STND, PRIME).
 
-    Scans ALL rows in the zone up to stop_row. Keeps the LAST occurrence
-    of each product (handles weekly transfers where old data stays above).
+    Scans only the LAST block (from last "LA MAKS" header to stop_row).
+    This prevents picking up stale data from archived transfer blocks above.
 
     Returns (records, found_prefixes, warnings).
     """
     prefix_upper = {p.upper() for p in prefixes}
 
-    # Scan all rows, keeping last occurrence of each (category, product_name)
+    # Find start of the last block (after last "LA MAKS" header)
+    start_row = _find_last_block_start(matrix, col_start, col_end, stop_row)
+
     last_seen: dict[tuple[str, str], StockRecord] = {}
     found_prefixes = set()
 
-    for row_idx in range(min(stop_row, len(matrix))):
+    for row_idx in range(start_row, min(stop_row, len(matrix))):
         subrow = _extract_subrow(matrix[row_idx], col_start, col_end)
 
         if not any(str(c).strip() for c in subrow):
