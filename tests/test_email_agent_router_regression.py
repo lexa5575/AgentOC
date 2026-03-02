@@ -89,12 +89,16 @@ def _install_import_stubs() -> None:
     sys.modules["db.clients"] = db_clients
     sys.modules["db.conversation_state"] = db_conversation_state
 
-    # tools.web_search
-    tools_mod = types.ModuleType("tools")
-    tools_mod.__path__ = []
+    # Only stub tools.web_search; preserve real tools package for stock_parser
+    if "tools" not in sys.modules:
+        try:
+            import tools
+        except ImportError:
+            tools_mod = types.ModuleType("tools")
+            tools_mod.__path__ = []
+            sys.modules["tools"] = tools_mod
     tools_web_search = types.ModuleType("tools.web_search")
     tools_web_search.get_search_tools = lambda: []
-    sys.modules["tools"] = tools_mod
     sys.modules["tools.web_search"] = tools_web_search
 
     # utils.telegram

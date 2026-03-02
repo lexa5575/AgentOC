@@ -82,12 +82,17 @@ def _ensure_stubs():
         db_cs.get_client_states = lambda *a, **kw: []
         sys.modules["db.conversation_state"] = db_cs
 
-    # tools
-    if "tools" not in sys.modules:
-        tools_mod = types.ModuleType("tools")
-        tools_mod.__path__ = []
-        sys.modules["tools"] = tools_mod
+    # tools — only stub web_search (the one email_agent imports),
+    # do NOT stub the tools package itself to avoid breaking tools.stock_parser
     if "tools.web_search" not in sys.modules:
+        if "tools" not in sys.modules:
+            # Import real package so __path__ is correct for other tests
+            try:
+                import tools
+            except ImportError:
+                tools_mod = types.ModuleType("tools")
+                tools_mod.__path__ = []
+                sys.modules["tools"] = tools_mod
         tools_ws = types.ModuleType("tools.web_search")
         tools_ws.get_search_tools = lambda: []
         sys.modules["tools.web_search"] = tools_ws
