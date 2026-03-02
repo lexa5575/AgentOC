@@ -284,6 +284,29 @@ def format_email_history(history: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def format_thread_for_classifier(history: list[dict]) -> str:
+    """Format thread history for the Classifier prompt — full body, no truncation.
+
+    Classifier accuracy depends on seeing the complete conversation context.
+    """
+    if not history:
+        return ""
+
+    lines = ["--- THREAD HISTORY ---"]
+    for msg in history:
+        ts = msg["created_at"].strftime("%Y-%m-%d") if msg.get("created_at") else "unknown"
+        if msg["direction"] == "inbound":
+            prefix = f"[CLIENT] {ts} | {msg.get('subject', '')}"
+        else:
+            prefix = f"[WE SENT] {ts} | {msg.get('subject', '')}"
+
+        lines.append(prefix)
+        lines.append(msg.get("body", ""))
+        lines.append("---")
+
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Core processing function (pure Python, no LLM, no tokens)
 # ---------------------------------------------------------------------------

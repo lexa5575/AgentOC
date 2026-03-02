@@ -25,6 +25,7 @@ from agents.reply_templates import (
     EmailClassification,
     OrderItem,
     format_result,
+    format_thread_for_classifier,
     process_classified_email,
 )
 from agents.checker import CheckResult, check_reply, format_check_result_for_telegram
@@ -33,7 +34,7 @@ from agents.router import route_to_handler
 from agents.state_updater import update_conversation_state
 from db import get_postgres_db
 from db.conversation_state import get_state, save_state
-from db.memory import save_email, save_order_items
+from db.memory import get_full_thread_history, save_email, save_order_items
 from utils.telegram import send_telegram
 
 logger = logging.getLogger(__name__)
@@ -234,28 +235,34 @@ def classify_and_process(
         Formatted classification result with draft reply if template exists.
     """
     try:
-        # Step 0.5: Get conversation state for context (if thread exists)
+        # Step 0.5: Get conversation state + thread history for classifier context
         conversation_context = ""
         pre_state_record = None  # Reused in Step 2.5 to avoid double DB query
         if gmail_thread_id:
             try:
+                # Conversation state (structured JSON)
                 pre_state_record = get_state(gmail_thread_id)
                 state_record = pre_state_record
                 if state_record and state_record.get("state"):
                     state = state_record["state"]
-                    conversation_context = f"""
---- CONVERSATION STATE ---
+                    conversation_context = f"""--- CONVERSATION STATE ---
 Status: {state.get('status', 'unknown')}
 Topic: {state.get('topic', 'unknown')}
 Facts: {json.dumps(state.get('facts', {}), ensure_ascii=False)}
-Last exchange - We said: {state.get('last_exchange', {}).get('we_said', 'N/A')[:100] if state.get('last_exchange') else 'N/A'}
-Last exchange - They said: {state.get('last_exchange', {}).get('they_said', 'N/A')[:100] if state.get('last_exchange') else 'N/A'}
 Open questions: {state.get('open_questions', [])}
 Summary: {state.get('summary', '')}
 
 """
             except Exception as e:
                 logger.warning("Failed to get conversation state for classifier: %s", e)
+
+            # Thread history (full messages — Classifier needs complete context)
+            try:
+                thread_history = get_full_thread_history(gmail_thread_id, max_results=15)
+                if thread_history:
+                    conversation_context += format_thread_for_classifier(thread_history) + "\n\n"
+            except Exception as e:
+                logger.warning("Failed to get thread history for classifier: %s", e)
 
         # Step 1: LLM classifies (returns JSON text)
         logger.info("Classifying email...")
