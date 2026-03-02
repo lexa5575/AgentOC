@@ -108,23 +108,150 @@ REPLY_TEMPLATES = {
 }
 
 # ---------------------------------------------------------------------------
-# Out-of-Stock Guide (reference for fallback LLM, NOT a Python-fill template)
+# Out-of-Stock Template (STABLE — Python fills variables, no LLM)
 # ---------------------------------------------------------------------------
-OUT_OF_STOCK_GUIDE = (
-    "Hi!\n"
-    "How are you?\n"
-    "Unfortunately, we just ran out of flavor {FLAVOR_LIST}\n"
-    "*\n"
-    "What can we offer? Please choose one of the options below.\n"
-    "1. {ALTERNATIVE_SUGGESTION}\n"
-    "2. Check our website for substitutions and ready to ship sticks. "
-    "( follow the link below )\n"
-    "\n"
-    "Link for the sticks substitution\n"
-    "https://shipmecarton.com\n"
-    "*\n"
-    "Please let us know what you think"
-)
+def _format_alternative(alt_entry: dict) -> str:
+    """Format a single alternative based on its reason.
+    
+    Args:
+        alt_entry: Dict with keys: alternative (stock item dict), reason, order_count
+    
+    Returns:
+        Formatted string like "Turquoise from Armenia" or "Amber (you've ordered before)"
+    """
+    alt = alt_entry["alternative"]
+    reason = alt_entry.get("reason", "fallback")
+    product_name = alt["product_name"]
+    category = alt.get("category", "")
+    
+    # Map category to readable region
+    region_map = {
+        "ARMENIA": "Armenia",
+        "KZ_TEREA": "Kazakhstan",
+        "TEREA_JAPAN": "Japan",
+        "TEREA_EUROPE": "Europe",
+        "УНИКАЛЬНАЯ_ТЕРЕА": "Unique collection",
+        "ONE": "ONE",
+        "STND": "STND",
+        "PRIME": "PRIME",
+    }
+    region = region_map.get(category, category)
+    
+    if reason == "same_flavor":
+        return f"{product_name} from {region}"
+    elif reason == "history":
+        return f"{product_name} (you've ordered before)"
+    else:  # fallback
+        return product_name
+
+
+def fill_out_of_stock_template(
+    insufficient_items: list[dict],
+    best_alternatives: dict,
+) -> str:
+    """Fill the Out-of-Stock template with actual data. Zero LLM tokens.
+    
+    Handles all situations:
+    - Full OOS (qty = 0)
+    - Partial OOS (qty > 0 but < ordered)
+    - Mixed (some full, some partial)
+    - No alternatives available
+    
+    Args:
+        insufficient_items: List of items with insufficient stock, each has:
+            - base_flavor, ordered_qty, total_available, product_name
+        best_alternatives: Dict mapping base_flavor -> {alternatives: [...], reason, ...}
+    
+    Returns:
+        Complete email reply text, ready to send.
+    """
+    # Step 1: Classify items into full OOS vs partial OOS
+    full_oos = []       # total_available == 0
+    partial_oos = []    # total_available > 0 but < ordered
+    
+    for item in insufficient_items:
+        if item["total_available"] == 0:
+            full_oos.append(item)
+        else:
+            partial_oos.append(item)
+    
+    # Step 2: Build the problem description
+    problem_parts = []
+    
+    if full_oos:
+        if len(full_oos) == 1:
+            problem_parts.append(f"we just ran out of {full_oos[0]['base_flavor']}")
+        else:
+            flavors = ", ".join([i["base_flavor"] for i in full_oos[:-1]])
+            flavors += f" and {full_oos[-1]['base_flavor']}"
+            problem_parts.append(f"we just ran out of {flavors}")
+    
+    if partial_oos:
+        for p in partial_oos:
+            problem_parts.append(
+                f"we only have {p['total_available']} {p['base_flavor']} available "
+                f"(you ordered {p['ordered_qty']})"
+            )
+    
+    # Combine problem parts
+    if len(problem_parts) == 1:
+        problem_text = problem_parts[0]
+    elif len(problem_parts) == 2:
+        problem_text = f"{problem_parts[0]}, and {problem_parts[1]}"
+    else:
+        problem_text = ", ".join(problem_parts[:-1]) + f", and {problem_parts[-1]}"
+    
+    # Step 3: Build alternatives section
+    has_alternatives = False
+    alt_lines = []
+    
+    for item in insufficient_items:
+        flavor = item["base_flavor"]
+        decision = best_alternatives.get(flavor, {})
+        alts = decision.get("alternatives", [])
+        
+        if alts:
+            has_alternatives = True
+            # Format up to 3 alternatives
+            formatted_alts = [_format_alternative(a) for a in alts[:3]]
+            
+            if len(insufficient_items) == 1:
+                # Single flavor — no need to specify "For X:"
+                alt_lines.append(", ".join(formatted_alts))
+            else:
+                # Multiple flavors — specify which flavor
+                alt_lines.append(f"For {flavor}: {', '.join(formatted_alts)}")
+    
+    # Step 4: Build the final email
+    lines = [
+        "Hi!",
+        "How are you?",
+        f"Unfortunately, {problem_text}",
+        "",
+        "What can we offer? Please choose one of the options below.",
+    ]
+    
+    if has_alternatives:
+        if len(alt_lines) == 1:
+            lines.append(f"1. We have {alt_lines[0]}")
+        else:
+            lines.append("1. We have alternatives:")
+            for alt_line in alt_lines:
+                lines.append(f"   {alt_line}")
+        lines.append("2. Check our website for substitutions and ready to ship sticks.")
+    else:
+        # No alternatives — only website option
+        lines.append("1. Check our website for substitutions and ready to ship sticks.")
+    
+    lines.extend([
+        "",
+        "Link for the sticks substitution",
+        "https://shipmecarton.com",
+        "",
+        "Please let us know what you think",
+    ])
+    
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------

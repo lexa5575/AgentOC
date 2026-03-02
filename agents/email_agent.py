@@ -24,7 +24,7 @@ from agno.models.openai import OpenAIResponses
 from agents.reply_templates import (
     EmailClassification,
     OrderItem,
-    OUT_OF_STOCK_GUIDE,
+    fill_out_of_stock_template,
     format_email_history,
     format_result,
     process_classified_email,
@@ -138,7 +138,6 @@ STYLE — MATCH HISTORY:
 - If history shows we use specific phrases (e.g., payment instructions, greeting patterns), reuse them verbatim
 - If no history is available: start with "Hi {name}," / "Hello,", 2-5 sentences, casual tone
 - Always end with exactly "Thank you!" — nothing after it, no name, no signature
-  EXCEPTION: For OUT OF STOCK replies, end with "Please let us know what you think" (as per template)
 
 WHAT YOU CAN DO:
 - Reference information provided in the context and conversation history
@@ -158,23 +157,8 @@ WHAT YOU CANNOT DO:
 - Invent prices, tracking numbers, delivery dates, or stock levels
 - Offer discounts or change payment terms
 - Tell customer to check the website — WE always check for them
-  EXCEPTION: For OUT OF STOCK situations, you MUST include the website link
-  https://shipmecarton.com as option 2 (this is part of the out-of-stock template)
 - Reveal you are AI
 - Write multiple reply variants — only ONE reply
-
-OUT-OF-STOCK REPLIES:
-- Follow the TEMPLATE GUIDE structure CLOSELY
-- Use only products from SELECTED ALTERNATIVES — do NOT choose different products
-- If the reason is "history", mention naturally: "We have Green which you've enjoyed before"
-- If the reason is "same_flavor", mention the region: "We have Turquoise from Armenia"
-- If the reason is "fallback", just suggest it normally without extra explanation
-- If no alternative available, skip option 1 and only keep option 2 (website)
-- For PARTIAL SHORTAGE: mention "we have X available" + suggest replacement for remainder
-- For option 1, you may include up to 3 alternatives when provided
-- ONLY mention products from SELECTED ALTERNATIVES — NEVER invent or suggest other items
-- Conversation history is for STYLE/TONE only — NOT for stock information
-- Always keep option 2 (website link) exactly as in template
 
 READING HISTORY — PRIORITIZE:
 - [WE SENT] messages are your style reference — replicate their tone and wording
@@ -247,81 +231,8 @@ def _build_oos_telegram(classification, result: dict) -> str:
         f"<b>Заказ:</b> #{classification.order_id or 'N/A'}\n"
         f"<b>Нет в наличии:</b>\n" + "\n".join(oos_lines) + "\n\n"
         f"<b>Альтернатива:</b>\n" + "\n".join(alt_lines) + "\n\n"
-        f"AI генерирует ответ."
+        f"Ответ заполнен по шаблону."
     )
-
-
-def _build_oos_fallback_prompt(
-    result: dict, client_info: str, history_text: str, email_text: str,
-) -> str:
-    """Build the LLM fallback prompt for out-of-stock situations."""
-    stock_data = result["stock_issue"]
-    stock_check = stock_data["stock_check"]
-    best_alternatives = stock_data.get("best_alternatives", {})
-
-    insufficient_lines = []
-    for item in stock_check["insufficient_items"]:
-        partial = ""
-        if item["total_available"] > 0:
-            partial = f" — PARTIAL SHORTAGE (have {item['total_available']})"
-        insufficient_lines.append(
-            f"- {item['product_name']} (flavor: {item['base_flavor']}): "
-            f"ordered {item['ordered_qty']}, available {item['total_available']}{partial}"
-        )
-    insufficient_text = "\n".join(insufficient_lines)
-
-    alt_lines = []
-    for flavor, decision in best_alternatives.items():
-        options = decision.get("alternatives", [])
-        if options:
-            alt_lines.append(f"For {flavor}:")
-            for i, opt in enumerate(options[:3], 1):
-                alt = opt["alternative"]
-                reason = opt.get("reason", "fallback")
-                reason_detail = reason
-                if reason == "history" and opt.get("order_count"):
-                    reason_detail = (
-                        f"customer ordered flavor like {alt['product_name']} "
-                        f"{opt['order_count']} times before"
-                    )
-                elif reason == "same_flavor":
-                    reason_detail = f"same flavor from {alt['category']}"
-                elif reason == "fallback":
-                    reason_detail = "available in stock"
-                alt_lines.append(
-                    f"  {i}. {alt['category']} / {alt['product_name']} (qty: {alt['quantity']}) "
-                    f"— reason: {reason_detail}"
-                )
-        else:
-            alt_lines.append(f"For {flavor}: - No alternative available")
-    alternatives_text = "\n".join(alt_lines)
-
-    prompt = (
-        f"Situation: OUT OF STOCK (new order with insufficient stock)\n"
-        f"Client: {client_info}\n"
-        f"Client name: {result['client_name'] or 'unknown'}\n\n"
-        f"INSUFFICIENT ITEMS:\n{insufficient_text}\n\n"
-        f"SELECTED ALTERNATIVES FOR OPTION 1 (up to 3 per missing flavor):\n"
-        f"{alternatives_text}\n\n"
-    )
-    if history_text:
-        prompt += f"{history_text}\n\n"
-    prompt += (
-        f"Original email:\n{email_text}\n\n"
-        f"TEMPLATE GUIDE (follow this structure closely):\n"
-        f"{OUT_OF_STOCK_GUIDE}\n\n"
-        f"INSTRUCTIONS:\n"
-        f"- Follow the template guide structure above\n"
-        f"- Replace {{FLAVOR_LIST}} with the actual out-of-stock flavor names\n"
-        f"- For option 1, use only products from SELECTED ALTERNATIVES\n"
-        f"- You may include up to 3 alternatives in option 1 if provided\n"
-        f"- If reason is 'history', mention naturally they ordered it before\n"
-        f"- If partial shortage, mention 'we have X available'\n"
-        f"- Keep the website link https://shipmecarton.com and option 2 exactly as shown\n"
-        f"- End with 'Please let us know what you think'\n"
-        f"Write the reply:"
-    )
-    return prompt
 
 
 def _find_value(data: dict, *keys: str):
@@ -431,32 +342,52 @@ def classify_and_process(email_text: str, gmail_message_id: str | None = None) -
         if result.get("stock_issue"):
             tg_msg = _build_oos_telegram(classification, result)
 
-        # Step 3: If no template, ask fallback agent (with conversation history)
+        # Step 3: Handle AI fallback cases
         if result["needs_ai_fallback"] and result["needs_reply"]:
-            client_info = ""
-            if result["client_found"]:
-                c = result["client_data"]
-                client_info = (
-                    f"Known client: {c.get('name', 'unknown')}, "
-                    f"payment type: {c['payment_type']}"
-                )
-            else:
-                client_info = "NEW CLIENT — not in our database"
-
-            # Fetch conversation history: local DB + Gmail (merged)
-            history = get_full_email_history(result["client_email"], max_results=10)
-            history_text = format_email_history(history)
-            logger.info(
-                "AI fallback for situation=%s, history=%d messages",
-                result["situation"], len(history),
-            )
-
-            # Build fallback prompt: enriched for out-of-stock, generic otherwise
+            # OUT-OF-STOCK: Use stable Python template (0 LLM tokens)
             if result.get("stock_issue"):
-                fallback_prompt = _build_oos_fallback_prompt(
-                    result, client_info, history_text, email_text,
+                stock_issue = result["stock_issue"]
+                insufficient_items = stock_issue["stock_check"]["insufficient_items"]
+                best_alternatives = stock_issue.get("best_alternatives", {})
+                
+                # Fill template with Python — no LLM involved
+                result["draft_reply"] = fill_out_of_stock_template(
+                    insufficient_items=insufficient_items,
+                    best_alternatives=best_alternatives,
                 )
+                result["needs_ai_fallback"] = False
+                result["template_used"] = True
+                
+                logger.info(
+                    "OOS template filled for %s (0 LLM tokens)",
+                    classification.client_email,
+                )
+                
+                # Send Telegram with draft
+                if tg_msg:
+                    draft_preview = result["draft_reply"][:500]
+                    send_telegram(tg_msg + f"\n--- DRAFT ---\n<pre>{draft_preview}</pre>")
+            
+            # OTHER SITUATIONS: Use LLM fallback agent
             else:
+                client_info = ""
+                if result["client_found"]:
+                    c = result["client_data"]
+                    client_info = (
+                        f"Known client: {c.get('name', 'unknown')}, "
+                        f"payment type: {c['payment_type']}"
+                    )
+                else:
+                    client_info = "NEW CLIENT — not in our database"
+
+                # Fetch conversation history: local DB + Gmail (merged)
+                history = get_full_email_history(result["client_email"], max_results=10)
+                history_text = format_email_history(history)
+                logger.info(
+                    "AI fallback for situation=%s, history=%d messages",
+                    result["situation"], len(history),
+                )
+
                 fallback_prompt = (
                     f"Situation: {result['situation']}\n"
                     f"Client: {client_info}\n"
@@ -469,14 +400,9 @@ def classify_and_process(email_text: str, gmail_message_id: str | None = None) -
                     f"Write a reply:"
                 )
 
-            fallback_response = fallback_agent.run(fallback_prompt)
-            result["draft_reply"] = fallback_response.content
-            result["needs_ai_fallback"] = False
-
-            # Send Telegram with draft for OOS (deferred from above)
-            if result.get("stock_issue") and tg_msg:
-                draft_preview = result["draft_reply"][:500]
-                send_telegram(tg_msg + f"\n--- DRAFT ---\n<pre>{draft_preview}</pre>")
+                fallback_response = fallback_agent.run(fallback_prompt)
+                result["draft_reply"] = fallback_response.content
+                result["needs_ai_fallback"] = False
 
         # Step 4: Format the output
         logger.info(
