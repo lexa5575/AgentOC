@@ -9,8 +9,6 @@ Run with test data:
     python -m agents.admin_agent
 """
 
-from datetime import timezone
-
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
 
@@ -20,8 +18,7 @@ from db.memory import (
     delete_client as db_delete_client,
     get_client as db_get_client,
     get_available_by_category as db_get_available_by_category,
-    get_email_history as db_get_email_history,
-    get_gmail_thread_history as db_get_gmail_thread_history,
+    get_full_email_history as db_get_full_email_history,
     get_stock_summary as db_get_stock_summary,
     list_clients as db_list_clients,
     search_stock as db_search_stock,
@@ -236,24 +233,7 @@ def email_history(client_email: str) -> str:
     Returns:
         Formatted conversation history or 'no history' message.
     """
-    # Local DB first
-    history = db_get_email_history(client_email)
-
-    # If sparse, supplement from Gmail
-    if len(history) < 3:
-        gmail_history = db_get_gmail_thread_history(client_email, max_results=30)
-        if gmail_history:
-            local_subjects = {(h["subject"], h["direction"]) for h in history}
-            for gh in gmail_history:
-                if (gh["subject"], gh["direction"]) not in local_subjects:
-                    history.append(gh)
-            def _sort_key(h):
-                dt = h["created_at"]
-                if dt.tzinfo is not None:
-                    return dt.timestamp()
-                return dt.replace(tzinfo=timezone.utc).timestamp()
-            history.sort(key=_sort_key)
-            history = history[-30:]
+    history = db_get_full_email_history(client_email, max_results=30)
 
     if not history:
         return f"No conversation history found for {client_email}."

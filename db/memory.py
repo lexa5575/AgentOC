@@ -807,6 +807,36 @@ def select_best_alternative(
     }
 
 
+def get_full_email_history(client_email: str, max_results: int = 10) -> list[dict]:
+    """Get conversation history: local DB first, supplement from Gmail if sparse.
+
+    Merges both sources, deduplicates by (subject, direction),
+    normalizes timezones, and returns chronologically sorted messages.
+    """
+    from datetime import timezone as _tz
+
+    history = get_email_history(client_email)
+
+    if len(history) < 3:
+        gmail_history = get_gmail_thread_history(client_email, max_results=max_results)
+        if gmail_history:
+            local_subjects = {(h["subject"], h["direction"]) for h in history}
+            for gh in gmail_history:
+                if (gh["subject"], gh["direction"]) not in local_subjects:
+                    history.append(gh)
+
+            def _sort_key(h):
+                dt = h["created_at"]
+                if dt.tzinfo is not None:
+                    return dt.timestamp()
+                return dt.replace(tzinfo=_tz.utc).timestamp()
+
+            history.sort(key=_sort_key)
+            history = history[-max_results:]
+
+    return history
+
+
 def get_gmail_thread_history(client_email: str, max_results: int = 10) -> list[dict]:
     """Fetch conversation history from Gmail API for a client.
 

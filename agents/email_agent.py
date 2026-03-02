@@ -17,7 +17,6 @@ Run with test data:
 import json
 import logging
 import re
-from datetime import timezone
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
@@ -31,7 +30,7 @@ from agents.reply_templates import (
     process_classified_email,
 )
 from db import get_postgres_db
-from db.memory import get_email_history, get_gmail_thread_history, save_email, save_order_items
+from db.memory import get_full_email_history, save_email, save_order_items
 from tools.web_search import get_search_tools
 from utils.telegram import send_telegram
 
@@ -212,6 +211,119 @@ ABSOLUTE RULES:
 """
 
 
+def _build_oos_telegram(classification, result: dict) -> str:
+    """Build Telegram notification text for out-of-stock situations."""
+    insufficient = result["stock_issue"]["stock_check"]["insufficient_items"]
+    best_alts = result["stock_issue"].get("best_alternatives", {})
+
+    oos_lines = []
+    for item in insufficient:
+        partial = f" (частично: {item['total_available']} шт)" if item["total_available"] > 0 else ""
+        oos_lines.append(
+            f"{item['base_flavor']} (заказано {item['ordered_qty']}, на складе {item['total_available']}){partial}"
+        )
+
+    alt_lines = []
+    for flavor, decision in best_alts.items():
+        options = decision.get("alternatives", [])
+        if not options:
+            alt_lines.append(f"{flavor}: не найдена")
+            continue
+        rendered = []
+        for opt in options[:3]:
+            alt = opt["alternative"]
+            reason = opt.get("reason", "fallback")
+            reason_ru = {
+                "same_flavor": "тот же вкус",
+                "history": f"из истории ({opt.get('order_count', '?')} заказов)",
+                "fallback": "из наличия",
+            }.get(reason, reason)
+            rendered.append(f"{alt['category']} / {alt['product_name']} [{reason_ru}]")
+        alt_lines.append(f"{flavor}: " + "; ".join(rendered))
+
+    return (
+        f"\u26a0\ufe0f <b>Нет на складе!</b>\n\n"
+        f"<b>Клиент:</b> {classification.client_email}\n"
+        f"<b>Заказ:</b> #{classification.order_id or 'N/A'}\n"
+        f"<b>Нет в наличии:</b>\n" + "\n".join(oos_lines) + "\n\n"
+        f"<b>Альтернатива:</b>\n" + "\n".join(alt_lines) + "\n\n"
+        f"AI генерирует ответ."
+    )
+
+
+def _build_oos_fallback_prompt(
+    result: dict, client_info: str, history_text: str, email_text: str,
+) -> str:
+    """Build the LLM fallback prompt for out-of-stock situations."""
+    stock_data = result["stock_issue"]
+    stock_check = stock_data["stock_check"]
+    best_alternatives = stock_data.get("best_alternatives", {})
+
+    insufficient_lines = []
+    for item in stock_check["insufficient_items"]:
+        partial = ""
+        if item["total_available"] > 0:
+            partial = f" — PARTIAL SHORTAGE (have {item['total_available']})"
+        insufficient_lines.append(
+            f"- {item['product_name']} (flavor: {item['base_flavor']}): "
+            f"ordered {item['ordered_qty']}, available {item['total_available']}{partial}"
+        )
+    insufficient_text = "\n".join(insufficient_lines)
+
+    alt_lines = []
+    for flavor, decision in best_alternatives.items():
+        options = decision.get("alternatives", [])
+        if options:
+            alt_lines.append(f"For {flavor}:")
+            for i, opt in enumerate(options[:3], 1):
+                alt = opt["alternative"]
+                reason = opt.get("reason", "fallback")
+                reason_detail = reason
+                if reason == "history" and opt.get("order_count"):
+                    reason_detail = (
+                        f"customer ordered flavor like {alt['product_name']} "
+                        f"{opt['order_count']} times before"
+                    )
+                elif reason == "same_flavor":
+                    reason_detail = f"same flavor from {alt['category']}"
+                elif reason == "fallback":
+                    reason_detail = "available in stock"
+                alt_lines.append(
+                    f"  {i}. {alt['category']} / {alt['product_name']} (qty: {alt['quantity']}) "
+                    f"— reason: {reason_detail}"
+                )
+        else:
+            alt_lines.append(f"For {flavor}: - No alternative available")
+    alternatives_text = "\n".join(alt_lines)
+
+    prompt = (
+        f"Situation: OUT OF STOCK (new order with insufficient stock)\n"
+        f"Client: {client_info}\n"
+        f"Client name: {result['client_name'] or 'unknown'}\n\n"
+        f"INSUFFICIENT ITEMS:\n{insufficient_text}\n\n"
+        f"SELECTED ALTERNATIVES FOR OPTION 1 (up to 3 per missing flavor):\n"
+        f"{alternatives_text}\n\n"
+    )
+    if history_text:
+        prompt += f"{history_text}\n\n"
+    prompt += (
+        f"Original email:\n{email_text}\n\n"
+        f"TEMPLATE GUIDE (follow this structure closely):\n"
+        f"{OUT_OF_STOCK_GUIDE}\n\n"
+        f"INSTRUCTIONS:\n"
+        f"- Follow the template guide structure above\n"
+        f"- Replace {{FLAVOR_LIST}} with the actual out-of-stock flavor names\n"
+        f"- For option 1, use only products from SELECTED ALTERNATIVES\n"
+        f"- You may include up to 3 alternatives in option 1 if provided\n"
+        f"- If reason is 'history', mention naturally they ordered it before\n"
+        f"- If partial shortage, mention 'we have X available'\n"
+        f"- Keep the website link https://shipmecarton.com and option 2 exactly as shown\n"
+        f"- End with 'Please let us know what you think'\n"
+        f"Write the reply:"
+    )
+    return prompt
+
+
 def _find_value(data: dict, *keys: str):
     """Search for a value by multiple possible key names, including nested dicts."""
     # First: check top-level keys
@@ -317,48 +429,7 @@ def classify_and_process(email_text: str, gmail_message_id: str | None = None) -
 
         # Telegram: notify if stock issue detected (enhanced with alternatives + draft)
         if result.get("stock_issue"):
-            insufficient = result["stock_issue"]["stock_check"]["insufficient_items"]
-            best_alts = result["stock_issue"].get("best_alternatives", {})
-
-            # Build insufficient items text
-            oos_lines = []
-            for item in insufficient:
-                partial = f" (частично: {item['total_available']} шт)" if item["total_available"] > 0 else ""
-                oos_lines.append(
-                    f"{item['base_flavor']} (заказано {item['ordered_qty']}, на складе {item['total_available']}){partial}"
-                )
-            oos_text = "\n".join(oos_lines)
-
-            # Build alternative decision text
-            alt_lines = []
-            for flavor, decision in best_alts.items():
-                options = decision.get("alternatives", [])
-                if not options:
-                    alt_lines.append(f"{flavor}: не найдена")
-                    continue
-
-                rendered = []
-                for opt in options[:3]:
-                    alt = opt["alternative"]
-                    reason = opt.get("reason", "fallback")
-                    reason_ru = {
-                        "same_flavor": "тот же вкус",
-                        "history": f"из истории ({opt.get('order_count', '?')} заказов)",
-                        "fallback": "из наличия",
-                    }.get(reason, reason)
-                    rendered.append(f"{alt['category']} / {alt['product_name']} [{reason_ru}]")
-                alt_lines.append(f"{flavor}: " + "; ".join(rendered))
-            alt_text = "\n".join(alt_lines)
-
-            tg_msg = (
-                f"\u26a0\ufe0f <b>Нет на складе!</b>\n\n"
-                f"<b>Клиент:</b> {classification.client_email}\n"
-                f"<b>Заказ:</b> #{classification.order_id or 'N/A'}\n"
-                f"<b>Нет в наличии:</b>\n{oos_text}\n\n"
-                f"<b>Альтернатива:</b>\n{alt_text}\n\n"
-                f"AI генерирует ответ."
-            )
-            # Draft will be appended after AI generates it (see below)
+            tg_msg = _build_oos_telegram(classification, result)
 
         # Step 3: If no template, ask fallback agent (with conversation history)
         if result["needs_ai_fallback"] and result["needs_reply"]:
@@ -372,25 +443,8 @@ def classify_and_process(email_text: str, gmail_message_id: str | None = None) -
             else:
                 client_info = "NEW CLIENT — not in our database"
 
-            # Fetch conversation history: local DB first, then Gmail if sparse
-            history = get_email_history(result["client_email"])
-            if len(history) < 3:
-                gmail_history = get_gmail_thread_history(result["client_email"], max_results=10)
-                if gmail_history:
-                    # Merge: add Gmail messages not already in local DB
-                    local_subjects = {(h["subject"], h["direction"]) for h in history}
-                    for gh in gmail_history:
-                        if (gh["subject"], gh["direction"]) not in local_subjects:
-                            history.append(gh)
-                    # Sort chronologically (normalize tz for comparison) and limit
-                    def _sort_key(h):
-                        dt = h["created_at"]
-                        if dt.tzinfo is not None:
-                            return dt.timestamp()
-                        return dt.replace(tzinfo=timezone.utc).timestamp()
-                    history.sort(key=_sort_key)
-                    history = history[-10:]
-
+            # Fetch conversation history: local DB + Gmail (merged)
+            history = get_full_email_history(result["client_email"], max_results=10)
             history_text = format_email_history(history)
             logger.info(
                 "AI fallback for situation=%s, history=%d messages",
@@ -399,73 +453,8 @@ def classify_and_process(email_text: str, gmail_message_id: str | None = None) -
 
             # Build fallback prompt: enriched for out-of-stock, generic otherwise
             if result.get("stock_issue"):
-                stock_data = result["stock_issue"]
-                stock_check = stock_data["stock_check"]
-                best_alternatives = stock_data.get("best_alternatives", {})
-
-                # Human-readable insufficient items (with partial shortage info)
-                insufficient_lines = []
-                for item in stock_check["insufficient_items"]:
-                    partial = ""
-                    if item["total_available"] > 0:
-                        partial = f" — PARTIAL SHORTAGE (have {item['total_available']})"
-                    insufficient_lines.append(
-                        f"- {item['product_name']} (flavor: {item['base_flavor']}): "
-                        f"ordered {item['ordered_qty']}, available {item['total_available']}{partial}"
-                    )
-                insufficient_text = "\n".join(insufficient_lines)
-
-                # Selected alternative for each OOS flavor
-                alt_lines = []
-                for flavor, decision in best_alternatives.items():
-                    options = decision.get("alternatives", [])
-                    if options:
-                        alt_lines.append(f"For {flavor}:")
-                        for i, opt in enumerate(options[:3], 1):
-                            alt = opt["alternative"]
-                            reason = opt.get("reason", "fallback")
-                            reason_detail = reason
-                            if reason == "history" and opt.get("order_count"):
-                                reason_detail = (
-                                    f"customer ordered flavor like {alt['product_name']} "
-                                    f"{opt['order_count']} times before"
-                                )
-                            elif reason == "same_flavor":
-                                reason_detail = f"same flavor from {alt['category']}"
-                            elif reason == "fallback":
-                                reason_detail = "available in stock"
-                            alt_lines.append(
-                                f"  {i}. {alt['category']} / {alt['product_name']} (qty: {alt['quantity']}) "
-                                f"— reason: {reason_detail}"
-                            )
-                    else:
-                        alt_lines.append(f"For {flavor}: - No alternative available")
-                alternatives_text = "\n".join(alt_lines)
-
-                fallback_prompt = (
-                    f"Situation: OUT OF STOCK (new order with insufficient stock)\n"
-                    f"Client: {client_info}\n"
-                    f"Client name: {result['client_name'] or 'unknown'}\n\n"
-                    f"INSUFFICIENT ITEMS:\n{insufficient_text}\n\n"
-                    f"SELECTED ALTERNATIVES FOR OPTION 1 (up to 3 per missing flavor):\n"
-                    f"{alternatives_text}\n\n"
-                )
-                if history_text:
-                    fallback_prompt += f"{history_text}\n\n"
-                fallback_prompt += (
-                    f"Original email:\n{email_text}\n\n"
-                    f"TEMPLATE GUIDE (follow this structure closely):\n"
-                    f"{OUT_OF_STOCK_GUIDE}\n\n"
-                    f"INSTRUCTIONS:\n"
-                    f"- Follow the template guide structure above\n"
-                    f"- Replace {{FLAVOR_LIST}} with the actual out-of-stock flavor names\n"
-                    f"- For option 1, use only products from SELECTED ALTERNATIVES\n"
-                    f"- You may include up to 3 alternatives in option 1 if provided\n"
-                    f"- If reason is 'history', mention naturally they ordered it before\n"
-                    f"- If partial shortage, mention 'we have X available'\n"
-                    f"- Keep the website link https://shipmecarton.com and option 2 exactly as shown\n"
-                    f"- End with 'Please let us know what you think'\n"
-                    f"Write the reply:"
+                fallback_prompt = _build_oos_fallback_prompt(
+                    result, client_info, history_text, email_text,
                 )
             else:
                 fallback_prompt = (
@@ -568,119 +557,5 @@ email_agent = Agent(
 )
 
 # ---------------------------------------------------------------------------
-# Test with sample data (like "pin data" in n8n)
+# Test: python -m tests.test_email_agent
 # ---------------------------------------------------------------------------
-if __name__ == "__main__":
-    # Ensure test clients exist in DB (idempotent — skips if already present)
-    from db.memory import add_client, get_client, get_client_flavor_history
-
-    _test_clients = [
-        {"email": "client1@example.com", "name": "Test Client One", "payment_type": "prepay",
-         "zelle_address": "pay@example.com"},
-        {"email": "client2@example.com", "name": "Test Client Two", "payment_type": "postpay"},
-        {"email": "client3@example.com", "name": "Test Client Three", "payment_type": "prepay",
-         "zelle_address": "pay3@example.com", "discount_percent": 5, "discount_orders_left": 3},
-    ]
-    for tc in _test_clients:
-        if not get_client(tc["email"]):
-            add_client(**tc)
-            print(f"  Created test client: {tc['email']}")
-
-    # Seed order history for client1 (to test history-aware OOS alternatives)
-    _test_orders = [
-        ("client1@example.com", "23000", [
-            {"product_name": "Tera Green made in Middle East", "base_flavor": "Green", "quantity": 2},
-        ]),
-        ("client1@example.com", "23100", [
-            {"product_name": "Tera Green made in Middle East", "base_flavor": "Green", "quantity": 1},
-        ]),
-        ("client1@example.com", "23200", [
-            {"product_name": "Tera Silver EU", "base_flavor": "Silver", "quantity": 1},
-        ]),
-    ]
-    existing_history = get_client_flavor_history("client1@example.com")
-    if not existing_history:
-        for email, order_id, items in _test_orders:
-            save_order_items(email, order_id, items)
-        print("  Seeded order history for client1@example.com (Green x2, Silver x1)")
-
-    tests = [
-        (
-            "PREPAY client (template)",
-            "Process this email:\n\n"
-            "From: noreply@shipmecarton.com\n"
-            "Reply-To: client1@example.com\n"
-            "Subject: Shipmecarton - Order 23432\n\n"
-            "Payment amount: $220.00\n"
-            "Order ID: 23432\n"
-            "Firstname: Test Client One\n"
-            "Street address1: 123 Main St\n"
-            "Town/City: Springfield\n"
-            "State: Illinois\n"
-            "Postcode/Zip: 62701\n"
-            "Email: client1@example.com",
-        ),
-        (
-            "DISCOUNT client 5% (template)",
-            "Process this email:\n\n"
-            "From: noreply@shipmecarton.com\n"
-            "Reply-To: client3@example.com\n"
-            "Subject: Shipmecarton - Order 23600\n\n"
-            "Payment amount: $200.00\n"
-            "Order ID: 23600\n"
-            "Firstname: Test Client Three\n"
-            "Email: client3@example.com",
-        ),
-        (
-            "POSTPAY client (template)",
-            "Process this email:\n\n"
-            "From: noreply@shipmecarton.com\n"
-            "Reply-To: client2@example.com\n"
-            "Subject: Shipmecarton - Order 23551\n\n"
-            "Payment amount: $180.00\n"
-            "Order ID: 23551\n"
-            "Firstname: Test Client Two\n"
-            "Street address1: 456 Oak Ave\n"
-            "Town/City: Chicago\n"
-            "State: Illinois\n"
-            "Postcode/Zip: 60601\n"
-            "Email: client2@example.com",
-        ),
-        (
-            "OUT OF STOCK — Turquoise (AI fallback with alternatives)",
-            "Process this email:\n\n"
-            "From: noreply@shipmecarton.com\n"
-            "Reply-To: client1@example.com\n"
-            "Subject: Shipmecarton - Order 23700\n\n"
-            "# Image Name Price Qnt Amount\n"
-            "1 Tera Turquoise EU $95.00 3 $285.00\n\n"
-            "Payment amount: $285.00\n"
-            "Order ID: 23700\n"
-            "Firstname: Test Client One\n"
-            "Street address1: 123 Main St\n"
-            "Town/City: Springfield\n"
-            "State: Illinois\n"
-            "Postcode/Zip: 62701\n"
-            "Email: client1@example.com",
-        ),
-        (
-            "TRACKING question (AI fallback)",
-            "Process this email:\n\n"
-            "From: client2@example.com\n"
-            "Subject: Re: Order 23551\n"
-            "Body: Hey, when will my order be shipped? I need it by Friday.",
-        ),
-        (
-            "THANK YOU (no reply needed)",
-            "Process this email:\n\n"
-            "From: client2@example.com\n"
-            "Subject: Re: Order 23551\n"
-            "Body: Thank you so much!",
-        ),
-    ]
-
-    for name, prompt in tests:
-        print("\n" + "=" * 60)
-        print(f"TEST: {name}")
-        print("=" * 60)
-        email_agent.print_response(prompt, stream=True)
