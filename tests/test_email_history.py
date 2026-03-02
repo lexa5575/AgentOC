@@ -190,3 +190,87 @@ def test_get_thread_history_limit_returns_latest_window():
 
     limited = get_thread_history(thread_id, limit=3)
     assert [m["subject"] for m in limited] == ["Msg 3", "Msg 4", "Msg 5"]
+
+
+# ---------------------------------------------------------------------------
+# get_full_thread_history tests (Phase 1)
+# ---------------------------------------------------------------------------
+from unittest.mock import patch
+
+import db.email_history as _eh_module
+from db.email_history import get_full_thread_history
+
+
+def test_full_thread_history_sufficient_local():
+    """When >=2 local records exist, Gmail is NOT called."""
+    thread_id = "thread_local_ok"
+    save_email("a@example.com", "inbound", "Order", "Body", "new_order", gmail_thread_id=thread_id)
+    save_email("a@example.com", "outbound", "Re: Order", "Reply", "new_order", gmail_thread_id=thread_id)
+
+    with patch.object(_eh_module, "_fetch_gmail_thread_by_id") as mock_gmail:
+        result = get_full_thread_history(thread_id)
+
+    mock_gmail.assert_not_called()
+    assert len(result) == 2
+    assert result[0]["direction"] == "inbound"
+    assert result[1]["direction"] == "outbound"
+
+
+def test_full_thread_history_supplements_from_gmail():
+    """When <2 local records, supplements from Gmail API."""
+    thread_id = "thread_sparse"
+    save_email("b@example.com", "inbound", "Hello", "Body", "other", gmail_thread_id=thread_id)
+
+    from datetime import datetime, timezone as tz
+    gmail_msgs = [
+        {
+            "client_email": "b@example.com",
+            "direction": "outbound",
+            "subject": "Re: Hello",
+            "body": "Our reply",
+            "situation": "unknown",
+            "created_at": datetime(2025, 6, 1, 12, 0, tzinfo=tz.utc),
+        },
+    ]
+
+    with patch.object(_eh_module, "_fetch_gmail_thread_by_id", return_value=gmail_msgs):
+        result = get_full_thread_history(thread_id)
+
+    assert len(result) == 2
+    subjects = [r["subject"] for r in result]
+    assert "Hello" in subjects
+    assert "Re: Hello" in subjects
+
+
+def test_full_thread_history_deduplicates():
+    """Duplicate (subject, direction) pairs from Gmail are not added."""
+    thread_id = "thread_dedup"
+    save_email("c@example.com", "inbound", "Order 99", "Body", "new_order", gmail_thread_id=thread_id)
+
+    from datetime import datetime, timezone as tz
+    gmail_msgs = [
+        {
+            "client_email": "c@example.com",
+            "direction": "inbound",
+            "subject": "Order 99",  # same subject+direction as local
+            "body": "Body from Gmail",
+            "situation": "unknown",
+            "created_at": datetime(2025, 6, 1, 10, 0, tzinfo=tz.utc),
+        },
+        {
+            "client_email": "c@example.com",
+            "direction": "outbound",
+            "subject": "Re: Order 99",  # new — should be added
+            "body": "Our reply",
+            "situation": "unknown",
+            "created_at": datetime(2025, 6, 1, 11, 0, tzinfo=tz.utc),
+        },
+    ]
+
+    with patch.object(_eh_module, "_fetch_gmail_thread_by_id", return_value=gmail_msgs):
+        result = get_full_thread_history(thread_id)
+
+    assert len(result) == 2  # 1 local + 1 new from Gmail (duplicate skipped)
+    directions = [r["direction"] for r in result]
+    assert "inbound" in directions
+    assert "outbound" in directions

@@ -22,6 +22,8 @@ def _install_import_stubs() -> None:
             name == "agents.email_agent"
             or name == "agents.router"
             or name == "agents.context"
+            or name == "agents.checker"
+            or name == "agents.state_updater"
             or name.startswith("agents.handlers")
             or name == "db.conversation_state"
         ):
@@ -73,8 +75,10 @@ def _install_import_stubs() -> None:
         "insufficient_items": [],
     }
     db_memory.select_best_alternatives = lambda *args, **kwargs: {"alternatives": []}
+    db_memory.get_full_thread_history = lambda *args, **kwargs: []
     db_clients = types.ModuleType("db.clients")
     db_clients.get_client_profile = lambda *args, **kwargs: None
+    db_clients.update_client_summary = lambda *args, **kwargs: True
     db_conversation_state = types.ModuleType("db.conversation_state")
     db_conversation_state.get_state = lambda *args, **kwargs: None
     db_conversation_state.save_state = lambda *args, **kwargs: None

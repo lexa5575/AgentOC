@@ -248,3 +248,15 @@ def test_update_client_summary():
 def test_update_client_summary_not_found():
     """update_client_summary returns False for missing client."""
     assert update_client_summary("ghost@example.com", "nope") is False
+
+
+def test_to_dict_includes_summary_updated_at():
+    """Client.to_dict() includes summary_updated_at field."""
+    add_client("ts@example.com", "TS", "prepay")
+    profile = get_client_profile("ts@example.com")
+    assert "summary_updated_at" in profile
+    assert profile["summary_updated_at"] is None  # Never generated yet
+
+    update_client_summary("ts@example.com", "Some summary")
+    profile = get_client_profile("ts@example.com")
+    assert profile["summary_updated_at"] is not None

@@ -17,7 +17,7 @@ import yaml
 
 from agents.reply_templates import format_email_history
 from db.clients import get_client_profile
-from db.memory import get_full_email_history
+from db.memory import get_full_email_history, get_full_thread_history
 
 logger = logging.getLogger(__name__)
 
@@ -189,8 +189,12 @@ def build_context(
     # Conversation state
     conversation_state = result.get("conversation_state")
 
-    # Email history
-    history = get_full_email_history(client_email, max_results=10)
+    # Email history — prefer thread-specific when gmail_thread_id available
+    gmail_thread_id = result.get("gmail_thread_id")
+    if gmail_thread_id:
+        history = get_full_thread_history(gmail_thread_id, max_results=10)
+    else:
+        history = get_full_email_history(client_email, max_results=10)
     history_text = format_email_history(history)
 
     # Policy rules

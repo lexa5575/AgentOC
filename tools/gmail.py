@@ -182,6 +182,67 @@ class GmailClient:
             "gmail_thread_id": msg.get("threadId"),
         }
 
+    def fetch_thread(self, thread_id: str) -> list[dict]:
+        """Fetch all messages in a Gmail thread by threadId.
+
+        Uses threads().get() — single API call for entire thread.
+        Returns list of dicts matching get_email_history() format, sorted oldest-first.
+        """
+        from email.utils import parsedate_to_datetime
+
+        service = self._get_service()
+        try:
+            thread = service.users().threads().get(
+                userId="me", id=thread_id, format="full",
+            ).execute()
+        except Exception as e:
+            logger.error("Failed to fetch thread %s: %s", thread_id, e)
+            return []
+
+        messages = []
+        for msg in thread.get("messages", []):
+            headers = {h["name"].lower(): h["value"] for h in msg["payload"]["headers"]}
+
+            from_raw = headers.get("from", "")
+            _, from_email = parseaddr(from_raw)
+
+            # Determine direction: our domain = outbound, everything else = inbound
+            is_outbound = any(
+                domain in from_email.lower()
+                for domain in ("shipmecarton.com", "getorderstick")
+            )
+            direction = "outbound" if is_outbound else "inbound"
+
+            created_at = datetime.now(timezone.utc)
+            if headers.get("date"):
+                try:
+                    created_at = parsedate_to_datetime(headers["date"])
+                except Exception:
+                    pass
+
+            # Determine client email (the non-us address)
+            reply_to = headers.get("reply-to", "")
+            _, reply_to_email = parseaddr(reply_to)
+            if is_outbound:
+                # For outbound messages, client is in To or Reply-To
+                to_raw = headers.get("to", "")
+                _, to_email = parseaddr(to_raw)
+                client_email = to_email or reply_to_email or ""
+            else:
+                client_email = from_email
+
+            messages.append({
+                "client_email": client_email,
+                "direction": direction,
+                "subject": headers.get("subject", ""),
+                "body": self._extract_body(msg["payload"]),
+                "situation": "unknown",
+                "created_at": created_at,
+            })
+
+        messages.sort(key=lambda m: m["created_at"])
+        return messages
+
     def search_thread_history(self, client_email: str, max_results: int = 10) -> list[dict]:
         """Search Gmail for recent conversation with a client.
 

@@ -313,6 +313,9 @@ Summary: {state.get('summary', '')}
         # Step 2: Python processes (0 tokens — pure logic)
         result = process_classified_email(classification)
 
+        # Attach gmail_thread_id for downstream context building
+        result["gmail_thread_id"] = gmail_thread_id
+
         # Step 2.5: State Updater LLM — update ConversationState
         if gmail_thread_id:
             try:
@@ -503,6 +506,14 @@ Summary: {state.get('summary', '')}
                     for oi in classification.order_items
                 ],
             )
+
+        # Step 7: Auto-refresh client summary if stale
+        if result["client_found"]:
+            try:
+                from agents.client_profiler import maybe_refresh_summary
+                maybe_refresh_summary(classification.client_email)
+            except Exception as e:
+                logger.error("Auto-refresh summary failed: %s", e)
 
         return formatted
 

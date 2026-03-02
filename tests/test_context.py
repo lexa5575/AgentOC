@@ -292,6 +292,64 @@ def test_format_context_no_notes_no_summary():
     assert "Summary" not in prompt
 
 
+def test_build_context_with_thread_id():
+    """When gmail_thread_id is in result, build_context uses thread history."""
+    from agents.reply_templates import EmailClassification
+
+    classification = EmailClassification(
+        needs_reply=True,
+        situation="tracking",
+        client_email="thread@example.com",
+        client_name="Thread User",
+    )
+    result = {
+        "client_email": "thread@example.com",
+        "client_name": "Thread User",
+        "client_found": False,
+        "situation": "tracking",
+        "conversation_state": None,
+        "gmail_thread_id": "thread_abc123",
+    }
+
+    with (
+        patch("agents.context.get_full_thread_history", return_value=[]) as mock_thread,
+        patch("agents.context.get_full_email_history") as mock_email,
+    ):
+        ctx = build_context(classification, result, "Where is my package?")
+
+    mock_thread.assert_called_once_with("thread_abc123", max_results=10)
+    mock_email.assert_not_called()
+    assert ctx.email_text == "Where is my package?"
+
+
+def test_build_context_without_thread_id():
+    """Without gmail_thread_id, build_context falls back to client email history."""
+    from agents.reply_templates import EmailClassification
+
+    classification = EmailClassification(
+        needs_reply=True,
+        situation="other",
+        client_email="nothrd@example.com",
+    )
+    result = {
+        "client_email": "nothrd@example.com",
+        "client_name": None,
+        "client_found": False,
+        "situation": "other",
+        "conversation_state": None,
+        # no gmail_thread_id key
+    }
+
+    with (
+        patch("agents.context.get_full_thread_history") as mock_thread,
+        patch("agents.context.get_full_email_history", return_value=[]) as mock_email,
+    ):
+        ctx = build_context(classification, result, "Hello")
+
+    mock_email.assert_called_once_with("nothrd@example.com", max_results=10)
+    mock_thread.assert_not_called()
+
+
 def test_build_context_with_profile(db_session):
     """build_context uses get_client_profile for enriched data."""
     from agents.reply_templates import EmailClassification

@@ -11,11 +11,12 @@ Can be triggered:
 """
 
 import logging
+from datetime import datetime, timedelta, timezone
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
 
-from db.clients import update_client_summary
+from db.clients import get_client_profile, update_client_summary
 from db.memory import get_full_email_history
 from agents.reply_templates import format_email_history
 
@@ -105,3 +106,39 @@ def generate_client_summary(client_email: str) -> str | None:
     except Exception as e:
         logger.error("Failed to generate summary for %s: %s", client_email, e)
         return None
+
+
+# ---------------------------------------------------------------------------
+# Auto-refresh guard
+# ---------------------------------------------------------------------------
+_REFRESH_INTERVAL = timedelta(hours=24)
+
+
+def maybe_refresh_summary(client_email: str) -> str | None:
+    """Refresh client summary if stale (>24h) or never generated.
+
+    Cost when skipping: 1 SQL query, 0 LLM tokens.
+
+    Returns:
+        New summary text if refreshed, None if skipped or failed.
+    """
+    profile = get_client_profile(client_email)
+    if not profile:
+        logger.debug("maybe_refresh_summary: client %s not found", client_email)
+        return None
+
+    updated_at = profile.get("summary_updated_at")
+    if updated_at is not None:
+        # Normalize to UTC-aware for comparison
+        if updated_at.tzinfo is None:
+            updated_at = updated_at.replace(tzinfo=timezone.utc)
+        age = datetime.now(timezone.utc) - updated_at
+        if age < _REFRESH_INTERVAL:
+            logger.debug(
+                "Skipping summary refresh for %s (age: %s)",
+                client_email, age,
+            )
+            return None
+
+    logger.info("Auto-refreshing summary for %s", client_email)
+    return generate_client_summary(client_email)

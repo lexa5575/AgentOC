@@ -202,6 +202,50 @@ def get_full_email_history(client_email: str, max_results: int = 10) -> list[dic
     return history
 
 
+def get_full_thread_history(gmail_thread_id: str, max_results: int = 20) -> list[dict]:
+    """Get thread history: local DB first, supplement from Gmail if sparse.
+
+    Mirrors get_full_email_history() pattern but for a specific Gmail thread.
+    """
+    history = get_thread_history(gmail_thread_id, limit=max_results)
+
+    if len(history) < 2:
+        gmail_history = _fetch_gmail_thread_by_id(gmail_thread_id)
+        if gmail_history:
+            local_keys = {(h["subject"], h["direction"]) for h in history}
+            for gh in gmail_history:
+                if (gh["subject"], gh["direction"]) not in local_keys:
+                    history.append(gh)
+
+            def _sort_key(h):
+                dt = h["created_at"]
+                if dt.tzinfo is not None:
+                    return dt.timestamp()
+                return dt.replace(tzinfo=timezone.utc).timestamp()
+
+            history.sort(key=_sort_key)
+            history = history[-max_results:]
+
+    return history
+
+
+def _fetch_gmail_thread_by_id(gmail_thread_id: str) -> list[dict]:
+    """Fetch thread history from Gmail API by thread ID."""
+    from tools.gmail import GmailClient
+
+    try:
+        gmail = GmailClient()
+        history = gmail.fetch_thread(gmail_thread_id)
+        logger.info(
+            "Gmail thread fetch for %s: %d messages",
+            gmail_thread_id, len(history),
+        )
+        return history
+    except Exception as e:
+        logger.error("Failed to fetch Gmail thread %s: %s", gmail_thread_id, e)
+        return []
+
+
 def get_gmail_thread_history(client_email: str, max_results: int = 10) -> list[dict]:
     """Fetch conversation history from Gmail API for a client.
 

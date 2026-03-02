@@ -45,6 +45,7 @@ class Client(Base):
             "discount_orders_left": self.discount_orders_left or 0,
             "notes": self.notes or "",
             "llm_summary": self.llm_summary or "",
+            "summary_updated_at": self.summary_updated_at,
         }
 
 
