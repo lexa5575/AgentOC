@@ -329,17 +329,21 @@ def process_classified_email(classification: EmailClassification) -> dict:
         "stock_issue": None,
     }
 
-    # No reply needed — stop here
-    if not classification.needs_reply:
-        result["draft_reply"] = "(No reply needed)"
-        return result
-
-    # Look up client via memory layer
+    # Look up client via memory layer (always — even if no reply needed)
     client = get_client(classification.client_email)
     if client:
         result["client_found"] = True
         result["client_data"] = client
-    else:
+
+    # No reply needed — stop here
+    if not classification.needs_reply:
+        result["draft_reply"] = "(No reply needed)"
+        if not client:
+            result["client_data"] = {"payment_type": "unknown", "name": "unknown"}
+        return result
+
+    # Client not found — can't generate auto-reply
+    if not client:
         result["client_data"] = {"payment_type": "unknown", "name": "unknown"}
         result["draft_reply"] = "(Клиент не в базе — авто-ответ не генерируется)"
         return result

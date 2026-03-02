@@ -27,6 +27,8 @@ class Client(Base):
     name = Column(String, nullable=False)
     payment_type = Column(String, nullable=False)  # "prepay" or "postpay"
     zelle_address = Column(String, default="")
+    street = Column(String, default="")
+    city_state_zip = Column(String, default="")
     discount_percent = Column(Integer, default=0)
     discount_orders_left = Column(Integer, default=0)
     notes = Column(Text, default="")  # Manual operator notes
@@ -41,6 +43,8 @@ class Client(Base):
             "name": self.name,
             "payment_type": self.payment_type,
             "zelle_address": self.zelle_address or "",
+            "street": self.street or "",
+            "city_state_zip": self.city_state_zip or "",
             "discount_percent": self.discount_percent or 0,
             "discount_orders_left": self.discount_orders_left or 0,
             "notes": self.notes or "",

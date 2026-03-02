@@ -260,3 +260,39 @@ def test_to_dict_includes_summary_updated_at():
     update_client_summary("ts@example.com", "Some summary")
     profile = get_client_profile("ts@example.com")
     assert profile["summary_updated_at"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Client address tests
+# ---------------------------------------------------------------------------
+
+def test_add_client_with_address():
+    """add_client stores street and city_state_zip."""
+    client = add_client(
+        "addr@example.com", "Addr User", "postpay",
+        street="123 Main St", city_state_zip="Chicago, IL 60601",
+    )
+    assert client["street"] == "123 Main St"
+    assert client["city_state_zip"] == "Chicago, IL 60601"
+
+    found = get_client("addr@example.com")
+    assert found["street"] == "123 Main St"
+    assert found["city_state_zip"] == "Chicago, IL 60601"
+
+
+def test_update_client_address():
+    """update_client can update street and city_state_zip."""
+    add_client("upaddr@example.com", "UpAddr", "prepay")
+    updated = update_client("upaddr@example.com", street="456 Oak Ave", city_state_zip="Miami, FL 33101")
+    assert updated["street"] == "456 Oak Ave"
+    assert updated["city_state_zip"] == "Miami, FL 33101"
+
+
+def test_to_dict_includes_address():
+    """Client.to_dict() includes street and city_state_zip fields."""
+    add_client("dictaddr@example.com", "DictAddr", "prepay")
+    client = get_client("dictaddr@example.com")
+    assert "street" in client
+    assert "city_state_zip" in client
+    assert client["street"] == ""
+    assert client["city_state_zip"] == ""

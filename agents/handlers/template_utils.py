@@ -60,8 +60,10 @@ def fill_template_reply(
     reply = reply.replace("{FINAL_PRICE}", final_price)
     reply = reply.replace("{ZELLE_ADDRESS}", zelle_address)
     reply = reply.replace("{CUSTOMER_NAME}", classification.client_name or client["name"])
-    reply = reply.replace("{CUSTOMER_STREET}", classification.customer_street or "")
-    reply = reply.replace("{CUSTOMER_CITY_STATE_ZIP}", classification.customer_city_state_zip or "")
+    street = classification.customer_street or client.get("street", "")
+    city_zip = classification.customer_city_state_zip or client.get("city_state_zip", "")
+    reply = reply.replace("{CUSTOMER_STREET}", street)
+    reply = reply.replace("{CUSTOMER_CITY_STATE_ZIP}", city_zip)
     reply = reply.replace("{TRACKING_URL}", "[tracking URL pending]")
 
     if not apply_discount and price:

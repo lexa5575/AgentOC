@@ -79,6 +79,8 @@ def get_client(email: str) -> str:
         f"Name: {client['name']}",
         f"Payment Type: {client['payment_type']}",
         f"Zelle Address: {client.get('zelle_address') or 'none'}",
+        f"Street: {client.get('street') or 'none'}",
+        f"City/State/Zip: {client.get('city_state_zip') or 'none'}",
         f"Discount: {client.get('discount_percent', 0)}%",
         f"Discount Orders Left: {client.get('discount_orders_left', 0)}",
     ]
@@ -90,6 +92,8 @@ def add_client(
     name: str,
     payment_type: str,
     zelle_address: str = "",
+    street: str = "",
+    city_state_zip: str = "",
     discount_percent: int = 0,
     discount_orders_left: int = 0,
 ) -> str:
@@ -100,6 +104,8 @@ def add_client(
         name: Client full name.
         payment_type: Must be 'prepay' or 'postpay'.
         zelle_address: Zelle payment address (optional).
+        street: Street address (optional).
+        city_state_zip: City, State Zip (optional).
         discount_percent: Discount percentage 0-100 (optional).
         discount_orders_left: How many orders get the discount (optional).
 
@@ -112,6 +118,8 @@ def add_client(
             name=name,
             payment_type=payment_type,
             zelle_address=zelle_address,
+            street=street,
+            city_state_zip=city_state_zip,
             discount_percent=discount_percent,
             discount_orders_left=discount_orders_left,
         )
@@ -125,6 +133,8 @@ def update_client(
     name: str = "",
     payment_type: str = "",
     zelle_address: str = "",
+    street: str = "",
+    city_state_zip: str = "",
     discount_percent: int = -1,
     discount_orders_left: int = -1,
 ) -> str:
@@ -135,6 +145,8 @@ def update_client(
         name: New name (leave empty to keep current).
         payment_type: New payment type - 'prepay' or 'postpay' (leave empty to keep current).
         zelle_address: New Zelle address (leave empty to keep current).
+        street: New street address (leave empty to keep current).
+        city_state_zip: New City, State Zip (leave empty to keep current).
         discount_percent: New discount percentage 0-100 (use -1 to keep current).
         discount_orders_left: New discount orders count (use -1 to keep current).
 
@@ -148,6 +160,10 @@ def update_client(
         fields["payment_type"] = payment_type
     if zelle_address:
         fields["zelle_address"] = zelle_address
+    if street:
+        fields["street"] = street
+    if city_state_zip:
+        fields["city_state_zip"] = city_state_zip
     if discount_percent >= 0:
         fields["discount_percent"] = discount_percent
     if discount_orders_left >= 0:

@@ -34,7 +34,7 @@ from agents.router import route_to_handler
 from agents.state_updater import update_conversation_state
 from db import get_postgres_db
 from db.conversation_state import get_state, save_state
-from db.memory import get_full_thread_history, save_email, save_order_items
+from db.memory import get_full_thread_history, save_email, save_order_items, update_client
 from utils.telegram import send_telegram
 
 logger = logging.getLogger(__name__)
@@ -513,6 +513,19 @@ Summary: {state.get('summary', '')}
                     for oi in classification.order_items
                 ],
             )
+
+        # Step 6.5: Auto-save client address if extracted from email
+        if result["client_found"] and (classification.customer_street or classification.customer_city_state_zip):
+            address_updates = {}
+            if classification.customer_street:
+                address_updates["street"] = classification.customer_street
+            if classification.customer_city_state_zip:
+                address_updates["city_state_zip"] = classification.customer_city_state_zip
+            try:
+                update_client(classification.client_email, **address_updates)
+                logger.info("Auto-saved address for %s: %s", classification.client_email, address_updates)
+            except Exception as e:
+                logger.warning("Failed to auto-save address: %s", e)
 
         # Step 7: Auto-refresh client summary if stale
         if result["client_found"]:

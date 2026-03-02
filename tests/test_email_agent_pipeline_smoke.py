@@ -77,6 +77,7 @@ def _install_import_stubs() -> None:
     }
     db_memory.select_best_alternatives = lambda *args, **kwargs: {"alternatives": []}
     db_memory.get_full_thread_history = lambda *args, **kwargs: []
+    db_memory.update_client = lambda *args, **kwargs: None
     db_clients = types.ModuleType("db.clients")
     db_clients.get_client_profile = lambda *args, **kwargs: None
     db_clients.update_client_summary = lambda *args, **kwargs: True

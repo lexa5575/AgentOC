@@ -50,6 +50,8 @@ def add_client(
     name: str,
     payment_type: str,
     zelle_address: str = "",
+    street: str = "",
+    city_state_zip: str = "",
     discount_percent: int = 0,
     discount_orders_left: int = 0,
 ) -> dict:
@@ -74,6 +76,8 @@ def add_client(
             name=name,
             payment_type=payment_type,
             zelle_address=zelle_address,
+            street=street,
+            city_state_zip=city_state_zip,
             discount_percent=discount_percent,
             discount_orders_left=discount_orders_left,
         )
@@ -88,10 +92,11 @@ def add_client(
 def update_client(email: str, **fields) -> dict | None:
     """Update client fields. Returns updated client dict or None if not found.
 
-    Supported fields: name, payment_type, zelle_address, discount_percent, discount_orders_left.
+    Supported fields: name, payment_type, zelle_address, street, city_state_zip,
+    discount_percent, discount_orders_left.
     """
     email = email.lower().strip()
-    allowed = {"name", "payment_type", "zelle_address", "discount_percent", "discount_orders_left"}
+    allowed = {"name", "payment_type", "zelle_address", "street", "city_state_zip", "discount_percent", "discount_orders_left"}
     fields = {k: v for k, v in fields.items() if k in allowed and v is not None}
 
     if "payment_type" in fields and fields["payment_type"] not in ("prepay", "postpay"):
