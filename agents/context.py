@@ -204,8 +204,8 @@ def build_context(
                 s for s in all_states
                 if s.get("gmail_thread_id") != gmail_thread_id
             ]
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to load cross-thread states: %s", e)
 
     # Email history — prefer thread-specific when gmail_thread_id available
     if gmail_thread_id:
