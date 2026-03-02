@@ -9,6 +9,7 @@ into a structured prompt that handlers pass to their LLM agents.
 Replaces the duplicated context-building code in each handler.
 """
 
+import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -127,6 +128,9 @@ class EmailContext:
     # Policy rules (formatted text)
     policy_rules: str = ""
 
+    # Cross-thread context (states from other threads of same client)
+    other_thread_states: list[dict] = field(default_factory=list)
+
     # Extra facts from result dict
     extra: dict = field(default_factory=dict)
 
@@ -189,8 +193,21 @@ def build_context(
     # Conversation state
     conversation_state = result.get("conversation_state")
 
-    # Email history — prefer thread-specific when gmail_thread_id available
+    # Cross-thread context: other active threads for same client
     gmail_thread_id = result.get("gmail_thread_id")
+    other_thread_states = []
+    if client_email:
+        try:
+            from db.conversation_state import get_client_states
+            all_states = get_client_states(client_email, limit=4)
+            other_thread_states = [
+                s for s in all_states
+                if s.get("gmail_thread_id") != gmail_thread_id
+            ]
+        except Exception:
+            pass
+
+    # Email history — prefer thread-specific when gmail_thread_id available
     if gmail_thread_id:
         history = get_full_thread_history(gmail_thread_id, max_results=10)
     else:
@@ -216,6 +233,7 @@ def build_context(
         notes=notes,
         llm_summary=llm_summary,
         conversation_state=conversation_state,
+        other_thread_states=other_thread_states,
         history_text=history_text,
         policy_rules=policy_rules,
     )
@@ -261,9 +279,20 @@ def format_context_for_prompt(ctx: EmailContext) -> str:
 
     # === CONVERSATION STATE ===
     if ctx.conversation_state:
-        import json
         state_json = json.dumps(ctx.conversation_state, ensure_ascii=False, indent=2)
         sections.append(f"=== CONVERSATION STATE ===\n{state_json}")
+
+    # === OTHER ACTIVE THREADS ===
+    if ctx.other_thread_states:
+        other_lines = ["=== OTHER ACTIVE THREADS ==="]
+        for s in ctx.other_thread_states[:3]:
+            state = s.get("state", {})
+            other_lines.append(f"Thread ({s.get('last_situation', '?')}):")
+            if state.get("facts"):
+                other_lines.append(f"  Facts: {json.dumps(state['facts'], ensure_ascii=False)}")
+            if state.get("summary"):
+                other_lines.append(f"  Summary: {state['summary']}")
+        sections.append("\n".join(other_lines))
 
     # === CONVERSATION HISTORY ===
     if ctx.history_text:

@@ -84,6 +84,7 @@ def _install_import_stubs() -> None:
     db_conversation_state = types.ModuleType("db.conversation_state")
     db_conversation_state.get_state = lambda *args, **kwargs: None
     db_conversation_state.save_state = lambda *args, **kwargs: None
+    db_conversation_state.get_client_states = lambda *args, **kwargs: []
 
     sys.modules["db"] = db_mod
     sys.modules["db.memory"] = db_memory

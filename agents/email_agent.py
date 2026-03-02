@@ -33,7 +33,7 @@ from agents.context import load_policy
 from agents.router import route_to_handler
 from agents.state_updater import update_conversation_state
 from db import get_postgres_db
-from db.conversation_state import get_state, save_state
+from db.conversation_state import get_client_states, get_state, save_state
 from db.memory import get_full_thread_history, save_email, save_order_items, update_client
 from utils.telegram import send_telegram
 
@@ -217,6 +217,55 @@ def _find_value(data: dict, *keys: str):
     return None
 
 
+_EMAIL_RE = re.compile(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+')
+
+
+def _extract_sender_email(email_text: str) -> str | None:
+    """Extract real sender email from email headers.
+
+    Priority: Reply-To (real client in order notifications) > From.
+    Only parses headers (before 'Body:' line) to avoid matching
+    quoted/forwarded content.
+    """
+    header_section = email_text.split("\nBody:", 1)[0] if "\nBody:" in email_text else email_text[:500]
+
+    # Priority 1: Reply-To (real customer in noreply@ order notifications)
+    for line in header_section.splitlines():
+        if line.lower().startswith("reply-to:"):
+            match = _EMAIL_RE.search(line)
+            if match:
+                return match.group(0).lower()
+
+    # Priority 2: From (skip system addresses)
+    for line in header_section.splitlines():
+        if line.lower().startswith("from:"):
+            match = _EMAIL_RE.search(line)
+            if match:
+                email = match.group(0).lower()
+                if not any(skip in email for skip in ("noreply@", "no-reply@", "@shipmecarton.com")):
+                    return email
+
+    return None
+
+
+def _format_other_threads(states: list[dict], exclude_thread_id: str | None) -> str:
+    """Format conversation states from other threads as context for classifier."""
+    other = [s for s in states if s.get("gmail_thread_id") != exclude_thread_id]
+    if not other:
+        return ""
+    lines = ["--- OTHER ACTIVE THREADS ---"]
+    for s in other[:3]:
+        state = s.get("state", {})
+        situation = s.get("last_situation", "unknown")
+        lines.append(f"Thread ({situation}):")
+        if state.get("facts"):
+            lines.append(f"  Facts: {json.dumps(state['facts'], ensure_ascii=False)}")
+        if state.get("summary"):
+            lines.append(f"  Summary: {state['summary']}")
+        lines.append("")
+    return "\n".join(lines)
+
+
 def classify_and_process(
     email_text: str,
     gmail_message_id: str | None = None,
@@ -263,6 +312,20 @@ Summary: {state.get('summary', '')}
                     conversation_context += format_thread_for_classifier(thread_history) + "\n\n"
             except Exception as e:
                 logger.warning("Failed to get thread history for classifier: %s", e)
+
+        # Cross-thread context: other active threads for same client
+        sender_email = _extract_sender_email(email_text)
+        if not sender_email and pre_state_record:
+            sender_email = pre_state_record.get("client_email")
+
+        if sender_email:
+            try:
+                all_client_states = get_client_states(sender_email, limit=4)
+                cross_thread = _format_other_threads(all_client_states, gmail_thread_id)
+                if cross_thread:
+                    conversation_context += cross_thread + "\n\n"
+            except Exception as e:
+                logger.warning("Failed to get cross-thread context: %s", e)
 
         # Step 1: LLM classifies (returns JSON text)
         logger.info("Classifying email...")
