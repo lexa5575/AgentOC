@@ -109,7 +109,8 @@ def test_search_stock_no_match():
 def test_search_stock_warehouse_filter():
     _seed_stock()
     results = search_stock("Green", warehouse="main")
-    assert len(results) == 2  # TEREA_EUROPE + KZ_TEREA
+    # TEREA_EUROPE "Green" + KZ_TEREA "Green" + ONE "ONE Green" (substring match)
+    assert len(results) == 3
 
 
 # ---------------------------------------------------------------------------

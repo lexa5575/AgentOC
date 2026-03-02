@@ -34,24 +34,46 @@ def test_email_history_recent_first():
     assert history[-1]["subject"] == "Msg 4"
 
 
-def test_email_history_priority_selection():
-    """With >10 emails, recent 3 are always kept; remaining slots go to high-priority."""
-    # 3 recent
-    for i in range(3):
-        save_email("prio@example.com", "inbound", f"Recent {i}", "body", "tracking")
+def test_email_history_priority_selection(db_session):
+    """With >10 emails, high-priority earlier messages are preferred over low-priority."""
+    from datetime import datetime, timedelta
+    from db.models import EmailHistory
 
-    # 10 older emails: mix of priorities
+    session = db_session()
+    base = datetime(2025, 1, 1)
+
+    # 10 older emails: 5 orders (high priority) + 5 tracking (low priority)
     for i in range(5):
-        save_email("prio@example.com", "inbound", f"Order {i}", "body", "new_order")
+        session.add(EmailHistory(
+            client_email="prio@example.com", direction="inbound",
+            subject=f"Order {i}", body="body", situation="new_order",
+            created_at=base + timedelta(hours=i),
+        ))
     for i in range(5):
-        save_email("prio@example.com", "inbound", f"Track {i}", "body", "tracking")
+        session.add(EmailHistory(
+            client_email="prio@example.com", direction="inbound",
+            subject=f"Track {i}", body="body", situation="tracking",
+            created_at=base + timedelta(hours=5 + i),
+        ))
+    # 3 most recent
+    for i in range(3):
+        session.add(EmailHistory(
+            client_email="prio@example.com", direction="inbound",
+            subject=f"Recent {i}", body="body", situation="tracking",
+            created_at=base + timedelta(hours=10 + i),
+        ))
+    session.commit()
+    session.close()
 
     history = get_email_history("prio@example.com", max_total=10)
     assert len(history) == 10
-    # The 3 most recent should be included
     subjects = [h["subject"] for h in history]
+    # The 3 most recent are always included
     for i in range(3):
         assert f"Recent {i}" in subjects
+    # High-priority orders should beat low-priority tracking
+    order_count = sum(1 for s in subjects if s.startswith("Order"))
+    assert order_count >= 4
 
 
 def test_email_history_empty():
