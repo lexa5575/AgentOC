@@ -440,6 +440,73 @@ class TestEmailPipelineSmoke(unittest.TestCase):
         self.assertEqual(len(self.saved), 1)
         self.assertEqual(self.saved[0]["direction"], "inbound")
 
+    def test_template_address_fallback_from_db(self):
+        """When classification has no address, template uses client DB address.
+
+        payment_received + prepay triggers a template with {CUSTOMER_STREET} and
+        {CUSTOMER_CITY_STATE_ZIP}. Classifier returns null for both fields →
+        template should fall back to client DB values.
+        """
+        # Add address to client data
+        self.clients["client1@example.com"]["street"] = "99 Pine Rd"
+        self.clients["client1@example.com"]["city_state_zip"] = "Austin, TX 73301"
+
+        # Override classifier to return payment_received with no address
+        def _classify_paid(email_text):
+            payload = {
+                "needs_reply": True,
+                "situation": "payment_received",
+                "client_email": "client1@example.com",
+                "client_name": "Test Client One",
+                "order_id": None,
+                "price": None,
+                "customer_street": None,
+                "customer_city_state_zip": None,
+                "items": None,
+                "order_items": None,
+            }
+            return types.SimpleNamespace(content=json.dumps(payload))
+
+        with patch.object(self.email_agent.classifier_agent, "run", side_effect=_classify_paid):
+            email = (
+                "From: client1@example.com\n"
+                "Subject: Re: Order\n"
+                "Body: Paid. Thanks!"
+            )
+            out = self.email_agent.classify_and_process(email)
+
+        # Template should have picked up address from client DB via fallback
+        outbound = self.saved[1]["body"]
+        self.assertIn("99 Pine Rd", outbound)
+        self.assertIn("Austin, TX 73301", outbound)
+
+    def test_auto_save_address_from_classification(self):
+        """Step 6.5: address extracted by Classifier is saved to client DB."""
+        update_calls = []
+        original_update = self.email_agent.update_client
+
+        def _track_update(email, **fields):
+            update_calls.append({"email": email, "fields": fields})
+            return None
+
+        with patch.object(self.email_agent, "update_client", side_effect=_track_update):
+            email = (
+                "From: noreply@shipmecarton.com\n"
+                "Reply-To: client1@example.com\n"
+                "Subject: Shipmecarton - Order 23432\n\n"
+                "Payment amount: $220.00\n"
+                "Order ID: 23432\n"
+                "Firstname: Test Client One\n"
+                "Email: client1@example.com"
+            )
+            self.email_agent.classify_and_process(email)
+
+        # Classifier returns street="123 Main St", city_state_zip="Springfield, Illinois 62701"
+        self.assertEqual(len(update_calls), 1)
+        self.assertEqual(update_calls[0]["email"], "client1@example.com")
+        self.assertEqual(update_calls[0]["fields"]["street"], "123 Main St")
+        self.assertEqual(update_calls[0]["fields"]["city_state_zip"], "Springfield, Illinois 62701")
+
     def test_oos_followup_flow(self):
         """OOS followup — customer agrees to alternative, routed to oos_followup handler."""
         email = (
