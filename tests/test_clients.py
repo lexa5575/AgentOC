@@ -7,9 +7,13 @@ from db.clients import (
     decrement_discount,
     delete_client,
     get_client,
+    get_client_profile,
     list_clients,
     update_client,
+    update_client_notes,
+    update_client_summary,
 )
+from db.models import ClientOrderItem, EmailHistory, get_session
 
 
 def test_add_and_get_client():
@@ -114,3 +118,133 @@ def test_decrement_discount_no_discount():
     client = get_client("nodis@example.com")
     assert client["discount_orders_left"] == 0
     assert client["discount_percent"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: Client Profile tests
+# ---------------------------------------------------------------------------
+def _seed_order_items(db_session, email: str):
+    """Seed order items for profile tests."""
+    session = db_session()
+    try:
+        items = [
+            ClientOrderItem(
+                client_email=email, order_id="ORD-001",
+                product_name="Green Stick", base_flavor="Green",
+                product_type="stick", quantity=3,
+            ),
+            ClientOrderItem(
+                client_email=email, order_id="ORD-001",
+                product_name="Silver Stick", base_flavor="Silver",
+                product_type="stick", quantity=2,
+            ),
+            ClientOrderItem(
+                client_email=email, order_id="ORD-002",
+                product_name="Green Stick", base_flavor="Green",
+                product_type="stick", quantity=1,
+            ),
+        ]
+        session.add_all(items)
+        session.commit()
+    finally:
+        session.close()
+
+
+def _seed_email_history(db_session, email: str):
+    """Seed email history for profile tests."""
+    from datetime import datetime, timedelta
+    session = db_session()
+    try:
+        entries = [
+            EmailHistory(
+                client_email=email, direction="inbound",
+                subject="Order", body="I want to order",
+                created_at=datetime.utcnow() - timedelta(days=10),
+            ),
+            EmailHistory(
+                client_email=email, direction="outbound",
+                subject="Re: Order", body="Sure, here is your order",
+                created_at=datetime.utcnow() - timedelta(days=9),
+            ),
+        ]
+        session.add_all(entries)
+        session.commit()
+    finally:
+        session.close()
+
+
+def test_get_client_profile_basic(db_session):
+    """Profile returns client fields + computed stats."""
+    add_client("prof@example.com", "Profile User", "postpay", zelle_address="p@z.com")
+    _seed_order_items(db_session, "prof@example.com")
+    _seed_email_history(db_session, "prof@example.com")
+
+    profile = get_client_profile("prof@example.com")
+
+    assert profile is not None
+    assert profile["name"] == "Profile User"
+    assert profile["payment_type"] == "postpay"
+    assert profile["total_orders"] == 2  # ORD-001 and ORD-002
+    assert len(profile["favorite_flavors"]) == 2
+    assert "Green (4x)" in profile["favorite_flavors"]  # 3 + 1
+    assert "Silver (2x)" in profile["favorite_flavors"]
+    assert profile["is_active"] is True  # email within 90 days
+    assert profile["last_interaction"] is not None
+
+
+def test_get_client_profile_no_orders(db_session):
+    """Profile works for client with no orders."""
+    add_client("empty@example.com", "Empty", "prepay")
+
+    profile = get_client_profile("empty@example.com")
+
+    assert profile is not None
+    assert profile["total_orders"] == 0
+    assert profile["favorite_flavors"] == []
+    assert profile["is_active"] is False
+    assert profile["last_interaction"] is None
+
+
+def test_get_client_profile_not_found():
+    """Profile returns None for unknown client."""
+    assert get_client_profile("ghost@example.com") is None
+
+
+def test_get_client_profile_includes_notes_and_summary(db_session):
+    """Profile includes notes and llm_summary fields."""
+    add_client("noted@example.com", "Noted", "prepay")
+    update_client_notes("noted@example.com", "VIP client, handle with care")
+    update_client_summary("noted@example.com", "Frequent buyer, likes Green")
+
+    profile = get_client_profile("noted@example.com")
+
+    assert profile["notes"] == "VIP client, handle with care"
+    assert profile["llm_summary"] == "Frequent buyer, likes Green"
+
+
+def test_update_client_notes():
+    """update_client_notes sets notes field."""
+    add_client("note@example.com", "Note", "prepay")
+
+    assert update_client_notes("note@example.com", "Always ships Monday") is True
+    client = get_client("note@example.com")
+    assert client["notes"] == "Always ships Monday"
+
+
+def test_update_client_notes_not_found():
+    """update_client_notes returns False for missing client."""
+    assert update_client_notes("ghost@example.com", "nope") is False
+
+
+def test_update_client_summary():
+    """update_client_summary sets llm_summary field."""
+    add_client("sum@example.com", "Sum", "postpay")
+
+    assert update_client_summary("sum@example.com", "Loyal customer") is True
+    client = get_client("sum@example.com")
+    assert client["llm_summary"] == "Loyal customer"
+
+
+def test_update_client_summary_not_found():
+    """update_client_summary returns False for missing client."""
+    assert update_client_summary("ghost@example.com", "nope") is False

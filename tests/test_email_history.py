@@ -4,6 +4,7 @@ from db.email_history import (
     email_already_processed,
     get_email_history,
     get_gmail_state,
+    get_thread_history,
     save_email,
     set_gmail_state,
 )
@@ -94,3 +95,98 @@ def test_gmail_state():
 
     set_gmail_state("67890")
     assert get_gmail_state() == "67890"
+
+
+def test_save_and_get_with_thread_id():
+    """Test saving and retrieving emails with gmail_thread_id."""
+    thread_id = "thread_abc123"
+    
+    save_email(
+        "thread_test@example.com",
+        "inbound",
+        "Thread Test",
+        "Message 1",
+        "new_order",
+        gmail_message_id="msg_001",
+        gmail_thread_id=thread_id,
+    )
+    save_email(
+        "thread_test@example.com",
+        "outbound",
+        "Re: Thread Test",
+        "Reply 1",
+        "new_order",
+        gmail_thread_id=thread_id,
+    )
+    
+    # Test get_email_history includes thread_id
+    history = get_email_history("thread_test@example.com")
+    assert len(history) == 2
+    assert history[0]["gmail_thread_id"] == thread_id
+    assert history[1]["gmail_thread_id"] == thread_id
+
+
+def test_get_thread_history():
+    """Test fetching emails by thread_id."""
+    thread_id = "thread_xyz789"
+    other_thread = "thread_other"
+    
+    # Save emails in different threads
+    save_email(
+        "thread_hist@example.com",
+        "inbound",
+        "Thread A - Msg 1",
+        "Body",
+        "other",
+        gmail_thread_id=thread_id,
+    )
+    save_email(
+        "thread_hist@example.com",
+        "outbound",
+        "Re: Thread A - Msg 1",
+        "Reply",
+        "other",
+        gmail_thread_id=thread_id,
+    )
+    save_email(
+        "thread_hist@example.com",
+        "inbound",
+        "Thread B - Different",
+        "Other body",
+        "tracking",
+        gmail_thread_id=other_thread,
+    )
+    
+    # Get only the specific thread
+    thread_history = get_thread_history(thread_id)
+    assert len(thread_history) == 2
+    assert all(h["gmail_thread_id"] == thread_id for h in thread_history)
+    assert thread_history[0]["subject"] == "Thread A - Msg 1"  # oldest first
+    
+    # Other thread
+    other_history = get_thread_history(other_thread)
+    assert len(other_history) == 1
+    assert other_history[0]["gmail_thread_id"] == other_thread
+
+
+def test_get_thread_history_empty():
+    """Test get_thread_history returns empty list for unknown thread."""
+    assert get_thread_history("nonexistent_thread_id") == []
+
+
+def test_get_thread_history_limit_returns_latest_window():
+    """With limit, get_thread_history should return the latest N messages (still oldest-first)."""
+    thread_id = "thread_limit_latest"
+
+    for i in range(6):
+        save_email(
+            "thread_limit@example.com",
+            "inbound",
+            f"Msg {i}",
+            f"Body {i}",
+            "other",
+            gmail_thread_id=thread_id,
+        )
+
+    limited = get_thread_history(thread_id, limit=3)
+    assert [m["subject"] for m in limited] == ["Msg 3", "Msg 4", "Msg 5"]

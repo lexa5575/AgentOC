@@ -7,8 +7,8 @@ looks up client data, and generates reply drafts.
 
 Architecture:
 - Classifier agent: LLM returns structured JSON (Pydantic validated)
-- Python processing: lookup client + fill template (0 tokens)
-- Fallback agent: LLM generates reply only when no template exists
+- Python preprocessing: lookup client + stock context (0 tokens)
+- Router + handlers: each situation resolved by specialized handler
 
 Run with test data:
     python -m agents.email_agent
@@ -24,14 +24,14 @@ from agno.models.openai import OpenAIResponses
 from agents.reply_templates import (
     EmailClassification,
     OrderItem,
-    fill_out_of_stock_template,
-    format_email_history,
     format_result,
     process_classified_email,
 )
+from agents.router import route_to_handler
+from agents.state_updater import update_conversation_state
 from db import get_postgres_db
-from db.memory import get_full_email_history, save_email, save_order_items
-from tools.web_search import get_search_tools
+from db.conversation_state import get_state, save_state
+from db.memory import save_email, save_order_items
 from utils.telegram import send_telegram
 
 logger = logging.getLogger(__name__)
@@ -125,57 +125,6 @@ classifier_agent = Agent(
 )
 
 # ---------------------------------------------------------------------------
-# Agent 2: Fallback Reply Writer (only used when no template exists)
-# ---------------------------------------------------------------------------
-fallback_instructions = """\
-You are James, a customer service assistant for shipmecarton.com.
-
-Write a short reply to the customer email. You will receive context about the situation, client, and conversation history.
-
-STYLE — MATCH HISTORY:
-- Study the [WE SENT] messages in conversation history — that is YOUR voice
-- Copy the exact wording, phrasing, and structure from those messages
-- If history shows we use specific phrases (e.g., payment instructions, greeting patterns), reuse them verbatim
-- If no history is available: start with "Hi {name}," / "Hello,", 2-5 sentences, casual tone
-- Always end with exactly "Thank you!" — nothing after it, no name, no signature
-
-WHAT YOU CAN DO:
-- Reference information provided in the context and conversation history
-- Use conversation history to maintain continuity (e.g., reference previous orders, ongoing discussions)
-- Say "we'll check and get back to you" for things you can't verify
-
-WEB SEARCH:
-- You have a web search tool — use it when the customer asks about a product,
-  device, or topic you don't have information about
-- Search in English
-- Use search results to give a helpful, informed answer
-- Always cite what you found naturally (e.g., "Based on what we found...")
-- Do NOT paste raw search results — summarize in 1-2 sentences
-- If search doesn't help, fall back to "we'll check and get back to you"
-
-WHAT YOU CANNOT DO:
-- Invent prices, tracking numbers, delivery dates, or stock levels
-- Offer discounts or change payment terms
-- Tell customer to check the website — WE always check for them
-- Reveal you are AI
-- Write multiple reply variants — only ONE reply
-
-READING HISTORY — PRIORITIZE:
-- [WE SENT] messages are your style reference — replicate their tone and wording
-- Most recent messages carry more weight than older ones
-- Do NOT use history to determine what is in stock — only use the data provided above
-"""
-
-fallback_agent = Agent(
-    id="email-fallback",
-    name="Email Fallback",
-    model=OpenAIResponses(id="gpt-5.2"),
-    instructions=fallback_instructions,
-    tools=[get_search_tools()],
-    markdown=False,
-)
-
-# ---------------------------------------------------------------------------
 # Main Email Agent (orchestrates the workflow, visible in AgentOS UI)
 # ---------------------------------------------------------------------------
 email_agent_instructions = """\
@@ -250,14 +199,19 @@ def _find_value(data: dict, *keys: str):
     return None
 
 
-def classify_and_process(email_text: str, gmail_message_id: str | None = None) -> str:
+def classify_and_process(
+    email_text: str,
+    gmail_message_id: str | None = None,
+    gmail_thread_id: str | None = None,
+) -> str:
     """Classify an incoming email and generate a reply draft.
-    Handles classification (LLM), client lookup, and template filling (Python).
+    Handles classification (LLM), context prep (Python), and routed handling.
     Returns formatted result with classification, client data, and draft reply.
 
     Args:
         email_text: The full email text including From, Subject, Body etc.
         gmail_message_id: Optional Gmail message ID for deduplication.
+        gmail_thread_id: Optional Gmail thread ID for thread tracking.
 
     Returns:
         Formatted classification result with draft reply if template exists.
@@ -314,6 +268,45 @@ def classify_and_process(email_text: str, gmail_message_id: str | None = None) -
         # Step 2: Python processes (0 tokens — pure logic)
         result = process_classified_email(classification)
 
+        # Step 2.5: State Updater LLM — update ConversationState
+        if gmail_thread_id:
+            try:
+                # Get current state
+                current_state_record = get_state(gmail_thread_id)
+                current_state = current_state_record.get("state") if current_state_record else None
+
+                # Update state with new email
+                updated_state = update_conversation_state(
+                    current_state=current_state,
+                    email_text=email_text,
+                    situation=classification.situation,
+                    direction="inbound",
+                    client_email=classification.client_email,
+                    order_id=classification.order_id,
+                    price=classification.price,
+                )
+
+                # Save updated state
+                save_state(
+                    gmail_thread_id=gmail_thread_id,
+                    client_email=classification.client_email,
+                    state_json=updated_state,
+                    situation=classification.situation,
+                )
+
+                # Add to result for handlers to use
+                result["conversation_state"] = updated_state
+
+                logger.info(
+                    "Conversation state updated: thread=%s, status=%s",
+                    gmail_thread_id, updated_state.get("status"),
+                )
+            except Exception as e:
+                logger.error("Failed to update conversation state: %s", e, exc_info=True)
+                result["conversation_state"] = None
+        else:
+            result["conversation_state"] = None
+
         # Telegram: notify if new client (not in database)
         if not result["client_found"] and result["needs_reply"]:
             logger.warning("New client not in database: %s", classification.client_email)
@@ -342,67 +335,21 @@ def classify_and_process(email_text: str, gmail_message_id: str | None = None) -
         if result.get("stock_issue"):
             tg_msg = _build_oos_telegram(classification, result)
 
-        # Step 3: Handle AI fallback cases
-        if result["needs_ai_fallback"] and result["needs_reply"]:
-            # OUT-OF-STOCK: Use stable Python template (0 LLM tokens)
-            if result.get("stock_issue"):
-                stock_issue = result["stock_issue"]
-                insufficient_items = stock_issue["stock_check"]["insufficient_items"]
-                best_alternatives = stock_issue.get("best_alternatives", {})
-                
-                # Fill template with Python — no LLM involved
-                result["draft_reply"] = fill_out_of_stock_template(
-                    insufficient_items=insufficient_items,
-                    best_alternatives=best_alternatives,
-                )
-                result["needs_ai_fallback"] = False
-                result["template_used"] = True
-                
-                logger.info(
-                    "OOS template filled for %s (0 LLM tokens)",
-                    classification.client_email,
-                )
-                
-                # Send Telegram with draft
-                if tg_msg:
-                    draft_preview = result["draft_reply"][:500]
-                    send_telegram(tg_msg + f"\n--- DRAFT ---\n<pre>{draft_preview}</pre>")
+        # Step 3: Route to specialized handler
+        if result.get("needs_routing") and result["needs_reply"]:
+            logger.info(
+                "Routing to handler: situation=%s, client=%s",
+                classification.situation, classification.client_email,
+            )
+
+            # Route to appropriate handler via router
+            result = route_to_handler(classification, result, email_text)
+            result["needs_routing"] = False
             
-            # OTHER SITUATIONS: Use LLM fallback agent
-            else:
-                client_info = ""
-                if result["client_found"]:
-                    c = result["client_data"]
-                    client_info = (
-                        f"Known client: {c.get('name', 'unknown')}, "
-                        f"payment type: {c['payment_type']}"
-                    )
-                else:
-                    client_info = "NEW CLIENT — not in our database"
-
-                # Fetch conversation history: local DB + Gmail (merged)
-                history = get_full_email_history(result["client_email"], max_results=10)
-                history_text = format_email_history(history)
-                logger.info(
-                    "AI fallback for situation=%s, history=%d messages",
-                    result["situation"], len(history),
-                )
-
-                fallback_prompt = (
-                    f"Situation: {result['situation']}\n"
-                    f"Client: {client_info}\n"
-                    f"Client name: {result['client_name'] or 'unknown'}\n\n"
-                )
-                if history_text:
-                    fallback_prompt += f"{history_text}\n\n"
-                fallback_prompt += (
-                    f"Original email:\n{email_text}\n\n"
-                    f"Write a reply:"
-                )
-
-                fallback_response = fallback_agent.run(fallback_prompt)
-                result["draft_reply"] = fallback_response.content
-                result["needs_ai_fallback"] = False
+            # Send Telegram for OOS situations
+            if tg_msg and result.get("draft_reply"):
+                draft_preview = result["draft_reply"][:500]
+                send_telegram(tg_msg + f"\n--- DRAFT ---\n<pre>{draft_preview}</pre>")
 
         # Step 4: Format the output
         logger.info(
@@ -425,6 +372,7 @@ def classify_and_process(email_text: str, gmail_message_id: str | None = None) -
             body=email_text,
             situation=classification.situation,
             gmail_message_id=gmail_message_id,
+            gmail_thread_id=gmail_thread_id,
         )
         if result["needs_reply"] and result.get("draft_reply"):
             save_email(
@@ -433,7 +381,22 @@ def classify_and_process(email_text: str, gmail_message_id: str | None = None) -
                 subject=f"Re: {subject}" if subject else "",
                 body=result["draft_reply"],
                 situation=classification.situation,
+                gmail_thread_id=gmail_thread_id,
             )
+
+            # Update state with outbound draft (Python, no LLM needed — we know what we wrote)
+            if gmail_thread_id and result.get("conversation_state"):
+                try:
+                    state = result["conversation_state"]
+                    state.setdefault("last_exchange", {})["we_said"] = result["draft_reply"][:200]
+                    save_state(
+                        gmail_thread_id=gmail_thread_id,
+                        client_email=classification.client_email,
+                        state_json=state,
+                        situation=classification.situation,
+                    )
+                except Exception as e:
+                    logger.error("Failed to update state for outbound: %s", e)
 
         # Step 6: Save structured order items for preference tracking
         if (

@@ -1,0 +1,24 @@
+name: Discount Policy
+priority: hard
+
+rules:
+  - "We don't offer discounts on first orders"
+  - "Returning customers may have discounts in our system"
+  - "Discounts are applied automatically when available"
+  - "We do NOT negotiate prices or create custom discounts"
+
+active_discount:
+  - "Tell client their discount percentage and how many orders it applies to"
+  - "Discount is applied automatically"
+
+no_discount:
+  - "Thank customer for their interest"
+  - "Say we don't have discounts available right now"
+  - "Mention we occasionally run promotions"
+  - "Do NOT promise future discounts"
+
+constraints:
+  - "NEVER create or offer new discounts"
+  - "NEVER negotiate prices"
+  - "NEVER promise discounts that aren't in the system"
+  - "NEVER change existing discount terms"

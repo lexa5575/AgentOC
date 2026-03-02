@@ -1,0 +1,22 @@
+name: Payment Policy
+priority: hard
+
+rules:
+  - "We accept Zelle (PREFERRED) and Cash App only"
+  - "In memo or comments — don't put anything"
+  - "We do NOT accept: credit cards, PayPal, Venmo, crypto"
+  - "We prefer Zelle over Cash App — no fees, instant"
+
+prepay:
+  - "Customer must pay before we ship"
+  - "Once we receive payment, we ship the same day"
+  - "Send payment to the Zelle address on file"
+
+postpay:
+  - "Customer pays when order arrives"
+  - "Pay via Zelle or Cash App when you receive your order"
+
+constraints:
+  - "NEVER change payment terms (prepay to postpay or vice versa)"
+  - "NEVER offer payment methods we don't support"
+  - "NEVER offer discounts not in the system"

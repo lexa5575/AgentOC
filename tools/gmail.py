@@ -118,6 +118,7 @@ class GmailClient:
                         messages.append({
                             "msg_id": msg["id"],
                             "history_id": history_id,
+                            "thread_id": msg.get("threadId"),
                         })
 
             page_token = result.get("nextPageToken")
@@ -178,6 +179,7 @@ class GmailClient:
             "subject": subject,
             "body": body,
             "gmail_message_id": msg_id,
+            "gmail_thread_id": msg.get("threadId"),
         }
 
     def search_thread_history(self, client_email: str, max_results: int = 10) -> list[dict]:

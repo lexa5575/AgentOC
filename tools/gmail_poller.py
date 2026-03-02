@@ -133,7 +133,11 @@ def _poll_gmail_locked() -> int:
                     try:
                         msg = client.get_message(msg_id)
                         email_text = _format_email_text(msg)
-                        result = classify_and_process(email_text, gmail_message_id=msg_id)
+                        result = classify_and_process(
+                            email_text,
+                            gmail_message_id=msg_id,
+                            gmail_thread_id=msg.get("gmail_thread_id"),
+                        )
                         _send_telegram_result(msg, result)
                         processed += 1
                     except Exception as e:
@@ -177,7 +181,11 @@ def _poll_gmail_locked() -> int:
                 email_text = _format_email_text(msg)
 
                 # Process through email agent pipeline
-                result = classify_and_process(email_text, gmail_message_id=msg_id)
+                result = classify_and_process(
+                    email_text,
+                    gmail_message_id=msg_id,
+                    gmail_thread_id=msg.get("gmail_thread_id"),
+                )
 
                 # Send result to Telegram
                 _send_telegram_result(msg, result)

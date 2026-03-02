@@ -13,7 +13,6 @@ from pydantic import BaseModel, Field
 
 from db.memory import (
     check_stock_for_order,
-    decrement_discount,
     get_client,
     get_stock_summary,
     select_best_alternatives,
@@ -285,10 +284,10 @@ def format_email_history(history: list[dict]) -> str:
 # Core processing function (pure Python, no LLM, no tokens)
 # ---------------------------------------------------------------------------
 def process_classified_email(classification: EmailClassification) -> dict:
-    """Process a classified email: look up client, fill template or request fallback.
+    """Process a classified email: classify metadata and prepare router context.
 
-    This function uses ZERO tokens — it's pure Python.
-    Returns a dict with all info needed to display or send the reply.
+    This function uses ZERO tokens and does not generate text replies.
+    It prepares client/stock context and signals whether routing is needed.
     """
     result = {
         "needs_reply": classification.needs_reply,
@@ -299,7 +298,7 @@ def process_classified_email(classification: EmailClassification) -> dict:
         "client_data": None,
         "template_used": False,
         "draft_reply": None,
-        "needs_ai_fallback": False,
+        "needs_routing": False,
         "stock_issue": None,
     }
 
@@ -351,7 +350,7 @@ def process_classified_email(classification: EmailClassification) -> dict:
                     "stock_check": stock_result,
                     "best_alternatives": best_alternatives,
                 }
-                result["needs_ai_fallback"] = True
+                result["needs_routing"] = True
                 logger.info(
                     "Stock insufficient for %s: %s (alternatives: %s)",
                     classification.client_email,
@@ -360,62 +359,8 @@ def process_classified_email(classification: EmailClassification) -> dict:
                 )
                 return result
 
-    # Try to find a template
-    payment_type = client["payment_type"]
-    template = REPLY_TEMPLATES.get((classification.situation, payment_type))
-
-    if not template:
-        # No template for this situation — need AI fallback
-        result["needs_ai_fallback"] = True
-        return result
-
-    # Fill the template (pure Python, exact output)
-    price = classification.price or ""
-    discount = client.get("discount_percent", 0)
-    discount_left = client.get("discount_orders_left", 0)
-    zelle_address = client.get("zelle_address", "")
-
-    # Parse price
-    price_clean = price.replace("$", "").replace(",", "")
-    try:
-        price_num = float(price_clean)
-    except (ValueError, TypeError):
-        price_num = 0.0
-
-    # Apply discount
-    apply_discount = discount > 0 and discount_left > 0 and price_num > 0
-    if apply_discount:
-        final_price = f"${price_num * (1 - discount / 100):.2f}"
-        discount_str = str(discount)
-    else:
-        final_price = price
-        discount_str = "0"
-
-    # Fill placeholders
-    reply = template
-    reply = reply.replace("{PRICE}", price)
-    reply = reply.replace("{DISCOUNT}", discount_str)
-    reply = reply.replace("{FINAL_PRICE}", final_price)
-    reply = reply.replace("{ZELLE_ADDRESS}", zelle_address)
-    reply = reply.replace("{CUSTOMER_NAME}", classification.client_name or client["name"])
-    reply = reply.replace("{CUSTOMER_STREET}", classification.customer_street or "")
-    reply = reply.replace("{CUSTOMER_CITY_STATE_ZIP}", classification.customer_city_state_zip or "")
-    reply = reply.replace("{TRACKING_URL}", "[tracking URL pending]")
-
-    # Clean up: if no discount, simplify the price line
-    if not apply_discount and price:
-        reply = reply.replace(f"{price} - 0% = {price}", price)
-
-    # Decrement discount_orders_left via memory layer
-    if apply_discount:
-        decrement_discount(classification.client_email)
-        logger.info(
-            "Discount applied for %s: %s%% (%d -> %d orders left)",
-            classification.client_email, discount, discount_left, discount_left - 1,
-        )
-
-    result["template_used"] = True
-    result["draft_reply"] = reply
+    # All reply generation is delegated to specialized handlers via router.
+    result["needs_routing"] = True
     return result
 
 
@@ -497,8 +442,8 @@ def format_result(result: dict) -> str:
         lines.append("[Template - exact copy]")
         lines.append("")
         lines.append(result["draft_reply"])
-    elif result["needs_ai_fallback"]:
-        lines.append("[AI will generate reply]")
+    elif result.get("needs_routing"):
+        lines.append("[Router will generate reply]")
     else:
         lines.append(result["draft_reply"])
 

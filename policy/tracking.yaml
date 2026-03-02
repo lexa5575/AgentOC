@@ -1,0 +1,16 @@
+name: Tracking Policy
+priority: hard
+
+rules:
+  - "We ship via USPS from USA"
+  - "Tracking updates appear on USPS website within 24 hours of shipping"
+  - "Delivery usually takes 2-4 business days"
+  - "If tracking number is in context — provide it with usps.com link"
+  - "If order was shipped — state the ship date"
+  - "If no tracking yet — say we'll get the tracking info and email it shortly"
+  - "If order not found — say we'll check and get back to you"
+
+constraints:
+  - "NEVER invent tracking numbers"
+  - "NEVER promise specific delivery dates unless confirmed"
+  - "NEVER give tracking for orders you don't have info about"

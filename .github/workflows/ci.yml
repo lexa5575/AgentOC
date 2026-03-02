@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Build And Test (Docker)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build API image
+        run: docker compose -f compose.prod.yaml build agentos-api
+
+      - name: Start test services
+        run: docker compose -f compose.prod.yaml up -d agentos-db agentos-api
+
+      - name: Verify containers are running
+        run: |
+          docker ps --format 'table {{.Names}}\t{{.Status}}'
+          docker ps --format '{{.Names}}' | grep -q '^agentos-api$'
+          docker ps --format '{{.Names}}' | grep -q '^agentos-db$'
+
+      - name: Run full test suite
+        run: docker exec agentos-api python -m pytest -q tests
+
+      - name: Run compile check
+        run: docker exec agentos-api python -m compileall -q agents db tools scripts tests
+
+      - name: Show container logs on failure
+        if: failure()
+        run: docker compose -f compose.prod.yaml logs --no-color agentos-api agentos-db
+
+      - name: Stop services
+        if: always()
+        run: docker compose -f compose.prod.yaml down -v --remove-orphans

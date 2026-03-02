@@ -13,8 +13,11 @@ from db.clients import (
     decrement_discount,
     delete_client,
     get_client,
+    get_client_profile,
     list_clients,
     update_client,
+    update_client_notes,
+    update_client_summary,
 )
 from db.email_history import (
     email_already_processed,
@@ -22,6 +25,7 @@ from db.email_history import (
     get_full_email_history,
     get_gmail_state,
     get_gmail_thread_history,
+    get_thread_history,
     save_email,
     set_gmail_state,
 )
@@ -43,14 +47,18 @@ __all__ = [
     "decrement_discount",
     "delete_client",
     "get_client",
+    "get_client_profile",
     "list_clients",
     "update_client",
+    "update_client_notes",
+    "update_client_summary",
     # email
     "email_already_processed",
     "get_email_history",
     "get_full_email_history",
     "get_gmail_state",
     "get_gmail_thread_history",
+    "get_thread_history",
     "save_email",
     "set_gmail_state",
     # stock

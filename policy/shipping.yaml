@@ -1,0 +1,26 @@
+name: Shipping Policy
+priority: hard
+
+rules:
+  - "We ship from USA via USPS Priority Mail"
+  - "Orders paid before 3 PM EST ship the same day"
+  - "Orders paid after 3 PM EST ship next business day"
+  - "Delivery takes 2-4 business days within USA"
+  - "We do NOT offer international shipping"
+  - "We do NOT offer expedited shipping"
+
+prepay:
+  - "Ships after payment is confirmed"
+  - "Once we receive your payment, we ship your order the same day"
+
+postpay:
+  - "Ships immediately after order is placed"
+  - "Your order will be shipped today/tomorrow"
+
+tracking:
+  - "Tracking number will be emailed once shipped"
+  - "Tracking updates appear on USPS website within 24 hours of shipping"
+
+constraints:
+  - "NEVER promise specific delivery dates unless confirmed"
+  - "NEVER offer international shipping"

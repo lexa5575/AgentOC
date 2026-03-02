@@ -13,6 +13,10 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
 
 from db import get_postgres_db
+from db.clients import (
+    get_client_profile as db_get_client_profile,
+    update_client_notes as db_update_client_notes,
+)
 from db.memory import (
     add_client as db_add_client,
     delete_client as db_delete_client,
@@ -254,6 +258,70 @@ def email_history(client_email: str) -> str:
     return "\n".join(lines)
 
 
+def client_profile(email: str) -> str:
+    """Get full client profile with order stats, favorite flavors, and summary.
+
+    Args:
+        email: Client email address.
+
+    Returns:
+        Detailed client profile or 'not found' message.
+    """
+    profile = db_get_client_profile(email)
+    if not profile:
+        return f"Client {email} not found."
+
+    lines = [
+        f"Email: {profile['email']}",
+        f"Name: {profile['name']}",
+        f"Payment Type: {profile['payment_type']}",
+        f"Zelle Address: {profile.get('zelle_address') or 'none'}",
+        f"Discount: {profile.get('discount_percent', 0)}%"
+        + (f" ({profile.get('discount_orders_left', 0)} orders left)" if profile.get('discount_percent') else ""),
+        f"Total Orders: {profile.get('total_orders', 0)}",
+        f"Favorite Flavors: {', '.join(profile.get('favorite_flavors', [])) or 'none'}",
+        f"Active: {'yes' if profile.get('is_active') else 'no'}",
+        f"Last Interaction: {profile.get('last_interaction') or 'never'}",
+    ]
+    if profile.get("notes"):
+        lines.append(f"Notes: {profile['notes']}")
+    if profile.get("llm_summary"):
+        lines.append(f"Summary: {profile['llm_summary']}")
+    return "\n".join(lines)
+
+
+def update_notes(email: str, notes: str) -> str:
+    """Set or update manual operator notes for a client.
+
+    Args:
+        email: Client email address.
+        notes: New notes text (replaces existing notes).
+
+    Returns:
+        Success or error message.
+    """
+    if db_update_client_notes(email, notes):
+        return f"Notes updated for {email}."
+    return f"Error: client {email} not found."
+
+
+def refresh_client_summary(email: str) -> str:
+    """Generate or refresh LLM summary for a client based on email history.
+
+    Args:
+        email: Client email address.
+
+    Returns:
+        Generated summary or error message.
+    """
+    from agents.client_profiler import generate_client_summary
+
+    summary = generate_client_summary(email)
+    if summary:
+        return f"Summary updated for {email}:\n{summary}"
+    return f"Could not generate summary for {email} (no email history or error)."
+
+
 def stock_summary() -> str:
     """Get overall stock summary: total items, available, last sync time.
 
@@ -280,9 +348,12 @@ You manage client data and check product stock. You understand both Russian and 
 CLIENT MANAGEMENT tools:
 - list_clients: show all clients
 - get_client: show details of one client
+- client_profile: show FULL profile with order stats, favorite flavors, summary
 - add_client: add a new client
 - update_client: change client data (payment_type, discount, zelle, name)
 - delete_client: remove a client
+- update_notes: set manual notes on a client (e.g., "VIP", "часто спрашивает скидки")
+- refresh_client_summary: generate/update AI summary for a client from email history
 - email_history: show conversation history with a client (from local DB + Gmail)
 
 STOCK QUERY tools:
@@ -308,7 +379,8 @@ admin_agent = Agent(
     db=agent_db,
     instructions=admin_instructions,
     tools=[
-        list_clients, get_client, add_client, update_client, delete_client,
+        list_clients, get_client, client_profile, add_client, update_client, delete_client,
+        update_notes, refresh_client_summary,
         email_history,
         check_stock, stock_by_category, stock_summary,
     ],

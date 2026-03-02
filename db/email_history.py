@@ -32,6 +32,7 @@ def save_email(
     body: str,
     situation: str,
     gmail_message_id: str | None = None,
+    gmail_thread_id: str | None = None,
 ) -> None:
     """Save an email (inbound or outbound) to the history table."""
     session = get_session()
@@ -43,13 +44,40 @@ def save_email(
             body=body,
             situation=situation,
             gmail_message_id=gmail_message_id,
+            gmail_thread_id=gmail_thread_id,
         )
         session.add(record)
         session.commit()
-        logger.info("Saved %s email for %s (situation=%s)", direction, client_email, situation)
+        logger.info("Saved %s email for %s (situation=%s, thread=%s)", direction, client_email, situation, gmail_thread_id)
     except Exception as e:
         logger.error("Failed to save email history: %s", e)
         session.rollback()
+    finally:
+        session.close()
+
+
+def get_thread_history(gmail_thread_id: str, limit: int = 20) -> list[dict]:
+    """Fetch most recent emails in a Gmail thread, sorted chronologically.
+
+    Args:
+        gmail_thread_id: The Gmail thread ID to fetch.
+        limit: Maximum number of messages to return.
+
+    Returns:
+        List of email dicts sorted oldest-first.
+    """
+    session = get_session()
+    try:
+        # Query newest first for a correct LIMIT window, then re-sort to oldest-first.
+        rows = (
+            session.query(EmailHistory)
+            .filter_by(gmail_thread_id=gmail_thread_id)
+            .order_by(EmailHistory.created_at.desc())
+            .limit(limit)
+            .all()
+        )
+        rows.reverse()
+        return [r.to_dict() for r in rows]
     finally:
         session.close()
 

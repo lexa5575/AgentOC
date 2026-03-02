@@ -1,0 +1,411 @@
+"""End-to-end smoke tests for email pipeline with router architecture.
+
+The tests use realistic email texts and run through:
+classifier -> process_classified_email -> router -> handler -> formatting/saving.
+
+External runtime dependencies are stubbed so this suite runs locally without
+OpenAI/Gmail/Postgres services.
+"""
+
+from __future__ import annotations
+
+import importlib
+import json
+import sys
+import types
+import unittest
+from unittest.mock import patch
+
+
+def _install_import_stubs() -> None:
+    """Install lightweight module stubs required to import agents.email_agent."""
+    for name in list(sys.modules):
+        if (
+            name == "agents.email_agent"
+            or name == "agents.router"
+            or name == "agents.context"
+            or name.startswith("agents.handlers")
+            or name == "db.conversation_state"
+        ):
+            sys.modules.pop(name, None)
+
+    agno = types.ModuleType("agno")
+    agno.__path__ = []
+    agno_agent = types.ModuleType("agno.agent")
+
+    class FakeAgent:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def run(self, prompt):
+            raise RuntimeError("FakeAgent.run must be patched in tests")
+
+    agno_agent.Agent = FakeAgent
+
+    agno_models = types.ModuleType("agno.models")
+    agno_models.__path__ = []
+    agno_models_openai = types.ModuleType("agno.models.openai")
+
+    class FakeOpenAIResponses:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    agno_models_openai.OpenAIResponses = FakeOpenAIResponses
+
+    sys.modules["agno"] = agno
+    sys.modules["agno.agent"] = agno_agent
+    sys.modules["agno.models"] = agno_models
+    sys.modules["agno.models.openai"] = agno_models_openai
+
+    db_mod = types.ModuleType("db")
+    db_mod.__path__ = []
+    db_mod.get_postgres_db = lambda *args, **kwargs: object()
+
+    db_memory = types.ModuleType("db.memory")
+    db_memory.get_full_email_history = lambda *args, **kwargs: []
+    db_memory.save_email = lambda *args, **kwargs: None
+    db_memory.save_order_items = lambda *args, **kwargs: None
+    db_memory.get_client = lambda *args, **kwargs: None
+    db_memory.decrement_discount = lambda *args, **kwargs: None
+    db_memory.get_stock_summary = lambda *args, **kwargs: {"total": 0}
+    db_memory.check_stock_for_order = lambda *args, **kwargs: {
+        "all_in_stock": True,
+        "items": [],
+        "insufficient_items": [],
+    }
+    db_memory.select_best_alternatives = lambda *args, **kwargs: {"alternatives": []}
+    db_clients = types.ModuleType("db.clients")
+    db_clients.get_client_profile = lambda *args, **kwargs: None
+    db_conversation_state = types.ModuleType("db.conversation_state")
+    db_conversation_state.get_state = lambda *args, **kwargs: None
+    db_conversation_state.save_state = lambda *args, **kwargs: None
+
+    sys.modules["db"] = db_mod
+    sys.modules["db.memory"] = db_memory
+    sys.modules["db.clients"] = db_clients
+    sys.modules["db.conversation_state"] = db_conversation_state
+
+    tools_mod = types.ModuleType("tools")
+    tools_mod.__path__ = []
+    tools_web_search = types.ModuleType("tools.web_search")
+    tools_web_search.get_search_tools = lambda: []
+    sys.modules["tools"] = tools_mod
+    sys.modules["tools.web_search"] = tools_web_search
+
+    utils_mod = types.ModuleType("utils")
+    utils_mod.__path__ = []
+    utils_telegram = types.ModuleType("utils.telegram")
+    utils_telegram.send_telegram = lambda *args, **kwargs: None
+    sys.modules["utils"] = utils_mod
+    sys.modules["utils.telegram"] = utils_telegram
+
+
+class TestEmailPipelineSmoke(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        _install_import_stubs()
+        cls.email_agent = importlib.import_module("agents.email_agent")
+        cls.reply_templates = importlib.import_module("agents.reply_templates")
+        cls.h_general = importlib.import_module("agents.handlers.general")
+        cls.h_tracking = importlib.import_module("agents.handlers.tracking")
+        cls.h_payment = importlib.import_module("agents.handlers.payment")
+        cls.h_discount = importlib.import_module("agents.handlers.discount")
+        cls.h_shipping = importlib.import_module("agents.handlers.shipping")
+
+    def setUp(self):
+        self.saved = []
+        self.telegrams = []
+
+        self.clients = {
+            "client1@example.com": {
+                "email": "client1@example.com",
+                "name": "Test Client One",
+                "payment_type": "prepay",
+                "zelle_address": "pay@example.com",
+                "discount_percent": 0,
+                "discount_orders_left": 0,
+            },
+            "client2@example.com": {
+                "email": "client2@example.com",
+                "name": "Test Client Two",
+                "payment_type": "postpay",
+                "zelle_address": "",
+                "discount_percent": 0,
+                "discount_orders_left": 0,
+            },
+        }
+
+        self.patchers = [
+            patch.object(self.email_agent.classifier_agent, "run", side_effect=self._classifier_run),
+            patch.object(self.reply_templates, "get_client", side_effect=self._get_client),
+            patch.object(self.reply_templates, "get_stock_summary", side_effect=self._get_stock_summary),
+            patch.object(self.reply_templates, "check_stock_for_order", side_effect=self._check_stock_for_order),
+            patch.object(
+                self.reply_templates,
+                "select_best_alternatives",
+                side_effect=self._select_best_alternatives,
+            ),
+            patch.object(self.email_agent, "save_email", side_effect=self._save_email),
+            patch.object(self.email_agent, "save_order_items", return_value=None),
+            patch.object(self.email_agent, "send_telegram", side_effect=self._send_telegram),
+            patch.object(self.h_tracking.tracking_agent, "run", return_value=types.SimpleNamespace(
+                content="Your tracking number is AB123. Thank you!"
+            )),
+            patch.object(self.h_payment.payment_agent, "run", return_value=types.SimpleNamespace(
+                content="Please send payment via Zelle to pay@example.com. Thank you!"
+            )),
+            patch.object(self.h_discount.discount_agent, "run", return_value=types.SimpleNamespace(
+                content="Unfortunately, no active discounts right now. Thank you!"
+            )),
+            patch.object(self.h_shipping.shipping_agent, "run", return_value=types.SimpleNamespace(
+                content="We ship via USPS and delivery takes 2-4 business days. Thank you!"
+            )),
+            patch.object(self.h_general.general_agent, "run", return_value=types.SimpleNamespace(
+                content="We'll check and get back to you. Thank you!"
+            )),
+        ]
+
+        for p in self.patchers:
+            p.start()
+
+    def tearDown(self):
+        for p in reversed(self.patchers):
+            p.stop()
+
+    # ----- fake infra -----
+    def _save_email(self, **kwargs):
+        self.saved.append(kwargs)
+
+    def _send_telegram(self, text: str):
+        self.telegrams.append(text)
+
+    def _history(self, client_email: str, max_results: int = 10):
+        return [
+            {
+                "direction": "outbound",
+                "subject": "Previous",
+                "body": "Old message",
+                "created_at": None,
+            }
+        ]
+
+    def _get_client(self, email: str):
+        return self.clients.get(email)
+
+    def _get_stock_summary(self):
+        return {"total": 10}
+
+    def _check_stock_for_order(self, items: list[dict]):
+        has_oos = any(i.get("base_flavor") == "Turquoise" for i in items)
+        if not has_oos:
+            return {
+                "all_in_stock": True,
+                "items": [
+                    {
+                        "base_flavor": i["base_flavor"],
+                        "ordered_qty": i["quantity"],
+                        "total_available": 10,
+                        "is_sufficient": True,
+                    }
+                    for i in items
+                ],
+                "insufficient_items": [],
+            }
+        return {
+            "all_in_stock": False,
+            "items": [
+                {
+                    "base_flavor": "Turquoise",
+                    "ordered_qty": 3,
+                    "total_available": 0,
+                    "is_sufficient": False,
+                }
+            ],
+            "insufficient_items": [
+                {
+                    "base_flavor": "Turquoise",
+                    "ordered_qty": 3,
+                    "total_available": 0,
+                    "product_name": "Tera Turquoise EU",
+                }
+            ],
+        }
+
+    def _select_best_alternatives(self, **kwargs):
+        return {
+            "alternatives": [
+                {
+                    "alternative": {
+                        "product_name": "Tera Green EU",
+                        "category": "TEREA_EUROPE",
+                        "quantity": 5,
+                    },
+                    "reason": "fallback",
+                }
+            ]
+        }
+
+    def _classifier_run(self, email_text: str):
+        text = email_text.lower()
+        if "where is my order" in text:
+            payload = {
+                "needs_reply": True,
+                "situation": "tracking",
+                "client_email": "client1@example.com",
+                "client_name": "Test Client One",
+                "order_id": None,
+                "price": None,
+                "customer_street": None,
+                "customer_city_state_zip": None,
+                "items": None,
+                "order_items": None,
+            }
+        elif "how can i pay" in text:
+            payload = {
+                "needs_reply": True,
+                "situation": "payment_question",
+                "client_email": "client1@example.com",
+                "client_name": "Test Client One",
+                "order_id": None,
+                "price": None,
+                "customer_street": None,
+                "customer_city_state_zip": None,
+                "items": None,
+                "order_items": None,
+            }
+        elif "thank you so much!" in text:
+            payload = {
+                "needs_reply": False,
+                "situation": "other",
+                "client_email": "client1@example.com",
+                "client_name": "Test Client One",
+                "order_id": None,
+                "price": None,
+                "customer_street": None,
+                "customer_city_state_zip": None,
+                "items": None,
+                "order_items": None,
+            }
+        elif "order 77777" in text:
+            payload = {
+                "needs_reply": True,
+                "situation": "new_order",
+                "client_email": "client1@example.com",
+                "client_name": "Test Client One",
+                "order_id": "77777",
+                "price": "$285.00",
+                "customer_street": "123 Main St",
+                "customer_city_state_zip": "Springfield, Illinois 62701",
+                "items": "Tera Turquoise EU x 3",
+                "order_items": [
+                    {"product_name": "Tera Turquoise EU", "base_flavor": "Turquoise", "quantity": 3}
+                ],
+            }
+        elif "order 23432" in text:
+            payload = {
+                "needs_reply": True,
+                "situation": "new_order",
+                "client_email": "client1@example.com",
+                "client_name": "Test Client One",
+                "order_id": "23432",
+                "price": "$220.00",
+                "customer_street": "123 Main St",
+                "customer_city_state_zip": "Springfield, Illinois 62701",
+                "items": "Tera Green x 2",
+                "order_items": [
+                    {"product_name": "Tera Green EU", "base_flavor": "Green", "quantity": 2}
+                ],
+            }
+        else:
+            payload = {
+                "needs_reply": True,
+                "situation": "other",
+                "client_email": "client1@example.com",
+                "client_name": "Test Client One",
+                "order_id": None,
+                "price": None,
+                "customer_street": None,
+                "customer_city_state_zip": None,
+                "items": None,
+                "order_items": None,
+            }
+        return types.SimpleNamespace(content=json.dumps(payload))
+
+    # ----- smoke cases -----
+    def test_new_order_template_flow(self):
+        email = (
+            "From: noreply@shipmecarton.com\n"
+            "Reply-To: client1@example.com\n"
+            "Subject: Shipmecarton - Order 23432\n\n"
+            "Payment amount: $220.00\n"
+            "Order ID: 23432\n"
+            "Firstname: Test Client One\n"
+            "Email: client1@example.com"
+        )
+        out = self.email_agent.classify_and_process(email)
+
+        self.assertIn("Situation: new_order", out)
+        self.assertIn("Thank you so much for placing an order", out)
+        self.assertEqual(len(self.saved), 2)
+        self.assertEqual(self.saved[1]["direction"], "outbound")
+        self.assertIn("Thank you so much for placing an order", self.saved[1]["body"])
+
+    def test_tracking_flow(self):
+        email = (
+            "From: client1@example.com\n"
+            "Subject: Re: Order 23432\n"
+            "Body: where is my order?"
+        )
+        out = self.email_agent.classify_and_process(email)
+
+        self.assertIn("Situation: tracking", out)
+        self.assertIn("Your tracking number is AB123. Thank you!", out)
+        self.assertEqual(len(self.saved), 2)
+        self.assertEqual(self.saved[1]["body"], "Your tracking number is AB123. Thank you!")
+
+    def test_payment_question_flow(self):
+        email = (
+            "From: client1@example.com\n"
+            "Subject: Payment\n"
+            "Body: How can I pay?"
+        )
+        out = self.email_agent.classify_and_process(email)
+
+        self.assertIn("Situation: payment_question", out)
+        self.assertIn("Please send payment via Zelle to pay@example.com. Thank you!", out)
+        self.assertEqual(len(self.saved), 2)
+
+    def test_oos_new_order_flow(self):
+        email = (
+            "From: noreply@shipmecarton.com\n"
+            "Reply-To: client1@example.com\n"
+            "Subject: Shipmecarton - Order 77777\n\n"
+            "1 Tera Turquoise EU $95.00 3 $285.00\n"
+            "Payment amount: $285.00\n"
+            "Order ID: 77777\n"
+            "Email: client1@example.com"
+        )
+        out = self.email_agent.classify_and_process(email)
+
+        self.assertIn("Situation: new_order", out)
+        self.assertIn("STOCK CHECK", out)
+        self.assertIn("Unfortunately, we just ran out of Turquoise", out)
+        self.assertEqual(len(self.saved), 2)
+        self.assertTrue(any("Нет на складе" in t for t in self.telegrams))
+
+    def test_no_reply_flow(self):
+        email = (
+            "From: client1@example.com\n"
+            "Subject: Re: thanks\n"
+            "Body: Thank you so much!"
+        )
+        out = self.email_agent.classify_and_process(email)
+
+        self.assertIn("Needs Reply: False", out)
+        self.assertIn("(No reply needed)", out)
+        self.assertEqual(len(self.saved), 1)
+        self.assertEqual(self.saved[0]["direction"], "inbound")
+
+
+if __name__ == "__main__":
+    unittest.main()

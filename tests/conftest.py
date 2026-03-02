@@ -2,6 +2,8 @@
 Shared pytest fixtures — SQLite in-memory DB for fast isolated tests.
 """
 
+import importlib
+
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
@@ -22,9 +24,20 @@ def db_session(monkeypatch):
     def _get_session():
         return Session(engine)
 
-    monkeypatch.setattr("db.clients.get_session", _get_session)
-    monkeypatch.setattr("db.email_history.get_session", _get_session)
-    monkeypatch.setattr("db.stock.get_session", _get_session)
+    # Patch DB access only in modules that are importable in the current test context.
+    # Some unittest-style suites inject lightweight stubs (e.g. fake `db` package) that
+    # don't expose all submodules, so we skip missing targets instead of failing setup.
+    for module_name in (
+        "db.clients",
+        "db.email_history",
+        "db.stock",
+        "db.conversation_state",
+    ):
+        try:
+            module = importlib.import_module(module_name)
+        except Exception:
+            continue
+        monkeypatch.setattr(module, "get_session", _get_session, raising=False)
 
     yield _get_session
 
