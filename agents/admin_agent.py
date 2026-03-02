@@ -388,6 +388,9 @@ RULES:
 - If the user says "prepay" or "предоплата", use payment_type="prepay"
 - If the user says "postpay" or "постоплата" or "оплата после", use payment_type="postpay"
 - When answering stock questions, always show the quantity and status (in stock / out of stock)
+- IMPORTANT: When you know the client's shipping address, ALWAYS save it using the street and city_state_zip \
+parameters in add_client or update_client. Example: street="123 Main St", city_state_zip="Miami, FL 33101". \
+Do NOT put the address only in notes — it must be in the dedicated fields so templates can use it automatically.
 """
 
 admin_agent = Agent(
