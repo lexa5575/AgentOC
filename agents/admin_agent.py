@@ -292,6 +292,8 @@ def client_profile(email: str) -> str:
         f"Name: {profile['name']}",
         f"Payment Type: {profile['payment_type']}",
         f"Zelle Address: {profile.get('zelle_address') or 'none'}",
+        f"Street: {profile.get('street') or 'none'}",
+        f"City/State/Zip: {profile.get('city_state_zip') or 'none'}",
         f"Discount: {profile.get('discount_percent', 0)}%"
         + (f" ({profile.get('discount_orders_left', 0)} orders left)" if profile.get('discount_percent') else ""),
         f"Total Orders: {profile.get('total_orders', 0)}",
@@ -366,7 +368,7 @@ CLIENT MANAGEMENT tools:
 - get_client: show details of one client
 - client_profile: show FULL profile with order stats, favorite flavors, summary
 - add_client: add a new client
-- update_client: change client data (payment_type, discount, zelle, name)
+- update_client: change client data (payment_type, discount, zelle, name, street, city_state_zip)
 - delete_client: remove a client
 - update_notes: set manual notes on a client (e.g., "VIP", "часто спрашивает скидки")
 - refresh_client_summary: generate/update AI summary for a client from email history
