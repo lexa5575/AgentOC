@@ -97,10 +97,12 @@ def add_client(
     discount_percent: int = 0,
     discount_orders_left: int = 0,
 ) -> str:
-    """Add a new client to the database.
+    """Add a new client or update if already exists (upsert).
+
+    If the client already exists, any non-empty fields will be updated.
 
     Args:
-        email: Client email address (must be unique).
+        email: Client email address.
         name: Client full name.
         payment_type: Must be 'prepay' or 'postpay'.
         zelle_address: Zelle payment address (optional).
@@ -110,7 +112,7 @@ def add_client(
         discount_orders_left: How many orders get the discount (optional).
 
     Returns:
-        Success or error message.
+        Success message describing what was done.
     """
     try:
         client = db_add_client(
@@ -125,6 +127,29 @@ def add_client(
         )
         return f"Client added: {client['email']} ({client['name']}, {client['payment_type']})"
     except ValueError as e:
+        if "already exists" in str(e):
+            # Auto-update existing client with provided fields
+            fields = {}
+            if name:
+                fields["name"] = name
+            if payment_type:
+                fields["payment_type"] = payment_type
+            if zelle_address:
+                fields["zelle_address"] = zelle_address
+            if street:
+                fields["street"] = street
+            if city_state_zip:
+                fields["city_state_zip"] = city_state_zip
+            if discount_percent > 0:
+                fields["discount_percent"] = discount_percent
+            if discount_orders_left > 0:
+                fields["discount_orders_left"] = discount_orders_left
+            if fields:
+                result = db_update_client(email, **fields)
+                if result:
+                    changes = ", ".join(f"{k}='{v}'" for k, v in fields.items())
+                    return f"Client {email} already exists — updated: {changes}"
+            return f"Client {email} already exists (no new data to update)."
         return f"Error: {e}"
 
 
@@ -308,18 +333,21 @@ def client_profile(email: str) -> str:
     return "\n".join(lines)
 
 
-def update_notes(email: str, notes: str) -> str:
-    """Set or update manual operator notes for a client.
+def set_operator_label(email: str, label: str) -> str:
+    """Set a short operator label/tag for a client (e.g. "VIP", "проблемный").
+
+    This is ONLY for brief human-readable tags. Do NOT use this for addresses,
+    payment info, or any client data — use update_client for those.
 
     Args:
         email: Client email address.
-        notes: New notes text (replaces existing notes).
+        label: Short tag or label text.
 
     Returns:
         Success or error message.
     """
-    if db_update_client_notes(email, notes):
-        return f"Notes updated for {email}."
+    if db_update_client_notes(email, label):
+        return f"Label set for {email}: {label}"
     return f"Error: client {email} not found."
 
 
@@ -379,38 +407,32 @@ street and city_state_zip are CRITICAL fields — our email system uses them \
 to auto-fill shipping addresses in reply templates. They must be saved via \
 add_client or update_client parameters, never via update_notes.
 
-=== WORKFLOW: ADD NEW CLIENT ===
+=== WORKFLOW: ADD OR UPDATE CLIENT ===
 
-When asked to add a client (with or without email to research):
+When asked to add a client:
 1. Call email_history to find conversation history
 2. From the history extract: name, payment type, zelle, shipping address
-3. Call add_client with ALL extracted data:
-   - street="..." and city_state_zip="..." if address was found
-   - zelle_address="..." if Zelle info was found
+3. Call add_client with ALL extracted data including street and city_state_zip.
+   If the client already exists, add_client will auto-update their data.
 4. Confirm what was saved
 
-=== WORKFLOW: UPDATE CLIENT ADDRESS ===
-
-When given an address to save:
-1. Call update_client with street="..." and city_state_zip="..."
-2. Do NOT use update_notes for address data
+When asked to update address or other data:
+1. Call update_client with the new field values
 
 === TOOLS ===
 
 Client data:
 - list_clients: all clients (compact list)
 - get_client: one client details
-- add_client: create new client (pass street, city_state_zip if known)
-- update_client: change any field (pass street, city_state_zip to update address)
+- add_client: add or update client (auto-updates if already exists)
+- update_client: change specific fields
 - delete_client: remove a client
 
 Client intelligence:
 - client_profile: full profile with order stats, favorite flavors, AI summary
 - email_history: conversation history (local DB + Gmail)
 - refresh_client_summary: regenerate AI summary from email history
-
-Operator notes (for human commentary ONLY, not for client data):
-- update_notes: set short operator labels like "VIP", "проблемный клиент"
+- set_operator_label: tag a client (e.g. "VIP", "проблемный клиент")
 
 Stock:
 - check_stock: search by product name (e.g. "Amber", "ONE Red")
@@ -424,6 +446,8 @@ Stock categories: KZ_TEREA, TEREA_JAPAN, TEREA_EUROPE, ONE, STND, PRIME, УНИ�
 - payment_type: "prepay" (предоплата) or "postpay" (постоплата)
 - Always confirm the completed action to the user
 - Stock answers: always show quantity and status (in stock / out of stock)
+- Address, zelle, name, payment type = structured fields → use add_client or update_client
+- set_operator_label is ONLY for short human labels, never for addresses or client data
 """
 
 admin_agent = Agent(
@@ -434,7 +458,7 @@ admin_agent = Agent(
     instructions=admin_instructions,
     tools=[
         list_clients, get_client, client_profile, add_client, update_client, delete_client,
-        update_notes, refresh_client_summary,
+        set_operator_label, refresh_client_summary,
         email_history,
         check_stock, stock_by_category, stock_summary,
     ],
