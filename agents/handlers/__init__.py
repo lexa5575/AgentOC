@@ -12,11 +12,13 @@ Handlers:
 - payment_received: Payment confirmation acknowledgments
 - discount: Requests for discounts or better prices
 - shipping: Questions about shipping timelines
+- oos_followup: Customer responses to out-of-stock emails
 - general: Fallback for all other situations
 """
 
 from agents.handlers.general import general_agent, handle_general
 from agents.handlers.new_order import handle_new_order
+from agents.handlers.oos_followup import oos_followup_agent, handle_oos_followup
 from agents.handlers.tracking import tracking_agent, handle_tracking
 from agents.handlers.payment import payment_agent, handle_payment
 from agents.handlers.payment_received import handle_payment_received
@@ -30,9 +32,11 @@ __all__ = [
     "payment_agent",
     "discount_agent",
     "shipping_agent",
+    "oos_followup_agent",
     # Handler functions
     "handle_new_order",
     "handle_general",
+    "handle_oos_followup",
     "handle_tracking",
     "handle_payment",
     "handle_payment_received",

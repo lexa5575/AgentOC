@@ -27,6 +27,8 @@ from agents.reply_templates import (
     format_result,
     process_classified_email,
 )
+from agents.checker import CheckResult, check_reply, format_check_result_for_telegram
+from agents.context import load_policy
 from agents.router import route_to_handler
 from agents.state_updater import update_conversation_state
 from db import get_postgres_db
@@ -72,7 +74,16 @@ false: marketing, spam, simple "Thank you!" / "Got it" / "Perfect"
 - "payment_received" — confirms payment was sent
 - "discount_request" — asks for discount or better price
 - "shipping_timeline" — asks WHEN order will be shipped
+- "oos_followup" — reply to our out-of-stock message (client choosing alternative, etc.)
 - "other" — anything else
+
+## Rules for followup detection
+
+If CONVERSATION STATE is provided, analyze whether this email is a followup to our previous message:
+- is_followup: true if this is a response to our previous message, false if new topic
+- followup_to: what our message was about (e.g. "oos_email", "payment_info", "tracking_info", null)
+- dialog_intent: what the customer intends (e.g. "agrees_to_alternative", "declines_alternative", 
+  "confirms_payment", "asks_question", "provides_info", null)
 
 ## Rules for order_items (ONLY when situation is "new_order")
 
@@ -93,6 +104,9 @@ Return ONLY this exact JSON structure (no markdown, no code fences, no explanati
 {
   "needs_reply": true,
   "situation": "new_order",
+  "is_followup": false,
+  "followup_to": null,
+  "dialog_intent": null,
   "client_email": "customer@example.com",
   "client_name": "John Smith",
   "order_id": "12345",
@@ -113,6 +127,9 @@ Field rules:
 - customer_city_state_zip: "City, State Zip" on one line, or null
 - items: what was ordered as free text, or null
 - order_items: structured list of items (only for new_order), or null
+- is_followup: true/false — whether this is a followup to our message
+- followup_to: what type of message they're responding to, or null
+- dialog_intent: what the customer intends to do/say, or null
 
 CRITICAL: Return a FLAT JSON object with exactly these field names. No extra nesting beyond order_items array.
 """
@@ -217,9 +234,33 @@ def classify_and_process(
         Formatted classification result with draft reply if template exists.
     """
     try:
+        # Step 0.5: Get conversation state for context (if thread exists)
+        conversation_context = ""
+        pre_state_record = None  # Reused in Step 2.5 to avoid double DB query
+        if gmail_thread_id:
+            try:
+                pre_state_record = get_state(gmail_thread_id)
+                state_record = pre_state_record
+                if state_record and state_record.get("state"):
+                    state = state_record["state"]
+                    conversation_context = f"""
+--- CONVERSATION STATE ---
+Status: {state.get('status', 'unknown')}
+Topic: {state.get('topic', 'unknown')}
+Facts: {json.dumps(state.get('facts', {}), ensure_ascii=False)}
+Last exchange - We said: {state.get('last_exchange', {}).get('we_said', 'N/A')[:100] if state.get('last_exchange') else 'N/A'}
+Last exchange - They said: {state.get('last_exchange', {}).get('they_said', 'N/A')[:100] if state.get('last_exchange') else 'N/A'}
+Open questions: {state.get('open_questions', [])}
+Summary: {state.get('summary', '')}
+
+"""
+            except Exception as e:
+                logger.warning("Failed to get conversation state for classifier: %s", e)
+
         # Step 1: LLM classifies (returns JSON text)
         logger.info("Classifying email...")
-        response = classifier_agent.run(email_text)
+        classifier_input = conversation_context + "--- NEW EMAIL ---\n" + email_text if conversation_context else email_text
+        response = classifier_agent.run(classifier_input)
         raw = response.content
 
         # Parse JSON from LLM response (strip markdown code fences if present)
@@ -258,6 +299,10 @@ def classify_and_process(
             customer_city_state_zip=_find_value(data, "customer_city_state_zip", "city_state_zip"),
             items=_find_value(data, "items", "products"),
             order_items=order_items_parsed,
+            # Followup detection fields (Phase 5)
+            is_followup=_find_value(data, "is_followup") or False,
+            followup_to=_find_value(data, "followup_to"),
+            dialog_intent=_find_value(data, "dialog_intent"),
         )
 
         logger.info(
@@ -271,9 +316,8 @@ def classify_and_process(
         # Step 2.5: State Updater LLM — update ConversationState
         if gmail_thread_id:
             try:
-                # Get current state
-                current_state_record = get_state(gmail_thread_id)
-                current_state = current_state_record.get("state") if current_state_record else None
+                # Reuse state from Step 0.5 (avoid double DB query)
+                current_state = pre_state_record.get("state") if pre_state_record else None
 
                 # Update state with new email
                 updated_state = update_conversation_state(
@@ -346,10 +390,53 @@ def classify_and_process(
             result = route_to_handler(classification, result, email_text)
             result["needs_routing"] = False
             
-            # Send Telegram for OOS situations
+            # Step 3.5: Checker — validate the draft (rule-based + LLM)
+            checker_obj = None  # Keep full object for Telegram formatting
+            if result.get("draft_reply") and not result.get("template_used"):
+                try:
+                    checker_obj = check_reply(
+                        draft=result["draft_reply"],
+                        result=result,
+                        conversation_state=result.get("conversation_state"),
+                        policy_rules=load_policy(classification.situation),
+                        run_llm_check=True,
+                    )
+                    result["check_result"] = {
+                        "is_ok": checker_obj.is_ok,
+                        "warnings": checker_obj.warnings,
+                        "suggestions": checker_obj.suggestions,
+                        "rule_violations": checker_obj.rule_violations,
+                        "llm_issues": checker_obj.llm_issues,
+                    }
+
+                    # Log checker result
+                    if not checker_obj.is_ok:
+                        logger.warning(
+                            "Checker flagged issues: %s",
+                            checker_obj.warnings,
+                        )
+                except Exception as e:
+                    logger.error("Checker failed: %s", e, exc_info=True)
+                    result["check_result"] = None
+
+            # Send Telegram for OOS situations (with checker warnings if any)
             if tg_msg and result.get("draft_reply"):
                 draft_preview = result["draft_reply"][:500]
-                send_telegram(tg_msg + f"\n--- DRAFT ---\n<pre>{draft_preview}</pre>")
+                checker_msg = ""
+                if checker_obj and not checker_obj.is_ok:
+                    checker_msg = "\n\n" + format_check_result_for_telegram(checker_obj)
+                send_telegram(tg_msg + f"\n--- DRAFT ---\n<pre>{draft_preview}</pre>" + checker_msg)
+
+            # Send Telegram for non-OOS checker issues
+            elif checker_obj and not checker_obj.is_ok:
+                draft_preview = (result.get("draft_reply") or "")[:500]
+                send_telegram(
+                    f"\u26a0\ufe0f <b>Checker: проблемы в ответе</b>\n\n"
+                    f"<b>Клиент:</b> {classification.client_email}\n"
+                    f"<b>Ситуация:</b> {classification.situation}\n\n"
+                    + format_check_result_for_telegram(checker_obj)
+                    + f"\n\n--- DRAFT ---\n<pre>{draft_preview}</pre>"
+                )
 
         # Step 4: Format the output
         logger.info(

@@ -37,6 +37,7 @@ _SITUATION_POLICIES: dict[str, list[str]] = {
     "payment_received": ["payment", "tone", "hard_rules"],
     "discount_request": ["discounts", "tone", "hard_rules"],
     "shipping_timeline": ["shipping", "tone", "hard_rules"],
+    "oos_followup": ["payment", "shipping", "tone", "hard_rules"],
     "other": ["tone", "hard_rules"],
 }
 

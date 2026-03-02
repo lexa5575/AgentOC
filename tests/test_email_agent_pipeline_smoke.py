@@ -24,6 +24,8 @@ def _install_import_stubs() -> None:
             name == "agents.email_agent"
             or name == "agents.router"
             or name == "agents.context"
+            or name == "agents.checker"
+            or name == "agents.state_updater"
             or name.startswith("agents.handlers")
             or name == "db.conversation_state"
         ):
@@ -106,11 +108,13 @@ class TestEmailPipelineSmoke(unittest.TestCase):
         _install_import_stubs()
         cls.email_agent = importlib.import_module("agents.email_agent")
         cls.reply_templates = importlib.import_module("agents.reply_templates")
+        cls.checker = importlib.import_module("agents.checker")
         cls.h_general = importlib.import_module("agents.handlers.general")
         cls.h_tracking = importlib.import_module("agents.handlers.tracking")
         cls.h_payment = importlib.import_module("agents.handlers.payment")
         cls.h_discount = importlib.import_module("agents.handlers.discount")
         cls.h_shipping = importlib.import_module("agents.handlers.shipping")
+        cls.h_oos_followup = importlib.import_module("agents.handlers.oos_followup")
 
     def setUp(self):
         self.saved = []
@@ -135,6 +139,9 @@ class TestEmailPipelineSmoke(unittest.TestCase):
             },
         }
 
+        # Fake CheckResult for checker stub
+        fake_check = self.checker.CheckResult()  # is_ok=True by default
+
         self.patchers = [
             patch.object(self.email_agent.classifier_agent, "run", side_effect=self._classifier_run),
             patch.object(self.reply_templates, "get_client", side_effect=self._get_client),
@@ -148,6 +155,11 @@ class TestEmailPipelineSmoke(unittest.TestCase):
             patch.object(self.email_agent, "save_email", side_effect=self._save_email),
             patch.object(self.email_agent, "save_order_items", return_value=None),
             patch.object(self.email_agent, "send_telegram", side_effect=self._send_telegram),
+            # Checker: return clean result (no LLM call)
+            patch.object(self.email_agent, "check_reply", return_value=fake_check),
+            # State updater: return empty state (no LLM call)
+            patch.object(self.email_agent, "update_conversation_state", return_value={}),
+            # Handler agents
             patch.object(self.h_tracking.tracking_agent, "run", return_value=types.SimpleNamespace(
                 content="Your tracking number is AB123. Thank you!"
             )),
@@ -162,6 +174,9 @@ class TestEmailPipelineSmoke(unittest.TestCase):
             )),
             patch.object(self.h_general.general_agent, "run", return_value=types.SimpleNamespace(
                 content="We'll check and get back to you. Thank you!"
+            )),
+            patch.object(self.h_oos_followup.oos_followup_agent, "run", return_value=types.SimpleNamespace(
+                content="Hi! We'll update your order with the alternative. Thank you!"
             )),
         ]
 
@@ -316,6 +331,22 @@ class TestEmailPipelineSmoke(unittest.TestCase):
                     {"product_name": "Tera Green EU", "base_flavor": "Green", "quantity": 2}
                 ],
             }
+        elif "yes i'll take the green" in text:
+            payload = {
+                "needs_reply": True,
+                "situation": "oos_followup",
+                "client_email": "client1@example.com",
+                "client_name": "Test Client One",
+                "order_id": "77777",
+                "price": None,
+                "customer_street": None,
+                "customer_city_state_zip": None,
+                "items": None,
+                "order_items": None,
+                "is_followup": True,
+                "followup_to": "oos_notification",
+                "dialog_intent": "agrees_to_alternative",
+            }
         else:
             payload = {
                 "needs_reply": True,
@@ -405,6 +436,20 @@ class TestEmailPipelineSmoke(unittest.TestCase):
         self.assertIn("(No reply needed)", out)
         self.assertEqual(len(self.saved), 1)
         self.assertEqual(self.saved[0]["direction"], "inbound")
+
+    def test_oos_followup_flow(self):
+        """OOS followup — customer agrees to alternative, routed to oos_followup handler."""
+        email = (
+            "From: client1@example.com\n"
+            "Subject: Re: Your order\n"
+            "Body: Yes I'll take the green instead"
+        )
+        out = self.email_agent.classify_and_process(email)
+
+        self.assertIn("Situation: oos_followup", out)
+        self.assertIn("We'll update your order with the alternative. Thank you!", out)
+        self.assertEqual(len(self.saved), 2)
+        self.assertEqual(self.saved[1]["direction"], "outbound")
 
 
 if __name__ == "__main__":

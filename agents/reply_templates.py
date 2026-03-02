@@ -38,7 +38,7 @@ class EmailClassification(BaseModel):
     needs_reply: bool = Field(description="Whether this email requires a reply")
     situation: str = Field(description=(
         "One of: new_order, tracking, payment_question, "
-        "payment_received, discount_request, shipping_timeline, other"
+        "payment_received, discount_request, shipping_timeline, oos_followup, other"
     ))
     client_email: str = Field(description="The REAL client email (not system email)")
     client_name: Optional[str] = Field(default=None, description="Client full name")
@@ -52,6 +52,10 @@ class EmailClassification(BaseModel):
     order_items: Optional[list[OrderItem]] = Field(
         default=None, description="Structured list of ordered items with base flavor and quantity"
     )
+    # Followup detection fields (Phase 5)
+    is_followup: bool = Field(default=False, description="Whether this is a response to our previous message")
+    followup_to: Optional[str] = Field(default=None, description="What type of message they're responding to (e.g. 'oos_email', 'payment_info')")
+    dialog_intent: Optional[str] = Field(default=None, description="Customer intent (e.g. 'agrees_to_alternative', 'declines_alternative')")
 
 
 # ---------------------------------------------------------------------------

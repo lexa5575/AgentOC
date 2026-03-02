@@ -14,6 +14,7 @@ Routing:
 - discount_request → handle_discount (specialized agent)
 - shipping_timeline → handle_shipping (specialized agent)
 - payment_received → handle_payment_received (Python template)
+- oos_followup → handle_oos_followup (specialized agent)
 - other → handle_general (fallback agent)
 """
 
@@ -22,6 +23,7 @@ from typing import Callable
 
 from agents.handlers.general import handle_general
 from agents.handlers.new_order import handle_new_order
+from agents.handlers.oos_followup import handle_oos_followup
 from agents.handlers.payment_received import handle_payment_received
 from agents.handlers.tracking import handle_tracking
 from agents.handlers.payment import handle_payment
@@ -42,6 +44,7 @@ SITUATION_HANDLERS: dict[str, Callable] = {
     "discount_request": handle_discount,
     "shipping_timeline": handle_shipping,
     "payment_received": handle_payment_received,
+    "oos_followup": handle_oos_followup,
     "other": handle_general,
 }
 
