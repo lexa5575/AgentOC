@@ -16,6 +16,7 @@ Routing:
 - shipping_timeline → handle_shipping (specialized agent)
 - payment_received → handle_payment_received (Python template)
 - oos_followup → handle_oos_followup (specialized agent)
+- stock_question → handle_stock_question (stock lookup + LLM fallback)
 - other → handle_general (fallback agent)
 """
 
@@ -31,6 +32,7 @@ from agents.handlers.tracking import handle_tracking
 from agents.handlers.payment import handle_payment
 from agents.handlers.discount import handle_discount
 from agents.handlers.shipping import handle_shipping
+from agents.handlers.stock_question import handle_stock_question
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +50,7 @@ SITUATION_HANDLERS: dict[str, Callable] = {
     "shipping_timeline": handle_shipping,
     "payment_received": handle_payment_received,
     "oos_followup": handle_oos_followup,
+    "stock_question": handle_stock_question,
     "other": handle_general,
 }
 

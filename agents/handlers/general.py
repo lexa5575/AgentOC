@@ -16,6 +16,7 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
 
 from agents.context import build_context, format_context_for_prompt
+from tools.stock_tools import search_stock_tool
 from tools.web_search import get_search_tools
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,11 @@ STYLE — MATCH HISTORY:
 - If history shows we use specific phrases, reuse them verbatim
 - If no history is available: start with "Hi {name}," / "Hello,", 2-5 sentences, casual tone
 
+STOCK LOOKUPS:
+- If customer asks whether a specific product is available or in stock
+  → call search_stock_tool with the product name — NEVER say "we'll check"
+- Use web search only for topics unrelated to our product inventory
+
 WEB SEARCH:
 - Use web search if customer asks about products or topics you don't know
 - Search in English, summarize in 1-2 sentences
@@ -52,7 +58,7 @@ general_agent = Agent(
     name="General Handler",
     model=OpenAIResponses(id="gpt-5.2"),
     instructions=general_instructions,
-    tools=[get_search_tools()],
+    tools=[get_search_tools(), search_stock_tool],
     markdown=False,
 )
 

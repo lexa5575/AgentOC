@@ -13,6 +13,7 @@ Handlers:
 - discount: Requests for discounts or better prices
 - shipping: Questions about shipping timelines
 - oos_followup: Customer responses to out-of-stock emails
+- stock_question: "Do you have X?" availability questions
 - general: Fallback for all other situations
 """
 
@@ -24,6 +25,7 @@ from agents.handlers.payment import payment_agent, handle_payment
 from agents.handlers.payment_received import handle_payment_received
 from agents.handlers.discount import discount_agent, handle_discount
 from agents.handlers.shipping import shipping_agent, handle_shipping
+from agents.handlers.stock_question import handle_stock_question
 
 __all__ = [
     # Agents
@@ -42,4 +44,5 @@ __all__ = [
     "handle_payment_received",
     "handle_discount",
     "handle_shipping",
+    "handle_stock_question",
 ]

@@ -40,6 +40,7 @@ _SITUATION_POLICIES: dict[str, list[str]] = {
     "discount_request": ["discounts", "tone", "hard_rules"],
     "shipping_timeline": ["shipping", "tone", "hard_rules"],
     "oos_followup": ["payment", "shipping", "tone", "hard_rules"],
+    "stock_question": ["tone", "hard_rules"],
     "other": ["tone", "hard_rules"],
 }
 

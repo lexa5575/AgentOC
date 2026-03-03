@@ -24,6 +24,7 @@ from agno.models.openai import OpenAIResponses
 
 from agents.context import build_context, format_context_for_prompt
 from agents.handlers.template_utils import fill_template_reply
+from tools.stock_tools import search_stock_tool
 from agents.reply_templates import REPLY_TEMPLATES
 from db.memory import check_stock_for_order, calculate_order_price
 from tools.email_parser import _strip_quoted_text
@@ -57,8 +58,10 @@ DIALOG INTENT HANDLING:
    - Ask what they'd prefer
 
 3. **asks_question** — Customer has questions about alternatives
-   - Answer based on what you know from context
-   - If unsure, say "let me check and get back to you"
+   - If the question is about whether a product is available or in stock:
+     YOU MUST call search_stock_tool(flavor=X) — non-negotiable, even if conversation
+     state mentions alternatives (those may be for a different product or outdated)
+   - Answer other questions based on what you know from context
    - Keep it helpful and friendly
 
 4. **provides_info** — Customer provides additional info (e.g., "I'll take 2 instead of 3")
@@ -77,8 +80,9 @@ STYLE:
 
 CRITICAL RULES:
 - DO NOT make up product names or prices
-- Use ONLY facts from CONVERSATION STATE and CLIENT PROFILE
-- If unsure about a detail, say you'll confirm
+- For product availability questions: ALWAYS use search_stock_tool — never guess or say "we'll check"
+- For other details: use ONLY facts from CONVERSATION STATE and CLIENT PROFILE
+- If unsure about non-stock details, say you'll confirm
 """
 
 # ---------------------------------------------------------------------------
@@ -89,6 +93,7 @@ oos_followup_agent = Agent(
     name="OOS Followup Handler",
     model=OpenAIResponses(id="gpt-5.2"),
     instructions=oos_followup_instructions,
+    tools=[search_stock_tool],
     markdown=False,
 )
 
@@ -315,6 +320,21 @@ def handle_oos_followup(
     # === asks_question / provides_info / unknown → LLM ===
     ctx = build_context(classification, result, email_text)
 
+    # Inject live stock data if customer is asking about a specific product.
+    # Uses classifier-extracted order_items (deterministic, no regex needed).
+    stock_context = ""
+    order_items = getattr(classification, "order_items", None) or []
+    if order_items:
+        item = order_items[0]
+        asked_flavor = getattr(item, "base_flavor", None) or getattr(item, "product_name", None)
+        if asked_flavor:
+            stock_info = search_stock_tool(asked_flavor)
+            stock_context = f"\n\n=== LIVE STOCK CHECK ===\n{stock_info}"
+            logger.info(
+                "OOS Followup: injected live stock data for flavor=%s, client=%s",
+                asked_flavor, result["client_email"],
+            )
+
     intent_info = ""
     if classification.dialog_intent:
         intent_info = f"\n\nCUSTOMER INTENT: {classification.dialog_intent}"
@@ -335,6 +355,7 @@ def handle_oos_followup(
 
     prompt = (
         format_context_for_prompt(ctx)
+        + stock_context
         + intent_info
         + payment_type_hint
         + "\n\nWrite a reply:"

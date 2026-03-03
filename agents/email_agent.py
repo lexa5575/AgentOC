@@ -95,6 +95,10 @@ Examples of needs_reply=true (even if starts with "thank you"):
 - "price_question" — asks HOW MUCH something costs WITHOUT specifying quantity, requests a price quote
   ("how much for Green?", "what's the price of Blue?", "can you give me a price?")
   Only use this when no specific quantity is mentioned. If quantity is present → use new_order instead.
+- "stock_question" — asks WHETHER a specific product is available/in stock, WITHOUT ordering intent
+  ("do you have Tropical?", "is Blue available?", "do you carry Silver?", "any Turquoise?")
+  KEY: no quantity, no price query — pure availability question. If quantity is present → new_order.
+  If it's inside an oos_followup thread → use oos_followup instead.
 - "payment_question" — asks WHERE or HOW to pay ("how do I pay?", "what's the Zelle?")
 - "payment_received" — confirms payment was sent ("I paid via Zelle", "sent CashApp")
 - "discount_request" — asks for discount or better price (NOT a price quote request)
@@ -143,7 +147,8 @@ If the email contains a clear product list/table, extract:
   Keep non-Tera brands intact: "ONE Green" → "ONE Green", "PRIME Black" → "PRIME Black"
 - quantity: number of units (default 1)
 
-Extract order_items for new_order AND price_question situations.
+Extract order_items for new_order, price_question, AND stock_question situations.
+For stock_question: extract the product being asked about (quantity defaults to 1).
 If no clear product list → set order_items to null.
 
 ## Output format

@@ -149,38 +149,36 @@ REPLY_TEMPLATES = {
 # Out-of-Stock Template (STABLE — Python fills variables, no LLM)
 # ---------------------------------------------------------------------------
 def _format_alternative(alt_entry: dict) -> str:
-    """Format a single alternative based on its reason.
-    
+    """Format a single alternative for customer-facing display.
+
     Args:
         alt_entry: Dict with keys: alternative (stock item dict), reason, order_count
-    
+
     Returns:
-        Formatted string like "Turquoise from Armenia" or "Amber (you've ordered before)"
+        Formatted string like "Terea Purple made in Japan", "Terea Green EU", "Terea Amber ME"
     """
     alt = alt_entry["alternative"]
     reason = alt_entry.get("reason", "fallback")
-    product_name = alt["product_name"]
+    raw_name = alt["product_name"]
     category = alt.get("category", "")
-    
-    # Map category to readable region
-    region_map = {
-        "ARMENIA": "Armenia",
-        "KZ_TEREA": "Kazakhstan",
-        "TEREA_JAPAN": "Japan",
-        "TEREA_EUROPE": "Europe",
-        "УНИКАЛЬНАЯ_ТЕРЕА": "Unique collection",
-        "ONE": "ONE",
-        "STND": "STND",
-        "PRIME": "PRIME",
-    }
-    region = region_map.get(category, category)
-    
-    if reason == "same_flavor":
-        return f"{product_name} from {region}"
-    elif reason == "history":
-        return f"{product_name} (you've ordered before)"
-    else:  # fallback
-        return product_name
+
+    if category in ("TEREA_JAPAN", "УНИКАЛЬНАЯ_ТЕРЕА"):
+        # "T Purple" → "Terea Purple made in Japan"
+        # "Fusion Menthol" → "Terea Fusion Menthol made in Japan"
+        core = raw_name[2:] if raw_name.startswith("T ") else raw_name
+        formatted = f"Terea {core} made in Japan"
+    elif category == "TEREA_EUROPE":
+        formatted = f"Terea {raw_name} EU"
+    elif category in ("ARMENIA", "KZ_TEREA"):
+        formatted = f"Terea {raw_name} ME"
+    else:
+        # devices and unknown — no region label
+        formatted = raw_name
+
+    if reason == "history":
+        formatted += " (you've ordered before)"
+
+    return formatted
 
 
 def fill_out_of_stock_template(
