@@ -67,6 +67,7 @@ def _ensure_stubs():
         db_memory.check_stock_for_order = lambda *a, **kw: {
             "all_in_stock": True, "items": [], "insufficient_items": [],
         }
+        db_memory.calculate_order_price = lambda *a, **kw: None
         db_memory.select_best_alternatives = lambda *a, **kw: {"alternatives": []}
         db_memory.update_client = lambda *a, **kw: None
         sys.modules["db.memory"] = db_memory
@@ -96,6 +97,10 @@ def _ensure_stubs():
         tools_ws = types.ModuleType("tools.web_search")
         tools_ws.get_search_tools = lambda: []
         sys.modules["tools.web_search"] = tools_ws
+    if "tools.email_parser" not in sys.modules:
+        tools_ep = types.ModuleType("tools.email_parser")
+        tools_ep._strip_quoted_text = lambda body: body
+        sys.modules["tools.email_parser"] = tools_ep
 
     # agents stubs (reply_templates needed by context.py)
     if "agents" not in sys.modules:

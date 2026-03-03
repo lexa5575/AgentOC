@@ -74,6 +74,7 @@ def _install_import_stubs() -> None:
         "items": [],
         "insufficient_items": [],
     }
+    db_memory.calculate_order_price = lambda *args, **kwargs: None
     db_memory.select_best_alternatives = lambda *args, **kwargs: {"alternatives": []}
     db_memory.get_full_thread_history = lambda *args, **kwargs: []
     db_memory.update_client = lambda *args, **kwargs: None
@@ -100,6 +101,10 @@ def _install_import_stubs() -> None:
     tools_web_search = types.ModuleType("tools.web_search")
     tools_web_search.get_search_tools = lambda: []
     sys.modules["tools.web_search"] = tools_web_search
+    if "tools.email_parser" not in sys.modules:
+        tools_ep = types.ModuleType("tools.email_parser")
+        tools_ep._strip_quoted_text = lambda body: body
+        sys.modules["tools.email_parser"] = tools_ep
 
     # utils.telegram
     utils_mod = types.ModuleType("utils")

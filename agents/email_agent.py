@@ -455,6 +455,21 @@ Summary: {state.get('summary', '')}
                     price=classification.price,
                 )
 
+                # Protect pending_oos_resolution from LLM state updater
+                if (
+                    current_state
+                    and current_state.get("facts", {}).get("pending_oos_resolution")
+                    and not updated_state.get("facts", {}).get("pending_oos_resolution")
+                    and classification.situation == "oos_followup"
+                ):
+                    updated_state.setdefault("facts", {})["pending_oos_resolution"] = (
+                        current_state["facts"]["pending_oos_resolution"]
+                    )
+                    logger.warning(
+                        "Restored pending_oos_resolution stripped by state updater for %s",
+                        classification.client_email,
+                    )
+
                 # Save updated state
                 save_state(
                     gmail_thread_id=gmail_thread_id,
@@ -625,6 +640,55 @@ Summary: {state.get('summary', '')}
                 try:
                     state = result["conversation_state"]
                     state.setdefault("last_exchange", {})["we_said"] = result["draft_reply"][:200]
+
+                    # Save pending_oos_resolution for oos_followup handler
+                    if (
+                        classification.situation == "new_order"
+                        and result.get("stock_issue")
+                        and result.get("template_used")
+                    ):
+                        stock_issue = result["stock_issue"]
+                        stock_check = stock_issue["stock_check"]
+                        from datetime import datetime, timezone
+                        state.setdefault("facts", {})["pending_oos_resolution"] = {
+                            "order_id": classification.order_id,
+                            "created_at": datetime.now(timezone.utc).isoformat(),
+                            "items": [
+                                {
+                                    "base_flavor": i["base_flavor"],
+                                    "product_name": i["product_name"],
+                                    "requested_qty": i["ordered_qty"],
+                                    "available_qty": i["total_available"],
+                                }
+                                for i in stock_check["insufficient_items"]
+                            ],
+                            "alternatives": {
+                                flavor: {
+                                    "alternatives": [
+                                        {
+                                            "product_name": a["alternative"]["product_name"],
+                                            "category": a["alternative"]["category"],
+                                        }
+                                        for a in alt_data.get("alternatives", [])
+                                    ]
+                                }
+                                for flavor, alt_data in stock_issue.get("best_alternatives", {}).items()
+                            },
+                            "in_stock_items": [
+                                {
+                                    "base_flavor": i["base_flavor"],
+                                    "product_name": i["product_name"],
+                                    "ordered_qty": i["ordered_qty"],
+                                }
+                                for i in stock_check["items"]
+                                if i["is_sufficient"]
+                            ],
+                        }
+                        logger.info(
+                            "Saved pending_oos_resolution for %s (thread=%s)",
+                            classification.client_email, gmail_thread_id,
+                        )
+
                     save_state(
                         gmail_thread_id=gmail_thread_id,
                         client_email=classification.client_email,
