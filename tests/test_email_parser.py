@@ -406,6 +406,26 @@ class TestCleanEmailBody(unittest.TestCase):
         self.assertIn("Sounds good", cleaned)
         self.assertNotIn("Proton", cleaned)
 
+    def test_strips_proton_mail_markdown_and_original_message(self):
+        """Real Proton Mail format: markdown link + '-------- Original Message --------'."""
+        email = (
+            "From: a@b.com\n"
+            "Body: That will be fine. Thank you\n"
+            "\n"
+            "Sent from [Proton Mail](https://proton.me/mail/home) for Android.\n"
+            "\n"
+            "-------- Original Message --------\n"
+            "On Monday, 03/02/26 at 12:00 James wrote:\n"
+            "\n"
+            "> Hi!\n"
+            "> Unfortunately, we just ran out of Terea Silver EU"
+        )
+        cleaned = self.clean_email_body(email)
+        self.assertIn("That will be fine", cleaned)
+        self.assertNotIn("Proton", cleaned)
+        self.assertNotIn("Original Message", cleaned)
+        self.assertNotIn("ran out", cleaned)
+
     def test_collapses_excessive_whitespace(self):
         """Multiple blank lines collapsed to double newline."""
         email = "From: a@b.com\nBody: Hello\n\n\n\n\nWorld"
