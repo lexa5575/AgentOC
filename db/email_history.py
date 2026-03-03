@@ -175,14 +175,15 @@ def email_already_processed(gmail_message_id: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def get_full_email_history(client_email: str, max_results: int = 10) -> list[dict]:
-    """Get conversation history: local DB first, supplement from Gmail if sparse.
+    """Get conversation history: local DB + Gmail, merged and deduplicated.
 
-    Merges both sources, deduplicates by (subject, direction),
-    normalizes timezones, and returns chronologically sorted messages.
+    Always supplements from Gmail when local DB has fewer than max_results.
+    This ensures the profiler and handlers see the full conversation history
+    even for clients with 500+ messages in Gmail but few in local DB.
     """
-    history = get_email_history(client_email)
+    history = get_email_history(client_email, max_total=max_results)
 
-    if len(history) < 3:
+    if len(history) < max_results:
         gmail_history = get_gmail_thread_history(client_email, max_results=max_results)
         if gmail_history:
             local_subjects = {(h["subject"], h["direction"]) for h in history}

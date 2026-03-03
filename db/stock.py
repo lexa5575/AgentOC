@@ -362,15 +362,21 @@ def select_best_alternatives(
 ) -> dict:
     """Select up to N best alternatives for an out-of-stock flavor.
 
+    Only returns genuinely DIFFERENT products — never the same flavor
+    that the client already ordered (those are already counted in
+    check_stock_for_order's total_available).
+
     Priority:
-    1. Same flavor from a different category (e.g., Turquoise EU → Turquoise Armenia)
-    2. Flavors from customer's order history that are currently in stock
-    3. Any available item from allowed categories (fallback)
+    1. Flavors from customer's order history that are currently in stock
+       (personalized — what they actually like)
+
+    If history gives fewer than max_options, we return fewer.
+    Better 1-2 strong suggestions than 3 with random filler.
 
     Returns:
     {
       "alternatives": [
-        {"alternative": {...}, "reason": "same_flavor|history|fallback", "order_count": int|None},
+        {"alternative": {...}, "reason": "history", "order_count": int|None},
         ...
       ],
       "reason": str,
@@ -381,7 +387,6 @@ def select_best_alternatives(
     allowed_cats = _get_allowed_categories(product_type)
     flavor = base_flavor.strip()
 
-    # Keep output stable even if caller passes invalid values.
     if max_options < 1:
         max_options = 1
 
@@ -401,54 +406,27 @@ def select_best_alternatives(
                 "order_count": order_count,
             })
 
-        # Priority 1: same flavor from different categories.
-        q_same = session.query(StockItem).filter(
-            StockItem.product_name.ilike(f"%{flavor}%"),
-            StockItem.category.in_(allowed_cats),
-            StockItem.quantity > 0,
-        )
-        if warehouse:
-            q_same = q_same.filter_by(warehouse=warehouse)
-        for item in q_same.order_by(StockItem.quantity.desc()).all():
-            _push(item, reason="same_flavor")
-            if len(selected) >= max_options:
-                break
+        # History-based alternatives: flavors the client ordered before,
+        # excluding the OOS flavor itself, currently in stock.
+        history = get_client_flavor_history(client_email, product_type=product_type)
+        for h in history:
+            hist_flavor = h["base_flavor"]
+            if hist_flavor.lower() == flavor.lower():
+                continue
 
-        # Priority 2: history-based alternatives currently in stock.
-        if len(selected) < max_options:
-            history = get_client_flavor_history(client_email, product_type=product_type)
-            for h in history:
-                hist_flavor = h["base_flavor"]
-                if hist_flavor.lower() == flavor.lower():
-                    continue
-
-                q_hist = session.query(StockItem).filter(
-                    StockItem.product_name.ilike(f"%{hist_flavor}%"),
-                    StockItem.category.in_(allowed_cats),
-                    StockItem.quantity > 0,
-                )
-                if warehouse:
-                    q_hist = q_hist.filter_by(warehouse=warehouse)
-                for item in q_hist.order_by(StockItem.quantity.desc()).all():
-                    _push(item, reason="history", order_count=h["order_count"])
-                    if len(selected) >= max_options:
-                        break
-                if len(selected) >= max_options:
-                    break
-
-        # Priority 3: any available in allowed categories excluding OOS flavor.
-        if len(selected) < max_options:
-            q_any = session.query(StockItem).filter(
+            q_hist = session.query(StockItem).filter(
+                StockItem.product_name.ilike(f"%{hist_flavor}%"),
                 StockItem.category.in_(allowed_cats),
                 StockItem.quantity > 0,
-                ~StockItem.product_name.ilike(f"%{flavor}%"),
             )
             if warehouse:
-                q_any = q_any.filter_by(warehouse=warehouse)
-            for item in q_any.order_by(StockItem.quantity.desc()).all():
-                _push(item, reason="fallback")
+                q_hist = q_hist.filter_by(warehouse=warehouse)
+            for item in q_hist.order_by(StockItem.quantity.desc()).all():
+                _push(item, reason="history", order_count=h["order_count"])
                 if len(selected) >= max_options:
                     break
+            if len(selected) >= max_options:
+                break
 
         if not selected:
             return {
