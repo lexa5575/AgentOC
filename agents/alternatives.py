@@ -128,9 +128,9 @@ def get_llm_alternatives(
 
         profile_text = client_summary.strip() or "No profile available."
 
-        excluded_text = (
-            ", ".join(sorted(_excluded)) if _excluded else "None"
-        )
+        # Format excluded as CATEGORY|PRODUCT_NAME keys so LLM understands exactly
+        excluded_keys = [k for k, it in key_to_item.items() if it["product_name"] in _excluded]
+        excluded_text = ", ".join(sorted(excluded_keys)) if excluded_keys else "None"
 
         prompt = _PROMPT_TEMPLATE.format(
             oos_flavor=oos_flavor,

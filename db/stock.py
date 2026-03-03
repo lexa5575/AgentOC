@@ -416,16 +416,20 @@ def select_best_alternatives(
     # 2. Fetch client order history
     history = get_client_flavor_history(client_email, product_type=product_type)
 
-    # 3. Ask LLM to pick alternatives — never raises, returns [] on any error
-    from agents.alternatives import get_llm_alternatives
-    llm_items = get_llm_alternatives(
-        oos_flavor=base_flavor,
-        available_items=available,
-        order_history=history,
-        client_summary=client_summary,
-        max_options=max_options,
-        excluded_products=_excluded,
-    )
+    # 3. Ask LLM to pick alternatives — fallback on any failure (including import errors)
+    try:
+        from agents.alternatives import get_llm_alternatives
+        llm_items = get_llm_alternatives(
+            oos_flavor=base_flavor,
+            available_items=available,
+            order_history=history,
+            client_summary=client_summary,
+            max_options=max_options,
+            excluded_products=_excluded,
+        )
+    except Exception as exc:
+        logger.warning("LLM alternatives unavailable for '%s': %s", base_flavor, exc)
+        llm_items = []
 
     # 4. Build result from LLM picks (already validated inside get_llm_alternatives)
     selected: list[dict] = []
