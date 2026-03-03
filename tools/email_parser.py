@@ -151,13 +151,18 @@ def _parse_order_items(body: str) -> list[OrderItem]:
 
 
 def _has_order_header(email_text: str) -> bool:
-    """Check if email headers indicate a Shipmecarton order notification.
+    """Check if email is FROM Shipmecarton (order notification from website).
 
-    Looks for 'shipmecarton' in the header section (From or Subject).
-    Prevents false positives when a customer manually types order-like markers.
+    Only checks the From: header — NOT Subject. Customer replies with
+    'Re: Shipmecarton - Order ...' in Subject must NOT trigger the parser.
     """
-    header = email_text.split("\nBody:", 1)[0] if "\nBody:" in email_text else ""
-    return "shipmecarton" in header.lower()
+    # Extract From: line from headers
+    for line in email_text.split("\n"):
+        if line.startswith("From:"):
+            return "shipmecarton" in line.lower()
+        if line.startswith("Body:"):
+            break  # Past headers, stop
+    return False
 
 
 def _is_order_notification(body: str) -> bool:

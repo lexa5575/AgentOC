@@ -258,6 +258,25 @@ class TestTryParseOrder(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result.client_email, "buyer@example.com")
 
+    def test_customer_reply_with_unquoted_order_template_not_parsed(self):
+        """Customer replies 'Thank you' with inline (unquoted) order template → None.
+
+        Subject has 'Shipmecarton' but From is the customer, not Shipmecarton.
+        Parser must NOT trigger — only From: header matters.
+        """
+        email = (
+            "From: client@example.com\n"
+            "Subject: Re: Shipmecarton - Order 23573\n"
+            "Body: Thank you James.\n"
+            "\n"
+            "Order ID: 23573\n"
+            "Payment amount: $770.00\n"
+            "Firstname: John Smith\n"
+            "Email: client@example.com\n"
+            "1 Tera Amber made in Middle East $110.00 2 $220.00"
+        )
+        self.assertIsNone(self.try_parse_order(email))
+
     # --- base_flavor extraction ---
 
     def test_base_flavor_tera_green_middle_east(self):
