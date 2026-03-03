@@ -17,41 +17,6 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Base flavor extraction (mirrors email_parser._extract_base_flavor)
-# Duplicated here to avoid circular import: db → tools → agents
-# ---------------------------------------------------------------------------
-
-_BRAND_PREFIXES = ("Tera ", "Terea ", "Heets ", "T ")
-_REGION_SUFFIXES = (
-    " made in Middle East",
-    " made in Armenia",
-    " EU",
-    " Japan",
-    " KZ",
-)
-
-
-def _base_flavor_from_name(product_name: str) -> str:
-    """Strip brand prefix and region suffix to get base flavor.
-
-    Examples:
-        "Tera Green made in Middle East" → "Green"
-        "Tera Amber made in Armenia"     → "Amber"
-        "ONE Green"                      → "ONE Green"  (device, not stripped)
-    """
-    name = product_name.strip()
-    for pfx in _BRAND_PREFIXES:
-        if name.startswith(pfx):
-            name = name[len(pfx):]
-            break
-    for sfx in _REGION_SUFFIXES:
-        if name.lower().endswith(sfx.lower()):
-            name = name[: -len(sfx)]
-            break
-    return name.strip()
-
-
-# ---------------------------------------------------------------------------
 # Product type constants (sticks vs devices)
 # ---------------------------------------------------------------------------
 
@@ -389,6 +354,27 @@ def get_client_flavor_history(
 # OOS alternative selection
 # ---------------------------------------------------------------------------
 
+def _get_available_items(
+    allowed_cats: set[str],
+    warehouse: str | None = None,
+    exclude_flavor: str = "",
+) -> list[dict]:
+    """Return available stock items filtered by category, warehouse, and flavor exclusion."""
+    session = get_session()
+    try:
+        q = session.query(StockItem).filter(
+            StockItem.category.in_(allowed_cats),
+            StockItem.quantity > 0,
+        )
+        if exclude_flavor:
+            q = q.filter(~StockItem.product_name.ilike(f"%{exclude_flavor}%"))
+        if warehouse:
+            q = q.filter_by(warehouse=warehouse)
+        return [item.to_dict() for item in q.order_by(StockItem.quantity.desc()).all()]
+    finally:
+        session.close()
+
+
 def select_best_alternatives(
     client_email: str,
     base_flavor: str,
@@ -397,145 +383,72 @@ def select_best_alternatives(
     client_summary: str = "",
     excluded_products: set[str] | None = None,
 ) -> dict:
-    """Select up to N best alternatives for an out-of-stock flavor.
+    """Select up to N best alternatives for an out-of-stock flavor using LLM.
 
-    Never suggests the same flavor that was ordered — those entries are
-    already counted in check_stock_for_order's total_available.
-
-    Priority:
-    1. Flavors from customer's order history that are currently in stock
-       (personalized — what they actually like)
-    1.5. Items matching the client's llm_summary profile text
-       (uses word boundaries to avoid false positives)
-    2. Other available items, excluding the OOS flavor (general fallback)
+    The LLM receives the exact list of available stock and selects the best
+    matches based on client history, profile, and flavor semantics.
+    Falls back to top-N by quantity if LLM returns nothing valid.
 
     Args:
-        client_email: Client email for history lookup.
+        client_email: Client email for order history lookup.
         base_flavor: The out-of-stock flavor to find alternatives for.
         warehouse: Optional warehouse filter.
         max_options: Maximum number of alternatives to return.
-        client_summary: Client's llm_summary text for profile matching.
-            Caller should pass client_data.get("llm_summary", "").
-        excluded_products: Product names already suggested for other OOS
-            items in the same order. Prevents identical alternatives
-            across multiple OOS flavors.
+        client_summary: Client's llm_summary text (pass client_data.get("llm_summary", "")).
+        excluded_products: Product names already suggested for other OOS flavors in
+            the same order. Prevents identical alternatives across multiple OOS flavors.
 
     Returns:
-    {
-      "alternatives": [
-        {"alternative": {...}, "reason": "history|profile|fallback", "order_count": int|None},
-        ...
-      ],
-      "reason": str,
-      "order_count": int|None,
-    }
+        {"alternatives": [...], "reason": str, "order_count": None}
     """
     product_type = get_product_type(base_flavor)
     allowed_cats = _get_allowed_categories(product_type)
-    flavor = base_flavor.strip()
+    _excluded = excluded_products or set()
 
     if max_options < 1:
         max_options = 1
 
-    session = get_session()
-    try:
-        selected: list[dict] = []
-        seen = set()
-        _excluded = excluded_products or set()
+    # 1. Fetch available stock (correct categories, qty > 0, not the OOS flavor)
+    available = _get_available_items(allowed_cats, warehouse, base_flavor)
+    if not available:
+        return {"alternatives": [], "reason": "none_available", "order_count": None}
 
-        def _push(item: StockItem, reason: str, order_count: int | None = None):
-            key = (item.category, item.product_name)
-            if key in seen:
-                return
-            if item.product_name in _excluded:
-                return
-            seen.add(key)
-            selected.append({
-                "alternative": item.to_dict(),
-                "reason": reason,
-                "order_count": order_count,
-            })
+    # 2. Fetch client order history
+    history = get_client_flavor_history(client_email, product_type=product_type)
 
-        # Priority 1: history-based alternatives — flavors the client ordered
-        # before, excluding the OOS flavor itself, currently in stock.
-        history = get_client_flavor_history(client_email, product_type=product_type)
-        for h in history:
-            hist_flavor = h["base_flavor"]
-            if hist_flavor.lower() == flavor.lower():
-                continue
+    # 3. Ask LLM to pick alternatives — never raises, returns [] on any error
+    from agents.alternatives import get_llm_alternatives
+    llm_items = get_llm_alternatives(
+        oos_flavor=base_flavor,
+        available_items=available,
+        order_history=history,
+        client_summary=client_summary,
+        max_options=max_options,
+        excluded_products=_excluded,
+    )
 
-            q_hist = session.query(StockItem).filter(
-                StockItem.product_name.ilike(f"%{hist_flavor}%"),
-                StockItem.category.in_(allowed_cats),
-                StockItem.quantity > 0,
-            )
-            if warehouse:
-                q_hist = q_hist.filter_by(warehouse=warehouse)
-            for item in q_hist.order_by(StockItem.quantity.desc()).all():
-                _push(item, reason="history", order_count=h["order_count"])
-                if len(selected) >= max_options:
-                    break
+    # 4. Build result from LLM picks (already validated inside get_llm_alternatives)
+    selected: list[dict] = []
+    for item in llm_items:
+        if item["product_name"] not in _excluded:
+            selected.append({"alternative": item, "reason": "llm", "order_count": None})
+
+    # 5. Fallback: LLM returned nothing valid → top-N by quantity
+    if not selected:
+        for item in available:  # already sorted by quantity desc
+            if item["product_name"] not in _excluded:
+                selected.append({"alternative": item, "reason": "fallback", "order_count": None})
             if len(selected) >= max_options:
                 break
 
-        # Priority 1.5: profile-based — match in-stock items against llm_summary.
-        # Fills the gap when ClientOrderItem is empty (new automation, old client).
-        # Uses word boundaries to avoid false positives ("one" in "one day" etc.).
-        # client_summary is passed by the caller (already has the client dict loaded).
-        if len(selected) < max_options and client_summary:
-            import re
-            q_profile = session.query(StockItem).filter(
-                StockItem.category.in_(allowed_cats),
-                StockItem.quantity > 0,
-                ~StockItem.product_name.ilike(f"%{flavor}%"),
-            )
-            if warehouse:
-                q_profile = q_profile.filter_by(warehouse=warehouse)
-            for item in q_profile.order_by(StockItem.quantity.desc()).all():
-                item_base = _base_flavor_from_name(item.product_name)
-                if (
-                    item_base
-                    and item_base.lower() != flavor.lower()
-                    and re.search(
-                        r"\b" + re.escape(item_base) + r"\b",
-                        client_summary,
-                        re.IGNORECASE,
-                    )
-                ):
-                    _push(item, reason="profile")
-                    if len(selected) >= max_options:
-                        break
+    if not selected:
+        return {"alternatives": [], "reason": "none_available", "order_count": None}
 
-        # Priority 2: fallback — any available item excluding the OOS flavor.
-        # Never includes the same flavor (e.g. "Amber from Armenia" when
-        # client ordered Amber and total_available already accounts for it).
-        if len(selected) < max_options:
-            q_any = session.query(StockItem).filter(
-                StockItem.category.in_(allowed_cats),
-                StockItem.quantity > 0,
-                ~StockItem.product_name.ilike(f"%{flavor}%"),
-            )
-            if warehouse:
-                q_any = q_any.filter_by(warehouse=warehouse)
-            for item in q_any.order_by(StockItem.quantity.desc()).all():
-                _push(item, reason="fallback")
-                if len(selected) >= max_options:
-                    break
-
-        if not selected:
-            return {
-                "alternatives": [],
-                "reason": "none_available",
-                "order_count": None,
-            }
-
-        return {
-            "alternatives": selected[:max_options],
-            "reason": selected[0]["reason"],
-            "order_count": selected[0].get("order_count"),
-        }
-    finally:
-        session.close()
+    return {
+        "alternatives": selected[:max_options],
+        "reason": selected[0]["reason"],
+        "order_count": None,
+    }
 
 
 # ---------------------------------------------------------------------------

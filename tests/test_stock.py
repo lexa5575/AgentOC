@@ -1,5 +1,7 @@
 """Tests for db.stock module."""
 
+from unittest.mock import patch
+
 from db.stock import (
     CATEGORY_PRICES,
     calculate_order_price,
@@ -260,137 +262,103 @@ def test_save_order_items_skip_duplicates():
 
 
 # ---------------------------------------------------------------------------
-# select_best_alternatives
+# select_best_alternatives (LLM-backed, mock get_llm_alternatives)
 # ---------------------------------------------------------------------------
 
+_PATCH_LLM = "agents.alternatives.get_llm_alternatives"
+
+# Helper: a minimal stock item dict returned by the mock LLM
+def _llm_item(product_name: str, category: str, qty: int = 5) -> dict:
+    return {"product_name": product_name, "category": category, "quantity": qty,
+            "warehouse": "main", "is_fallback": False, "synced_at": None}
+
+
 def test_alternatives_fallback_excludes_oos_flavor():
-    """Fallback never includes the same flavor that is out of stock."""
+    """Fallback never includes the OOS flavor (LLM returns empty → fallback used)."""
     _seed_stock()
-    # No history for buyer — should get fallback, but NOT Turquoise itself
-    result = select_best_alternatives("buyer@example.com", "Turquoise")
+    with patch(_PATCH_LLM, return_value=[]):
+        result = select_best_alternatives("buyer@example.com", "Turquoise")
     assert len(result["alternatives"]) > 0
     for alt in result["alternatives"]:
         assert "turquoise" not in alt["alternative"]["product_name"].lower()
     assert result["alternatives"][0]["reason"] == "fallback"
 
 
-def test_alternatives_from_history():
-    """Priority 1: flavors from customer order history."""
-    _seed_stock()
-    # Give buyer history with Green
-    save_order_items("hist@example.com", "O1", [
-        {"product_name": "Tera Green", "base_flavor": "Green", "quantity": 1},
-    ])
-    # Ask for alternative to Purple (not in stock at all)
-    result = select_best_alternatives("hist@example.com", "Purple", max_options=3)
-    alts = result["alternatives"]
-    # Should find Green from history
-    history_alts = [a for a in alts if a["reason"] == "history"]
-    assert len(history_alts) > 0
-
-
-def test_alternatives_history_excludes_oos_flavor():
-    """History-based alternatives skip the flavor that is out of stock."""
-    _seed_stock()
-    # Client ordered both Green and Turquoise before
-    save_order_items("skip@example.com", "O1", [
-        {"product_name": "Tera Green", "base_flavor": "Green", "quantity": 1},
-        {"product_name": "Tera Turquoise", "base_flavor": "Turquoise", "quantity": 1},
-    ])
-    # OOS flavor = Green → alternatives should NOT include Green
-    result = select_best_alternatives("skip@example.com", "Green", max_options=3)
-    for alt in result["alternatives"]:
-        assert "green" not in alt["alternative"]["product_name"].lower()
-
-
 def test_alternatives_none_available():
-    """No stock at all → empty alternatives."""
-    result = select_best_alternatives("any@example.com", "Green")
+    """Empty stock → none_available returned, LLM never called."""
+    with patch(_PATCH_LLM) as mock_llm:
+        result = select_best_alternatives("any@example.com", "Green")
     assert result["alternatives"] == []
     assert result["reason"] == "none_available"
+    mock_llm.assert_not_called()
 
 
 def test_alternatives_max_options():
+    """Fallback respects max_options limit."""
     _seed_stock()
-    result = select_best_alternatives("x@example.com", "Purple", max_options=1)
+    with patch(_PATCH_LLM, return_value=[]):
+        result = select_best_alternatives("x@example.com", "Purple", max_options=1)
     assert len(result["alternatives"]) <= 1
 
 
-# ---------------------------------------------------------------------------
-# Priority 1.5: profile-based alternatives (llm_summary)
-# ---------------------------------------------------------------------------
-
-def test_alternatives_from_profile():
-    """Priority 1.5: llm_summary used when ClientOrderItem is empty."""
+def test_alternatives_llm_picks_used():
+    """LLM-returned items appear in result with reason='llm'."""
     _seed_stock()
-    # No order history — pass summary directly via client_summary parameter
-    result = select_best_alternatives(
-        "profile1@example.com", "Silver", max_options=3,
-        client_summary="Returning customer. Usually orders Turquoise, approximately 5 cartons.",
-    )
-    reasons = [a["reason"] for a in result["alternatives"]]
-    assert "profile" in reasons, f"Expected profile alternative, got: {reasons}"
-    profile_alts = [a for a in result["alternatives"] if a["reason"] == "profile"]
-    names = [a["alternative"]["product_name"] for a in profile_alts]
-    assert any("turquoise" in n.lower() for n in names), f"Expected Turquoise in profile alternatives, got: {names}"
+    green = _llm_item("Green", "TEREA_EUROPE")
+    with patch(_PATCH_LLM, return_value=[green]):
+        result = select_best_alternatives("buyer@example.com", "Turquoise")
+    assert len(result["alternatives"]) == 1
+    assert result["alternatives"][0]["reason"] == "llm"
+    assert result["alternatives"][0]["alternative"]["product_name"] == "Green"
+    assert result["reason"] == "llm"
 
 
-def test_alternatives_profile_excludes_oos_flavor():
-    """Profile alternatives never include the OOS flavor itself."""
+def test_alternatives_llm_fallback_when_empty():
+    """When LLM returns empty list, fallback (quantity-based) is used."""
     _seed_stock()
-    # Turquoise is OOS — should not appear even though summary mentions it
-    result = select_best_alternatives(
-        "profile2@example.com", "Turquoise", max_options=3,
-        client_summary="Orders Turquoise and Green regularly, 3-4 cartons per order.",
-    )
+    with patch(_PATCH_LLM, return_value=[]):
+        result = select_best_alternatives("buyer@example.com", "Turquoise")
+    assert len(result["alternatives"]) > 0
+    assert all(a["reason"] == "fallback" for a in result["alternatives"])
+
+
+def test_alternatives_excluded_products_respected():
+    """excluded_products prevents those items from appearing in result."""
+    _seed_stock()
+    green = _llm_item("Green", "TEREA_EUROPE")
+    with patch(_PATCH_LLM, return_value=[green]):
+        result = select_best_alternatives(
+            "buyer@example.com", "Turquoise", excluded_products={"Green"}
+        )
+    # Green excluded — fallback should be used and Green not present
     for alt in result["alternatives"]:
-        assert "turquoise" not in alt["alternative"]["product_name"].lower(), (
-            f"OOS flavor Turquoise should not appear in alternatives: {alt}"
-        )
+        assert alt["alternative"]["product_name"] != "Green"
 
 
-def test_alternatives_priority_order():
-    """Priority order: history (1) > profile (1.5) > fallback (2)."""
+def test_alternatives_oos_flavor_not_offered_to_llm():
+    """OOS flavor is excluded from the stock list passed to LLM."""
     _seed_stock()
-    # Client has history with Green (Priority 1)
-    save_order_items("prio@example.com", "O1", [
-        {"product_name": "Tera Green", "base_flavor": "Green", "quantity": 2},
-    ])
-    # OOS = Turquoise; profile mentions T Mint (Priority 1.5)
-    result = select_best_alternatives(
-        "prio@example.com", "Turquoise", max_options=3,
-        client_summary="Experienced customer. Sometimes tries T Mint as an alternative.",
-    )
-    reasons = [a["reason"] for a in result["alternatives"]]
-    # history must appear before profile in the list
-    if "history" in reasons and "profile" in reasons:
-        assert reasons.index("history") < reasons.index("profile"), (
-            f"history should precede profile, got order: {reasons}"
+    with patch(_PATCH_LLM, return_value=[]) as mock_llm:
+        select_best_alternatives("buyer@example.com", "Turquoise")
+    mock_llm.assert_called_once()
+    available = mock_llm.call_args.kwargs.get("available_items", [])
+    for item in available:
+        assert "turquoise" not in item["product_name"].lower(), (
+            f"OOS flavor Turquoise should not be in LLM stock list: {item}"
         )
-    # history must appear before fallback
-    if "history" in reasons and "fallback" in reasons:
-        assert reasons.index("history") < reasons.index("fallback")
 
 
-def test_alternatives_profile_word_boundary():
-    """Word boundary match: 'T Mint' in summary must match exactly, not partially."""
+def test_alternatives_max_options_with_llm():
+    """max_options respected when LLM returns more items than requested."""
     _seed_stock()
-    # Summary mentions "minty" — should NOT match "T Mint" (different word)
-    result = select_best_alternatives(
-        "wb@example.com", "Turquoise", max_options=3,
-        client_summary="Prefers a minty fresh experience. Usually orders Green.",
-    )
-    profile_alts = [a for a in result["alternatives"] if a["reason"] == "profile"]
-    # "T Mint" should NOT match "minty" due to word boundaries
-    for alt in profile_alts:
-        assert alt["alternative"]["product_name"] != "T Mint", (
-            "T Mint should not match 'minty' in summary (word boundary required)"
-        )
-    # "Green" SHOULD match (mentioned as exact word)
-    names = [a["alternative"]["product_name"] for a in profile_alts]
-    assert any("green" in n.lower() for n in names), (
-        f"Green should match in profile, got: {names}"
-    )
+    items = [
+        _llm_item("Green", "TEREA_EUROPE"),
+        _llm_item("Silver", "TEREA_EUROPE", qty=3),
+        _llm_item("Green", "ARMENIA", qty=3),
+    ]
+    with patch(_PATCH_LLM, return_value=items):
+        result = select_best_alternatives("buyer@example.com", "Turquoise", max_options=2)
+    assert len(result["alternatives"]) <= 2
 
 
 # ---------------------------------------------------------------------------

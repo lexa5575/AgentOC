@@ -545,6 +545,8 @@ def format_result(result: dict) -> str:
                     reason_text = reason
                     if reason == "history" and opt.get("order_count"):
                         reason_text = f"history ({opt['order_count']}x ordered before)"
+                    elif reason == "llm":
+                        reason_text = "AI pick"
                     rendered.append(
                         f"{alt['category']} / {alt['product_name']} (qty: {alt['quantity']}) [{reason_text}]"
                     )
