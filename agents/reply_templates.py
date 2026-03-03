@@ -420,6 +420,7 @@ def process_classified_email(classification: EmailClassification) -> dict:
                         client_email=classification.client_email,
                         base_flavor=insuff["base_flavor"],
                         max_options=3,
+                        client_summary=client.get("llm_summary", "") if client else "",
                     )
                     best_alternatives[insuff["base_flavor"]] = best
 

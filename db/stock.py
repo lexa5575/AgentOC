@@ -394,6 +394,7 @@ def select_best_alternatives(
     base_flavor: str,
     warehouse: str | None = None,
     max_options: int = 3,
+    client_summary: str = "",
 ) -> dict:
     """Select up to N best alternatives for an out-of-stock flavor.
 
@@ -403,12 +404,22 @@ def select_best_alternatives(
     Priority:
     1. Flavors from customer's order history that are currently in stock
        (personalized — what they actually like)
+    1.5. Items matching the client's llm_summary profile text
+       (uses word boundaries to avoid false positives)
     2. Other available items, excluding the OOS flavor (general fallback)
+
+    Args:
+        client_email: Client email for history lookup.
+        base_flavor: The out-of-stock flavor to find alternatives for.
+        warehouse: Optional warehouse filter.
+        max_options: Maximum number of alternatives to return.
+        client_summary: Client's llm_summary text for profile matching.
+            Caller should pass client_data.get("llm_summary", "").
 
     Returns:
     {
       "alternatives": [
-        {"alternative": {...}, "reason": "history|fallback", "order_count": int|None},
+        {"alternative": {...}, "reason": "history|profile|fallback", "order_count": int|None},
         ...
       ],
       "reason": str,
@@ -463,33 +474,30 @@ def select_best_alternatives(
         # Priority 1.5: profile-based — match in-stock items against llm_summary.
         # Fills the gap when ClientOrderItem is empty (new automation, old client).
         # Uses word boundaries to avoid false positives ("one" in "one day" etc.).
-        if len(selected) < max_options:
+        # client_summary is passed by the caller (already has the client dict loaded).
+        if len(selected) < max_options and client_summary:
             import re
-            from db.models import Client
-            client_row = session.query(Client).filter_by(email=client_email).first()
-            summary = (client_row.llm_summary or "") if client_row else ""
-            if summary:
-                q_profile = session.query(StockItem).filter(
-                    StockItem.category.in_(allowed_cats),
-                    StockItem.quantity > 0,
-                    ~StockItem.product_name.ilike(f"%{flavor}%"),
-                )
-                if warehouse:
-                    q_profile = q_profile.filter_by(warehouse=warehouse)
-                for item in q_profile.order_by(StockItem.quantity.desc()).all():
-                    item_base = _base_flavor_from_name(item.product_name)
-                    if (
-                        item_base
-                        and item_base.lower() != flavor.lower()
-                        and re.search(
-                            r"\b" + re.escape(item_base) + r"\b",
-                            summary,
-                            re.IGNORECASE,
-                        )
-                    ):
-                        _push(item, reason="profile")
-                        if len(selected) >= max_options:
-                            break
+            q_profile = session.query(StockItem).filter(
+                StockItem.category.in_(allowed_cats),
+                StockItem.quantity > 0,
+                ~StockItem.product_name.ilike(f"%{flavor}%"),
+            )
+            if warehouse:
+                q_profile = q_profile.filter_by(warehouse=warehouse)
+            for item in q_profile.order_by(StockItem.quantity.desc()).all():
+                item_base = _base_flavor_from_name(item.product_name)
+                if (
+                    item_base
+                    and item_base.lower() != flavor.lower()
+                    and re.search(
+                        r"\b" + re.escape(item_base) + r"\b",
+                        client_summary,
+                        re.IGNORECASE,
+                    )
+                ):
+                    _push(item, reason="profile")
+                    if len(selected) >= max_options:
+                        break
 
         # Priority 2: fallback — any available item excluding the OOS flavor.
         # Never includes the same flavor (e.g. "Amber from Armenia" when
