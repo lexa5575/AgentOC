@@ -352,6 +352,23 @@ class TestCleanEmailBody(unittest.TestCase):
         self.assertIn("Great steak", cleaned)
         self.assertNotIn("iPhone", cleaned)
 
+    def test_strips_wrapped_on_wrote(self):
+        """'On ... wrote:' with line wrap before 'wrote:' → stripped."""
+        email = (
+            "From: a@b.com\n"
+            "Body: Hey. I have paid. Thanks!\r\n"
+            "\r\n"
+            "On Fri, Feb 27, 2026 at 7:29\u202fAM James Harris <j@example.com>\r\n"
+            "wrote:\r\n"
+            "\r\n"
+            "> Hello.\r\n"
+            "> How are you?"
+        )
+        cleaned = self.clean_email_body(email)
+        self.assertIn("I have paid", cleaned)
+        self.assertNotIn("Hello", cleaned)
+        self.assertNotIn("wrote", cleaned)
+
     def test_strips_inline_on_wrote_no_trailing_newline(self):
         """'On ... wrote:' at end of body (no trailing newline) → stripped."""
         email = (

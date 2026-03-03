@@ -54,8 +54,10 @@ REGION_SUFFIXES = (
 
 def _strip_quoted_text(body: str) -> str:
     """Remove quoted reply blocks and signatures from email body."""
-    # 1. "On ... wrote:" + everything after (trailing \n optional — may be end of text)
-    body = re.split(r"\n?\s*On .+? wrote:\s*\n?", body)[0]
+    # 1. "On ... wrote:" + everything after.
+    #    Allow optional \r?\n before "wrote:" — email clients wrap long lines,
+    #    e.g. "On Feb 27 James <email>\r\nwrote:"
+    body = re.split(r"\n?\s*On .+?(?:\r?\n\s*)?wrote:\s*\n?", body)[0]
 
     # 2. "> " quoted lines
     body = re.sub(r"^>.*$", "", body, flags=re.MULTILINE)
