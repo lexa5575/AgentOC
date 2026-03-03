@@ -67,8 +67,11 @@ def _strip_quoted_text(body: str) -> str:
     body = re.split(
         r"(?:(?:^|\n)\s*(?:Get Outlook for"
         r"|-{3,}\s*Forwarded message)"
-        r"|Sent from my (?:iPhone|iPad|Galaxy|Samsung))",
+        r"|Sent from my (?:iPhone|iPad|Galaxy|Samsung)"
+        r"|Sent (?:from|with) (?:Proton Mail|Yahoo Mail)"
+        r"|Отправлено с (?:iPhone|iPad))",
         body,
+        flags=re.IGNORECASE,
     )[0]
 
     return body.strip()

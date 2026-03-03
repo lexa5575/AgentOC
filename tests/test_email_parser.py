@@ -380,6 +380,32 @@ class TestCleanEmailBody(unittest.TestCase):
         self.assertIn("Yes please", cleaned)
         self.assertNotIn("John wrote", cleaned)
 
+    def test_strips_russian_iphone_signature(self):
+        """Russian 'Отправлено с iPhone' → stripped."""
+        email = (
+            "From: a@b.com\n"
+            "Body: Can you send silver from Middle East please?\r\n"
+            "Отправлено с iPhone"
+        )
+        cleaned = self.clean_email_body(email)
+        self.assertIn("silver from Middle East", cleaned)
+        self.assertNotIn("Отправлено", cleaned)
+        self.assertNotIn("iPhone", cleaned)
+
+    def test_strips_proton_mail_signature(self):
+        """'Sent from Proton Mail' → stripped."""
+        email = "From: a@b.com\nBody: Yes, please ship it\n\nSent from Proton Mail"
+        cleaned = self.clean_email_body(email)
+        self.assertIn("Yes, please ship it", cleaned)
+        self.assertNotIn("Proton", cleaned)
+
+    def test_strips_proton_mail_sent_with(self):
+        """'Sent with Proton Mail' (alternative wording) → stripped."""
+        email = "From: a@b.com\nBody: Sounds good\n\nSent with Proton Mail secure email"
+        cleaned = self.clean_email_body(email)
+        self.assertIn("Sounds good", cleaned)
+        self.assertNotIn("Proton", cleaned)
+
     def test_collapses_excessive_whitespace(self):
         """Multiple blank lines collapsed to double newline."""
         email = "From: a@b.com\nBody: Hello\n\n\n\n\nWorld"
