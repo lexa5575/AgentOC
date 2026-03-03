@@ -317,6 +317,110 @@ def test_alternatives_max_options():
 
 
 # ---------------------------------------------------------------------------
+# Priority 1.5: profile-based alternatives (llm_summary)
+# ---------------------------------------------------------------------------
+
+def _create_client_with_summary(email: str, summary: str) -> None:
+    """Helper: create a Client record with llm_summary for profile tests."""
+    from db.models import Client, get_session
+    session = get_session()
+    try:
+        existing = session.query(Client).filter_by(email=email).first()
+        if existing:
+            existing.llm_summary = summary
+        else:
+            session.add(Client(
+                email=email,
+                name="Test Client",
+                payment_type="prepay",
+                llm_summary=summary,
+            ))
+        session.commit()
+    finally:
+        session.close()
+
+
+def test_alternatives_from_profile():
+    """Priority 1.5: llm_summary used when ClientOrderItem is empty."""
+    _seed_stock()
+    # No order history — ClientOrderItem empty for this email
+    # But profile mentions Turquoise → should be suggested
+    _create_client_with_summary(
+        "profile1@example.com",
+        "Returning customer. Usually orders Turquoise, approximately 5 cartons.",
+    )
+    result = select_best_alternatives("profile1@example.com", "Silver", max_options=3)
+    reasons = [a["reason"] for a in result["alternatives"]]
+    assert "profile" in reasons, f"Expected profile alternative, got: {reasons}"
+    profile_alts = [a for a in result["alternatives"] if a["reason"] == "profile"]
+    names = [a["alternative"]["product_name"] for a in profile_alts]
+    assert any("turquoise" in n.lower() for n in names), f"Expected Turquoise in profile alternatives, got: {names}"
+
+
+def test_alternatives_profile_excludes_oos_flavor():
+    """Profile alternatives never include the OOS flavor itself."""
+    _seed_stock()
+    # Client mentions both Turquoise (OOS flavor) and Green in their profile
+    _create_client_with_summary(
+        "profile2@example.com",
+        "Orders Turquoise and Green regularly, 3-4 cartons per order.",
+    )
+    # Turquoise is OOS — should not appear even though summary mentions it
+    result = select_best_alternatives("profile2@example.com", "Turquoise", max_options=3)
+    for alt in result["alternatives"]:
+        assert "turquoise" not in alt["alternative"]["product_name"].lower(), (
+            f"OOS flavor Turquoise should not appear in alternatives: {alt}"
+        )
+
+
+def test_alternatives_priority_order():
+    """Priority order: history (1) > profile (1.5) > fallback (2)."""
+    _seed_stock()
+    # Client has history with Green (Priority 1)
+    save_order_items("prio@example.com", "O1", [
+        {"product_name": "Tera Green", "base_flavor": "Green", "quantity": 2},
+    ])
+    # Client profile also mentions T Mint (Priority 1.5)
+    _create_client_with_summary(
+        "prio@example.com",
+        "Experienced customer. Sometimes tries T Mint as an alternative.",
+    )
+    # OOS = Turquoise (neither in history nor explicitly profile)
+    result = select_best_alternatives("prio@example.com", "Turquoise", max_options=3)
+    reasons = [a["reason"] for a in result["alternatives"]]
+    # history must appear before profile in the list
+    if "history" in reasons and "profile" in reasons:
+        assert reasons.index("history") < reasons.index("profile"), (
+            f"history should precede profile, got order: {reasons}"
+        )
+    # history must appear before fallback
+    if "history" in reasons and "fallback" in reasons:
+        assert reasons.index("history") < reasons.index("fallback")
+
+
+def test_alternatives_profile_word_boundary():
+    """Word boundary match: 'T Mint' in summary must match exactly, not partially."""
+    _seed_stock()
+    # Summary mentions "minty" — should NOT match "T Mint" (different word)
+    _create_client_with_summary(
+        "wb@example.com",
+        "Prefers a minty fresh experience. Usually orders Green.",
+    )
+    result = select_best_alternatives("wb@example.com", "Turquoise", max_options=3)
+    profile_alts = [a for a in result["alternatives"] if a["reason"] == "profile"]
+    # "T Mint" should NOT match "minty" due to word boundaries
+    for alt in profile_alts:
+        assert alt["alternative"]["product_name"] != "T Mint", (
+            "T Mint should not match 'minty' in summary (word boundary required)"
+        )
+    # "Green" SHOULD match (mentioned as exact word)
+    names = [a["alternative"]["product_name"] for a in profile_alts]
+    assert any("green" in n.lower() for n in names), (
+        f"Green should match in profile, got: {names}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # calculate_order_price
 # ---------------------------------------------------------------------------
 

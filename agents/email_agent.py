@@ -230,6 +230,7 @@ def _build_oos_telegram(classification, result: dict) -> str:
             reason_ru = {
                 "same_flavor": "тот же вкус",
                 "history": f"из истории ({opt.get('order_count', '?')} заказов)",
+                "profile": "из профиля",
                 "fallback": "из наличия",
             }.get(reason, reason)
             rendered.append(f"{alt['category']} / {alt['product_name']} [{reason_ru}]")

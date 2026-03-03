@@ -22,6 +22,69 @@ from agents.reply_templates import format_email_history
 
 logger = logging.getLogger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# Order item backfill from Gmail history
+# ---------------------------------------------------------------------------
+
+def _backfill_order_items(client_email: str) -> int:
+    """Parse Gmail order notifications and populate ClientOrderItem.
+
+    Searches Gmail for order notifications FROM order@shipmecarton.com
+    that mention this client (email appears in body or Reply-To).
+    Uses try_parse_order for reliable field extraction.
+
+    Safe to call repeatedly — save_order_items skips duplicates via
+    UNIQUE constraint (client_email, order_id, base_flavor).
+
+    Returns number of new order items saved.
+    """
+    from tools.gmail import GmailClient
+    from tools.email_parser import try_parse_order
+    from db.stock import save_order_items
+
+    try:
+        gmail = GmailClient()
+        notifications = gmail.search_order_notifications(client_email, max_results=50)
+    except Exception as e:
+        logger.warning("Gmail order search failed for %s: %s", client_email, e)
+        return 0
+
+    total_saved = 0
+    for msg in notifications:
+        # Reconstruct email_text format expected by try_parse_order.
+        # Reply-To header ensures client email is found even if body
+        # doesn't have the "Email:" field.
+        fake_email = (
+            f"From: {msg.get('from', 'order@shipmecarton.com')}\n"
+            f"Reply-To: {client_email}\n"
+            f"Subject: {msg.get('subject', '')}\n"
+            f"Body:\n{msg.get('body', '')}"
+        )
+        parsed = try_parse_order(fake_email)
+        if parsed and parsed.order_items:
+            saved = save_order_items(
+                client_email=client_email,
+                order_id=parsed.order_id,
+                order_items=[
+                    {
+                        "product_name": oi.product_name,
+                        "base_flavor": oi.base_flavor,
+                        "quantity": oi.quantity,
+                    }
+                    for oi in parsed.order_items
+                ],
+            )
+            total_saved += saved
+
+    if total_saved:
+        logger.info(
+            "Backfilled %d order items for %s from Gmail",
+            total_saved, client_email,
+        )
+    return total_saved
+
+
 # ---------------------------------------------------------------------------
 # Profiler Instructions
 # ---------------------------------------------------------------------------
@@ -101,6 +164,11 @@ def generate_client_summary(client_email: str) -> str | None:
             return None
 
         logger.info("Generated summary for %s: %s", client_email, summary[:80])
+
+        # Backfill ClientOrderItem from Gmail order notifications
+        # (covers clients who existed before the pipeline automation)
+        _backfill_order_items(client_email)
+
         return summary
 
     except Exception as e:

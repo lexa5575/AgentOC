@@ -17,6 +17,41 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Base flavor extraction (mirrors email_parser._extract_base_flavor)
+# Duplicated here to avoid circular import: db → tools → agents
+# ---------------------------------------------------------------------------
+
+_BRAND_PREFIXES = ("Tera ", "Terea ", "Heets ")
+_REGION_SUFFIXES = (
+    " made in Middle East",
+    " made in Armenia",
+    " EU",
+    " Japan",
+    " KZ",
+)
+
+
+def _base_flavor_from_name(product_name: str) -> str:
+    """Strip brand prefix and region suffix to get base flavor.
+
+    Examples:
+        "Tera Green made in Middle East" → "Green"
+        "Tera Amber made in Armenia"     → "Amber"
+        "ONE Green"                      → "ONE Green"  (device, not stripped)
+    """
+    name = product_name.strip()
+    for pfx in _BRAND_PREFIXES:
+        if name.startswith(pfx):
+            name = name[len(pfx):]
+            break
+    for sfx in _REGION_SUFFIXES:
+        if name.lower().endswith(sfx.lower()):
+            name = name[: -len(sfx)]
+            break
+    return name.strip()
+
+
+# ---------------------------------------------------------------------------
 # Product type constants (sticks vs devices)
 # ---------------------------------------------------------------------------
 
@@ -424,6 +459,37 @@ def select_best_alternatives(
                     break
             if len(selected) >= max_options:
                 break
+
+        # Priority 1.5: profile-based — match in-stock items against llm_summary.
+        # Fills the gap when ClientOrderItem is empty (new automation, old client).
+        # Uses word boundaries to avoid false positives ("one" in "one day" etc.).
+        if len(selected) < max_options:
+            import re
+            from db.models import Client
+            client_row = session.query(Client).filter_by(email=client_email).first()
+            summary = (client_row.llm_summary or "") if client_row else ""
+            if summary:
+                q_profile = session.query(StockItem).filter(
+                    StockItem.category.in_(allowed_cats),
+                    StockItem.quantity > 0,
+                    ~StockItem.product_name.ilike(f"%{flavor}%"),
+                )
+                if warehouse:
+                    q_profile = q_profile.filter_by(warehouse=warehouse)
+                for item in q_profile.order_by(StockItem.quantity.desc()).all():
+                    item_base = _base_flavor_from_name(item.product_name)
+                    if (
+                        item_base
+                        and item_base.lower() != flavor.lower()
+                        and re.search(
+                            r"\b" + re.escape(item_base) + r"\b",
+                            summary,
+                            re.IGNORECASE,
+                        )
+                    ):
+                        _push(item, reason="profile")
+                        if len(selected) >= max_options:
+                            break
 
         # Priority 2: fallback — any available item excluding the OOS flavor.
         # Never includes the same flavor (e.g. "Amber from Armenia" when

@@ -307,6 +307,50 @@ class GmailClient:
         history.sort(key=lambda m: m["created_at"])
         return history
 
+    def search_order_notifications(
+        self,
+        client_email: str,
+        max_results: int = 50,
+    ) -> list[dict]:
+        """Search Gmail for order notifications mentioning this client.
+
+        Uses query: 'from:order@shipmecarton.com {client_email}'
+        Gmail full-text indexes the email body (which contains 'Email: client@...')
+        so this finds order notifications even when the client is only in
+        Reply-To or body — not in the To: header.
+
+        Returns list of message dicts from get_message() (from, reply_to,
+        subject, body, gmail_message_id).
+        """
+        service = self._get_service()
+        try:
+            result = service.users().messages().list(
+                userId="me",
+                q=f"from:order@shipmecarton.com {client_email}",
+                maxResults=max_results,
+            ).execute()
+        except Exception as e:
+            logger.error(
+                "Gmail order notification search failed for %s: %s",
+                client_email, e,
+            )
+            return []
+
+        msg_ids = [m["id"] for m in result.get("messages", [])]
+        messages = []
+        for msg_id in msg_ids:
+            try:
+                msg = self.get_message(msg_id)
+                messages.append(msg)
+            except Exception as e:
+                logger.error("Failed to fetch order notification %s: %s", msg_id, e)
+
+        logger.info(
+            "Gmail order notifications for %s: %d found",
+            client_email, len(messages),
+        )
+        return messages
+
     def _extract_body(self, payload: dict) -> str:
         """Extract plain text body from Gmail message payload.
 
