@@ -85,11 +85,16 @@ Examples of needs_reply=true (even if starts with "thank you"):
 
 ## Rules for situation
 
-- "new_order" — new order notification (rare — most are parsed automatically before reaching you)
+- "new_order" — customer wants to place an order. Use this when:
+  - Direct order: "I want to order X", "Please send me X", "I'll take X"
+  - Question with specific product AND quantity: "Is it possible to order 2 boxes of X?",
+    "Can I get 4 cartons of Y?", "Could you send 1 box of Z?"
+  KEY RULE: if the customer specifies both a product name AND a quantity (number of boxes/cartons/units),
+  classify as new_order — not price_question. Specific quantities = purchase intent.
 - "tracking" — asks about delivery status, tracking number, "where is my order?"
-- "price_question" — asks HOW MUCH something costs, requests a price quote
-  ("how much for 5 boxes of Green?", "what's the total?", "can you give me a price?")
-  Extract order_items if the customer mentions specific products and quantities.
+- "price_question" — asks HOW MUCH something costs WITHOUT specifying quantity, requests a price quote
+  ("how much for Green?", "what's the price of Blue?", "can you give me a price?")
+  Only use this when no specific quantity is mentioned. If quantity is present → use new_order instead.
 - "payment_question" — asks WHERE or HOW to pay ("how do I pay?", "what's the Zelle?")
 - "payment_received" — confirms payment was sent ("I paid via Zelle", "sent CashApp")
 - "discount_request" — asks for discount or better price (NOT a price quote request)
