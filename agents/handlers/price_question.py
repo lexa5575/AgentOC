@@ -18,7 +18,12 @@ Fallback to LLM (handle_general) when:
 import logging
 
 from agents.handlers.general import handle_general
-from db.memory import check_stock_for_order, calculate_order_price, get_stock_summary
+from db.memory import (
+    check_stock_for_order,
+    calculate_order_price,
+    get_stock_summary,
+    resolve_order_items,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +149,15 @@ def handle_price_question(
             classification.client_email,
         )
         return handle_general(classification, result, email_text)
+
+    # Resolve misspelled product names (fuzzy matching)
+    items, resolve_alerts = resolve_order_items(items)
+    if resolve_alerts:
+        result["resolve_alerts"] = resolve_alerts
+        logger.warning(
+            "Price question: product name resolution alerts for %s: %s",
+            classification.client_email, resolve_alerts,
+        )
 
     # Check stock availability
     stock_result = check_stock_for_order(items)

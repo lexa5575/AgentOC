@@ -16,6 +16,7 @@ from db.memory import (
     check_stock_for_order,
     get_client,
     get_stock_summary,
+    resolve_order_items,
     select_best_alternatives,
 )
 
@@ -398,6 +399,17 @@ def process_classified_email(classification: EmailClassification) -> dict:
                 }
                 for oi in classification.order_items
             ]
+
+            # Resolve misspelled product names (fuzzy matching)
+            items_for_check, resolve_alerts = resolve_order_items(items_for_check)
+            if resolve_alerts:
+                result["resolve_alerts"] = resolve_alerts
+                logger.warning(
+                    "Product name resolution alerts for %s: %s",
+                    classification.client_email,
+                    resolve_alerts,
+                )
+
             stock_result = check_stock_for_order(items_for_check)
 
             if not stock_result["all_in_stock"]:

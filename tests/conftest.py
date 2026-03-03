@@ -32,6 +32,7 @@ def db_session(monkeypatch):
         "db.email_history",
         "db.stock",
         "db.conversation_state",
+        "db.product_resolver",
     ):
         try:
             module = importlib.import_module(module_name)

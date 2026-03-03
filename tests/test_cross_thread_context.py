@@ -68,6 +68,7 @@ def _ensure_stubs():
             "all_in_stock": True, "items": [], "insufficient_items": [],
         }
         db_memory.calculate_order_price = lambda *a, **kw: None
+        db_memory.resolve_order_items = lambda items, **kw: (items, [])
         db_memory.select_best_alternatives = lambda *a, **kw: {"alternatives": []}
         db_memory.update_client = lambda *a, **kw: None
         sys.modules["db.memory"] = db_memory

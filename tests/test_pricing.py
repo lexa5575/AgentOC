@@ -119,11 +119,12 @@ def test_guard_allows_template_without_price_placeholder():
 # process_classified_email: price alerts
 # ---------------------------------------------------------------------------
 
+@patch("agents.reply_templates.resolve_order_items", side_effect=lambda items, **kw: (items, []))
 @patch("agents.reply_templates.select_best_alternatives")
 @patch("agents.reply_templates.check_stock_for_order")
 @patch("agents.reply_templates.get_stock_summary")
 @patch("agents.reply_templates.get_client")
-def test_mismatch_alert(mock_client, mock_summary, mock_stock, mock_alts):
+def test_mismatch_alert(mock_client, mock_summary, mock_stock, mock_alts, mock_resolve):
     """parser_used=True, site price ≠ catalog → price_alert type=mismatch."""
     mock_client.return_value = {"payment_type": "prepay", "name": "Test"}
     mock_summary.return_value = {"total": 10}
@@ -154,10 +155,11 @@ def test_mismatch_alert(mock_client, mock_summary, mock_stock, mock_alts):
     assert result["price_alert"]["calculated_price"] == "$220.00"
 
 
+@patch("agents.reply_templates.resolve_order_items", side_effect=lambda items, **kw: (items, []))
 @patch("agents.reply_templates.check_stock_for_order")
 @patch("agents.reply_templates.get_stock_summary")
 @patch("agents.reply_templates.get_client")
-def test_unmatched_alert(mock_client, mock_summary, mock_stock):
+def test_unmatched_alert(mock_client, mock_summary, mock_stock, mock_resolve):
     """parser_used=False, ambiguous categories → price_alert type=unmatched."""
     mock_client.return_value = {"payment_type": "prepay", "name": "Test"}
     mock_summary.return_value = {"total": 10}
@@ -187,11 +189,12 @@ def test_unmatched_alert(mock_client, mock_summary, mock_stock):
     assert "WeirdItem" in result["price_alert"]["items"]
 
 
+@patch("agents.reply_templates.resolve_order_items", side_effect=lambda items, **kw: (items, []))
 @patch("agents.reply_templates.select_best_alternatives")
 @patch("agents.reply_templates.check_stock_for_order")
 @patch("agents.reply_templates.get_stock_summary")
 @patch("agents.reply_templates.get_client")
-def test_no_alert_when_prices_match(mock_client, mock_summary, mock_stock, mock_alts):
+def test_no_alert_when_prices_match(mock_client, mock_summary, mock_stock, mock_alts, mock_resolve):
     """parser_used=True, site price = catalog → no price_alert."""
     mock_client.return_value = {"payment_type": "prepay", "name": "Test"}
     mock_summary.return_value = {"total": 10}

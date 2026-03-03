@@ -74,6 +74,7 @@ def _install_stubs() -> None:
         db_memory.get_stock_summary = lambda *a, **kw: {"total": 0}
         db_memory.check_stock_for_order = lambda *a, **kw: {"all_in_stock": True, "items": [], "insufficient_items": []}
         db_memory.calculate_order_price = lambda *a, **kw: None
+        db_memory.resolve_order_items = lambda items, **kw: (items, [])
         db_memory.select_best_alternatives = lambda *a, **kw: {"alternatives": []}
         db_memory.get_full_email_history = lambda *a, **kw: []
         db_memory.get_full_thread_history = lambda *a, **kw: []

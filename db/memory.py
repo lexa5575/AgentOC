@@ -30,6 +30,7 @@ from db.email_history import (
     save_email,
     set_gmail_state,
 )
+from db.product_resolver import resolve_order_items
 from db.stock import (
     calculate_order_price,
     check_stock_for_order,
@@ -64,6 +65,8 @@ __all__ = [
     "get_thread_history",
     "save_email",
     "set_gmail_state",
+    # product resolver
+    "resolve_order_items",
     # stock
     "calculate_order_price",
     "check_stock_for_order",

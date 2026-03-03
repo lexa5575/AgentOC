@@ -75,6 +75,7 @@ def _install_import_stubs() -> None:
         "insufficient_items": [],
     }
     db_memory.calculate_order_price = lambda *args, **kwargs: None
+    db_memory.resolve_order_items = lambda items, **kw: (items, [])
     db_memory.select_best_alternatives = lambda *args, **kwargs: {"alternatives": []}
     db_memory.get_full_thread_history = lambda *args, **kwargs: []
     db_memory.update_client = lambda *args, **kwargs: None
