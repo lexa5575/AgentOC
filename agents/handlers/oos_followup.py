@@ -23,6 +23,8 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
 
 from agents.context import build_context, format_context_for_prompt
+from agents.handlers.template_utils import fill_template_reply
+from agents.reply_templates import REPLY_TEMPLATES
 
 logger = logging.getLogger(__name__)
 
@@ -98,25 +100,83 @@ def handle_oos_followup(
     email_text: str,
 ) -> dict:
     """Handle customer responses to out-of-stock emails.
-    
-    Uses ConversationState to understand context of OOS situation.
-    Classification includes dialog_intent for understanding customer's response.
+
+    Routes by dialog_intent:
+    - agrees_to_alternative → template (0 tokens)
+    - declines_alternative → template (0 tokens)
+    - asks_question / provides_info / unknown → LLM
     """
+    intent = classification.dialog_intent
+
+    # === agrees_to_alternative → template confirmation ===
+    if intent == "agrees_to_alternative" and result["client_found"]:
+        client = result["client_data"]
+        payment_type = client.get("payment_type", "unknown")
+
+        # Guard: prepay without zelle_address → don't send template with blank address
+        if payment_type == "prepay" and not client.get("zelle_address"):
+            logger.warning(
+                "OOS agrees/prepay but no zelle_address for %s — fallback to LLM",
+                classification.client_email,
+            )
+        else:
+            result, template_found = fill_template_reply(
+                classification=classification,
+                result=result,
+                situation="oos_agrees",
+            )
+            if template_found:
+                logger.info(
+                    "OOS agrees → template for %s (0 tokens)",
+                    classification.client_email,
+                )
+                return result
+
+    # === declines_alternative → decline template ===
+    if intent == "declines_alternative":
+        template = REPLY_TEMPLATES.get(("oos_declines", "any"))
+        if template:
+            result["draft_reply"] = template
+            result["template_used"] = True
+            result["needs_routing"] = False
+            logger.info(
+                "OOS declines → template for %s (0 tokens)",
+                classification.client_email,
+            )
+            return result
+
+    # === asks_question / provides_info / unknown → LLM ===
     ctx = build_context(classification, result, email_text)
-    
-    # Add dialog intent info to prompt
+
     intent_info = ""
     if classification.dialog_intent:
         intent_info = f"\n\nCUSTOMER INTENT: {classification.dialog_intent}"
     if classification.followup_to:
         intent_info += f"\nRESPONDING TO: {classification.followup_to}"
-    
-    prompt = format_context_for_prompt(ctx) + intent_info + "\n\nWrite a reply:"
+
+    # Payment type constraint so LLM doesn't mix up prepay/postpay
+    payment_type_hint = ""
+    if result.get("client_found") and result.get("client_data"):
+        pt = result["client_data"].get("payment_type", "unknown")
+        if pt in ("prepay", "postpay"):
+            other = "postpay" if pt == "prepay" else "prepay"
+            payment_type_hint = (
+                f"\n\nIMPORTANT: This client is {pt.upper()}. "
+                f"Use ONLY {pt} payment and shipping rules. "
+                f"IGNORE all {other} rules."
+            )
+
+    prompt = (
+        format_context_for_prompt(ctx)
+        + intent_info
+        + payment_type_hint
+        + "\n\nWrite a reply:"
+    )
 
     logger.info(
-        "OOS Followup handler: client=%s, intent=%s",
+        "OOS Followup LLM: client=%s, intent=%s",
         result["client_email"],
-        classification.dialog_intent or 'unknown',
+        intent or "unknown",
     )
 
     response = oos_followup_agent.run(prompt)

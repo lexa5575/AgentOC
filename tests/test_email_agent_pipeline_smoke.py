@@ -514,7 +514,7 @@ class TestEmailPipelineSmoke(unittest.TestCase):
         self.assertEqual(update_calls[0]["fields"]["city_state_zip"], "Springfield, Illinois 62701")
 
     def test_oos_followup_flow(self):
-        """OOS followup — customer agrees to alternative, routed to oos_followup handler."""
+        """OOS followup — customer agrees to alternative, routed to oos_followup handler (template)."""
         email = (
             "From: client1@example.com\n"
             "Subject: Re: Your order\n"
@@ -523,7 +523,10 @@ class TestEmailPipelineSmoke(unittest.TestCase):
         out = self.email_agent.classify_and_process(email)
 
         self.assertIn("Situation: oos_followup", out)
-        self.assertIn("We'll update your order with the alternative. Thank you!", out)
+        # agrees_to_alternative + prepay + zelle → template, not LLM
+        self.assertIn("[Template - exact copy]", out)
+        self.assertIn("We will update your order with the alternative.", out)
+        self.assertIn("pay@example.com", out)  # zelle_address filled
         self.assertEqual(len(self.saved), 2)
         self.assertEqual(self.saved[1]["direction"], "outbound")
 

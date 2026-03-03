@@ -108,6 +108,38 @@ REPLY_TEMPLATES = {
         "{CUSTOMER_STREET}\n"
         "{CUSTOMER_CITY_STATE_ZIP}"
     ),
+    # OOS Followup — customer agrees to alternative (prepay)
+    ("oos_agrees", "prepay"): (
+        "Got it!\n"
+        "We will update your order with the alternative.\n"
+        "\n"
+        "!!! Zelle ( In memo or comments don't put anything please ! ) use email below\n"
+        "\n"
+        "{ZELLE_ADDRESS}\n"
+        "\n"
+        "Once we receive your payment, we will ship your order the same day.\n"
+        "Thank you!"
+    ),
+    # OOS Followup — customer agrees to alternative (postpay)
+    ("oos_agrees", "postpay"): (
+        "Got it!\n"
+        "We will update your order and ship your package ASAP.\n"
+        "Pay when received as always via Zelle or Cash App\n"
+        "ZELLE IS OUR PREFERRED METHOD OF PAYMENT\n"
+        "When order is received and you are ready to pay "
+        "( In memo or comments don't put anything please ! )\n"
+        "\n"
+        "Tracking With USPS will be updated on the USPS website "
+        "till midnight on the day of the shipping\n"
+        "Thank you!"
+    ),
+    # OOS Followup — customer declines alternative
+    ("oos_declines", "any"): (
+        "No problem at all!\n"
+        "If you change your mind or would like us to find something else for you,\n"
+        "just let us know!\n"
+        "Thank you!"
+    ),
 }
 
 # ---------------------------------------------------------------------------
