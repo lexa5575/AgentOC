@@ -147,7 +147,7 @@ def get_llm_alternatives(
         agent = Agent(
             id="alternatives-selector",
             name="Alternatives Selector",
-            model=OpenAIResponses(id="gpt-4o-mini"),
+            model=OpenAIResponses(id="gpt-4.1"),
             instructions=instructions,
             markdown=False,
         )
