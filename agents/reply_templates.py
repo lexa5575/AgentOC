@@ -38,7 +38,7 @@ class EmailClassification(BaseModel):
 
     needs_reply: bool = Field(description="Whether this email requires a reply")
     situation: str = Field(description=(
-        "One of: new_order, tracking, payment_question, "
+        "One of: new_order, price_question, tracking, payment_question, "
         "payment_received, discount_request, shipping_timeline, oos_followup, other"
     ))
     client_email: str = Field(description="The REAL client email (not system email)")

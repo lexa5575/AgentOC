@@ -87,9 +87,12 @@ Examples of needs_reply=true (even if starts with "thank you"):
 
 - "new_order" — new order notification (rare — most are parsed automatically before reaching you)
 - "tracking" — asks about delivery status, tracking number, "where is my order?"
+- "price_question" — asks HOW MUCH something costs, requests a price quote
+  ("how much for 5 boxes of Green?", "what's the total?", "can you give me a price?")
+  Extract order_items if the customer mentions specific products and quantities.
 - "payment_question" — asks WHERE or HOW to pay ("how do I pay?", "what's the Zelle?")
 - "payment_received" — confirms payment was sent ("I paid via Zelle", "sent CashApp")
-- "discount_request" — asks for discount or better price
+- "discount_request" — asks for discount or better price (NOT a price quote request)
 - "shipping_timeline" — asks WHEN order will be shipped ("when do you ship?")
 - "oos_followup" — reply in a thread where we discussed out-of-stock or alternatives.
   Use when customer responds about product availability, alternatives, or substitutions.
@@ -135,6 +138,7 @@ If the email contains a clear product list/table, extract:
   Keep non-Tera brands intact: "ONE Green" → "ONE Green", "PRIME Black" → "PRIME Black"
 - quantity: number of units (default 1)
 
+Extract order_items for new_order AND price_question situations.
 If no clear product list → set order_items to null.
 
 ## Output format
@@ -166,7 +170,7 @@ Field rules:
 - customer_street: street address only, or null
 - customer_city_state_zip: "City, State Zip", or null
 - items: what was ordered as free text, or null
-- order_items: structured list (only for new_order), or null
+- order_items: structured list (for new_order and price_question), or null
 - is_followup: true/false
 - followup_to: "oos_email" / "payment_info" / "tracking_info" / "order_confirmation" / null
 - dialog_intent: "agrees_to_alternative" / "declines_alternative" / "confirms_payment" / "asks_question" / "provides_info" / null

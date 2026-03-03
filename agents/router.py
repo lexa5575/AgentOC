@@ -9,6 +9,7 @@ Each situation gets its own specialized handler with narrow, focused instruction
 
 Routing:
 - new_order → handle_new_order (Python templates + OOS)
+- price_question → handle_price_question (deterministic quote + LLM fallback)
 - tracking → handle_tracking (specialized agent)
 - payment_question → handle_payment (specialized agent)
 - discount_request → handle_discount (specialized agent)
@@ -25,6 +26,7 @@ from agents.handlers.general import handle_general
 from agents.handlers.new_order import handle_new_order
 from agents.handlers.oos_followup import handle_oos_followup
 from agents.handlers.payment_received import handle_payment_received
+from agents.handlers.price_question import handle_price_question
 from agents.handlers.tracking import handle_tracking
 from agents.handlers.payment import handle_payment
 from agents.handlers.discount import handle_discount
@@ -39,6 +41,7 @@ logger = logging.getLogger(__name__)
 
 SITUATION_HANDLERS: dict[str, Callable] = {
     "new_order": handle_new_order,
+    "price_question": handle_price_question,
     "tracking": handle_tracking,
     "payment_question": handle_payment,
     "discount_request": handle_discount,

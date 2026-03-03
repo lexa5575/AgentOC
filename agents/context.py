@@ -33,6 +33,7 @@ _policy_cache: dict[str, dict] = {}
 # Which policy files to load for each situation
 _SITUATION_POLICIES: dict[str, list[str]] = {
     "new_order": ["payment", "shipping", "tone", "hard_rules"],
+    "price_question": ["payment", "tone", "hard_rules"],
     "tracking": ["tracking", "shipping", "tone", "hard_rules"],
     "payment_question": ["payment", "tone", "hard_rules"],
     "payment_received": ["payment", "tone", "hard_rules"],
