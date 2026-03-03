@@ -167,6 +167,7 @@ class TestEmailPipelineSmoke(unittest.TestCase):
             patch.object(self.email_agent.classifier_agent, "run", side_effect=self._classifier_run),
             patch.object(self.reply_templates, "get_client", side_effect=self._get_client),
             patch.object(self.reply_templates, "get_stock_summary", side_effect=self._get_stock_summary),
+            patch.object(self.reply_templates, "resolve_order_items", side_effect=lambda items, **kw: (items, [])),
             patch.object(self.reply_templates, "check_stock_for_order", side_effect=self._check_stock_for_order),
             patch.object(
                 self.reply_templates,
