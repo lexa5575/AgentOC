@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 # Duplicated here to avoid circular import: db → tools → agents
 # ---------------------------------------------------------------------------
 
-_BRAND_PREFIXES = ("Tera ", "Terea ", "Heets ")
+_BRAND_PREFIXES = ("Tera ", "Terea ", "Heets ", "T ")
 _REGION_SUFFIXES = (
     " made in Middle East",
     " made in Armenia",
@@ -395,6 +395,7 @@ def select_best_alternatives(
     warehouse: str | None = None,
     max_options: int = 3,
     client_summary: str = "",
+    excluded_products: set[str] | None = None,
 ) -> dict:
     """Select up to N best alternatives for an out-of-stock flavor.
 
@@ -415,6 +416,9 @@ def select_best_alternatives(
         max_options: Maximum number of alternatives to return.
         client_summary: Client's llm_summary text for profile matching.
             Caller should pass client_data.get("llm_summary", "").
+        excluded_products: Product names already suggested for other OOS
+            items in the same order. Prevents identical alternatives
+            across multiple OOS flavors.
 
     Returns:
     {
@@ -437,10 +441,13 @@ def select_best_alternatives(
     try:
         selected: list[dict] = []
         seen = set()
+        _excluded = excluded_products or set()
 
         def _push(item: StockItem, reason: str, order_count: int | None = None):
             key = (item.category, item.product_name)
             if key in seen:
+                return
+            if item.product_name in _excluded:
                 return
             seen.add(key)
             selected.append({

@@ -413,16 +413,24 @@ def process_classified_email(classification: EmailClassification) -> dict:
             stock_result = check_stock_for_order(items_for_check)
 
             if not stock_result["all_in_stock"]:
-                # Select up to three alternatives per insufficient item
+                # Select up to three alternatives per insufficient item.
+                # Track already-suggested products so each OOS flavor gets
+                # different alternatives (no duplicates across flavors).
                 best_alternatives = {}
+                already_suggested: set[str] = set()
                 for insuff in stock_result["insufficient_items"]:
                     best = select_best_alternatives(
                         client_email=classification.client_email,
                         base_flavor=insuff["base_flavor"],
                         max_options=3,
                         client_summary=client.get("llm_summary", "") if client else "",
+                        excluded_products=already_suggested,
                     )
                     best_alternatives[insuff["base_flavor"]] = best
+                    already_suggested.update(
+                        a["alternative"]["product_name"]
+                        for a in best.get("alternatives", [])
+                    )
 
                 result["stock_issue"] = {
                     "stock_check": stock_result,
