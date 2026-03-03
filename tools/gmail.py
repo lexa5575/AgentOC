@@ -314,7 +314,7 @@ class GmailClient:
     ) -> list[dict]:
         """Search Gmail for order notifications mentioning this client.
 
-        Uses query: 'from:order@shipmecarton.com {client_email}'
+        Uses query: 'from:(order@shipmecarton.com OR noreply@shipmecarton.com) {client_email}'
         Gmail full-text indexes the email body (which contains 'Email: client@...')
         so this finds order notifications even when the client is only in
         Reply-To or body — not in the To: header.
@@ -326,7 +326,7 @@ class GmailClient:
         try:
             result = service.users().messages().list(
                 userId="me",
-                q=f"from:order@shipmecarton.com {client_email}",
+                q=f"from:(order@shipmecarton.com OR noreply@shipmecarton.com) {client_email}",
                 maxResults=max_results,
             ).execute()
         except Exception as e:

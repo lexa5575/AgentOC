@@ -166,7 +166,7 @@ def test_backfill_order_items_success(mock_gmail_cls, mock_parse, mock_save):
     mock_gmail_cls.return_value = mock_gmail_instance
     mock_gmail_instance.search_order_notifications.return_value = [
         {
-            "from": "order@shipmecarton.com",
+            "from": "noreply@shipmecarton.com",
             "subject": "Shipmecarton - Order #23476",
             "body": "Order ID: 23476\nPayment amount: $440\nAmber x 4",
         }
@@ -180,6 +180,7 @@ def test_backfill_order_items_success(mock_gmail_cls, mock_parse, mock_save):
     mock_parsed = MagicMock()
     mock_parsed.order_id = "23476"
     mock_parsed.order_items = [mock_item]
+    mock_parsed.client_email = "client@example.com"   # must match for safety check
     mock_parse.return_value = mock_parsed
 
     result = _backfill_order_items("client@example.com")
@@ -192,7 +193,7 @@ def test_backfill_order_items_success(mock_gmail_cls, mock_parse, mock_save):
     # Verify fake_email constructed with Reply-To header
     call_args = mock_parse.call_args[0][0]
     assert "Reply-To: client@example.com" in call_args
-    assert "From: order@shipmecarton.com" in call_args
+    assert "From: noreply@shipmecarton.com" in call_args
     mock_save.assert_called_once_with(
         client_email="client@example.com",
         order_id="23476",
@@ -212,3 +213,35 @@ def test_backfill_order_items_no_gmail(mock_gmail_cls):
     result = _backfill_order_items("client@example.com")
 
     assert result == 0
+
+
+@patch("db.stock.get_client_flavor_history", return_value=[{"base_flavor": "Green", "order_count": 2}])
+@patch("tools.gmail.GmailClient")
+def test_backfill_skips_when_history_exists(mock_gmail_cls, mock_history):
+    """Guard: if ClientOrderItem already exists, skip Gmail scan entirely."""
+    result = _backfill_order_items("existing@example.com")
+
+    assert result == 0
+    mock_gmail_cls.assert_not_called()
+
+
+@patch("db.stock.save_order_items")
+@patch("tools.email_parser.try_parse_order")
+@patch("tools.gmail.GmailClient")
+def test_backfill_skips_email_mismatch(mock_gmail_cls, mock_parse, mock_save):
+    """Safety check: message whose parsed client_email differs is skipped."""
+    mock_gmail_instance = MagicMock()
+    mock_gmail_cls.return_value = mock_gmail_instance
+    mock_gmail_instance.search_order_notifications.return_value = [
+        {"from": "noreply@shipmecarton.com", "subject": "Order #999", "body": "..."},
+    ]
+
+    mock_parsed = MagicMock()
+    mock_parsed.order_items = [MagicMock()]
+    mock_parsed.client_email = "someone_else@example.com"   # mismatch!
+    mock_parse.return_value = mock_parsed
+
+    result = _backfill_order_items("target@example.com")
+
+    assert result == 0
+    mock_save.assert_not_called()

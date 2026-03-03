@@ -30,9 +30,12 @@ logger = logging.getLogger(__name__)
 def _backfill_order_items(client_email: str) -> int:
     """Parse Gmail order notifications and populate ClientOrderItem.
 
-    Searches Gmail for order notifications FROM order@shipmecarton.com
+    Searches Gmail for order notifications from shipmecarton.com senders
     that mention this client (email appears in body or Reply-To).
     Uses try_parse_order for reliable field extraction.
+
+    Guard: skips if ClientOrderItem records already exist for this client
+    (means pipeline is actively tracking orders — no need to scan Gmail).
 
     Safe to call repeatedly — save_order_items skips duplicates via
     UNIQUE constraint (client_email, order_id, base_flavor).
@@ -41,7 +44,12 @@ def _backfill_order_items(client_email: str) -> int:
     """
     from tools.gmail import GmailClient
     from tools.email_parser import try_parse_order
-    from db.stock import save_order_items
+    from db.stock import get_client_flavor_history, save_order_items
+
+    # Guard: if order history already exists, backfill is not needed.
+    if get_client_flavor_history(client_email):
+        logger.debug("Backfill skipped for %s: order history already populated", client_email)
+        return 0
 
     try:
         gmail = GmailClient()
@@ -56,13 +64,22 @@ def _backfill_order_items(client_email: str) -> int:
         # Reply-To header ensures client email is found even if body
         # doesn't have the "Email:" field.
         fake_email = (
-            f"From: {msg.get('from', 'order@shipmecarton.com')}\n"
+            f"From: {msg.get('from', 'noreply@shipmecarton.com')}\n"
             f"Reply-To: {client_email}\n"
             f"Subject: {msg.get('subject', '')}\n"
             f"Body:\n{msg.get('body', '')}"
         )
         parsed = try_parse_order(fake_email)
         if parsed and parsed.order_items:
+            # Safety check: ensure parsed client email matches expected.
+            # Should always pass (Reply-To is set above), but guards
+            # against edge cases where body contains a different email.
+            if parsed.client_email and parsed.client_email.lower() != client_email.lower():
+                logger.warning(
+                    "Backfill email mismatch: expected %s, got %s — skipping message",
+                    client_email, parsed.client_email,
+                )
+                continue
             saved = save_order_items(
                 client_email=client_email,
                 order_id=parsed.order_id,
