@@ -294,6 +294,7 @@ def try_parse_order(email_text: str) -> EmailClassification | None:
         is_followup=False,
         followup_to=None,
         dialog_intent=None,
+        parser_used=True,
     )
 
 

@@ -15,3 +15,9 @@ def test_memory_has_reexported_client_profile_functions():
     assert callable(memory.get_client_profile)
     assert callable(memory.update_client_notes)
     assert callable(memory.update_client_summary)
+
+
+def test_memory_exports_include_calculate_order_price():
+    """calculate_order_price should be exported via memory layer."""
+    assert "calculate_order_price" in memory.__all__
+    assert callable(memory.calculate_order_price)

@@ -498,6 +498,30 @@ Summary: {state.get('summary', '')}
                 f"\nДобавь клиента в базу через Admin Agent."
             )
 
+        # Telegram: price alerts (mismatch / unmatched)
+        price_alert = result.get("price_alert")
+        if price_alert:
+            alert_type = price_alert["type"]
+            if alert_type == "unmatched":
+                send_telegram(
+                    f"\u26a0\ufe0f <b>Цена не рассчитана!</b>\n\n"
+                    f"<b>Клиент:</b> {classification.client_email}\n"
+                    f"<b>Заказ:</b> #{classification.order_id or 'N/A'}\n"
+                    f"<b>Товары:</b> {', '.join(price_alert['items'])}\n"
+                    f"<b>Thread:</b> {gmail_thread_id or 'N/A'}\n\n"
+                    f"Товары не сопоставились с каталогом. Шаблон не отправлен, используется LLM."
+                )
+            elif alert_type == "mismatch":
+                send_telegram(
+                    f"\u26a0\ufe0f <b>Расхождение цен!</b>\n\n"
+                    f"<b>Клиент:</b> {classification.client_email}\n"
+                    f"<b>Заказ:</b> #{classification.order_id or 'N/A'}\n"
+                    f"<b>Цена сайта:</b> {price_alert['site_price']}\n"
+                    f"<b>Цена каталога:</b> {price_alert['calculated_price']}\n"
+                    f"<b>Thread:</b> {gmail_thread_id or 'N/A'}\n\n"
+                    f"Используется цена сайта."
+                )
+
         tg_msg = None  # Will be set for OOS, sent after AI generates draft
 
         # Telegram: notify if stock issue detected (enhanced with alternatives + draft)

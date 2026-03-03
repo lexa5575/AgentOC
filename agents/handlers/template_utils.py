@@ -30,7 +30,20 @@ def fill_template_reply(
     if not template:
         return result, False
 
-    price = classification.price or ""
+    if classification.parser_used:
+        price = classification.price or ""
+    else:
+        calc = result.get("calculated_price")
+        price = f"${calc:.2f}" if calc is not None else ""
+
+    # Guard: template requires price but none available → skip template
+    if "{PRICE}" in template and not price:
+        logger.warning(
+            "Template requires {PRICE} but no price available for %s — skipping",
+            classification.client_email,
+        )
+        return result, False
+
     discount = client.get("discount_percent", 0)
     discount_left = client.get("discount_orders_left", 0)
     zelle_address = client.get("zelle_address", "")

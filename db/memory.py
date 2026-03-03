@@ -31,6 +31,7 @@ from db.email_history import (
     set_gmail_state,
 )
 from db.stock import (
+    calculate_order_price,
     check_stock_for_order,
     get_available_by_category,
     get_client_flavor_history,
@@ -64,6 +65,7 @@ __all__ = [
     "save_email",
     "set_gmail_state",
     # stock
+    "calculate_order_price",
     "check_stock_for_order",
     "get_available_by_category",
     "get_client_flavor_history",

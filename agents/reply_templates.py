@@ -12,6 +12,7 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 from db.memory import (
+    calculate_order_price,
     check_stock_for_order,
     get_client,
     get_stock_summary,
@@ -56,6 +57,7 @@ class EmailClassification(BaseModel):
     is_followup: bool = Field(default=False, description="Whether this is a response to our previous message")
     followup_to: Optional[str] = Field(default=None, description="What type of message they're responding to (e.g. 'oos_email', 'payment_info')")
     dialog_intent: Optional[str] = Field(default=None, description="Customer intent (e.g. 'agrees_to_alternative', 'declines_alternative')")
+    parser_used: bool = Field(default=False, description="True if parsed by regex (website order), False if by LLM")
 
 
 # ---------------------------------------------------------------------------
@@ -421,6 +423,36 @@ def process_classified_email(classification: EmailClassification) -> dict:
                     {k: v.get("reason", "none_available") for k, v in best_alternatives.items()},
                 )
                 return result
+
+            # --- Price calculation (all items in stock) ---
+            calculated_price = calculate_order_price(stock_result["items"])
+            result["calculated_price"] = calculated_price
+
+            if (
+                classification.parser_used
+                and classification.price
+                and calculated_price is not None
+            ):
+                site_clean = classification.price.replace("$", "").replace(",", "")
+                try:
+                    site_num = float(site_clean)
+                    if abs(site_num - calculated_price) > 0.01:
+                        result["price_alert"] = {
+                            "type": "mismatch",
+                            "site_price": classification.price,
+                            "calculated_price": f"${calculated_price:.2f}",
+                        }
+                except (ValueError, TypeError):
+                    pass
+
+            if not classification.parser_used and calculated_price is None:
+                result["price_alert"] = {
+                    "type": "unmatched",
+                    "items": [
+                        item["base_flavor"]
+                        for item in stock_result["items"]
+                    ],
+                }
 
     # All reply generation is delegated to specialized handlers via router.
     result["needs_routing"] = True

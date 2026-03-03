@@ -1,6 +1,8 @@
 """Tests for db.stock module."""
 
 from db.stock import (
+    CATEGORY_PRICES,
+    calculate_order_price,
     check_stock_for_order,
     get_available_by_category,
     get_client_flavor_history,
@@ -29,6 +31,13 @@ def test_product_type_device():
     assert get_product_type("PRIME Black") == "device"
 
 
+def test_product_type_device_no_color():
+    """ONE/STND/PRIME without color = device."""
+    assert get_product_type("ONE") == "device"
+    assert get_product_type("STND") == "device"
+    assert get_product_type("PRIME") == "device"
+
+
 def test_product_type_case_insensitive():
     assert get_product_type("one green") == "device"
     assert get_product_type("  ONE Green  ") == "device"
@@ -46,6 +55,7 @@ def _seed_stock():
         {"category": "TEREA_EUROPE", "product_name": "Silver", "quantity": 0},
         {"category": "ARMENIA", "product_name": "Turquoise", "quantity": 3},
         {"category": "KZ_TEREA", "product_name": "Green", "quantity": 8},
+        {"category": "TEREA_JAPAN", "product_name": "T Mint", "quantity": 5},
         {"category": "ONE", "product_name": "ONE Green", "quantity": 2},
     ]
     return sync_stock("main", items)
@@ -53,7 +63,7 @@ def _seed_stock():
 
 def test_sync_stock():
     count = _seed_stock()
-    assert count == 6
+    assert count == 7
 
 
 def test_sync_stock_upsert():
@@ -139,8 +149,8 @@ def test_get_available_by_category_empty():
 def test_get_stock_summary():
     _seed_stock()
     summary = get_stock_summary()
-    assert summary["total"] == 6
-    assert summary["available"] == 5  # Silver has qty=0
+    assert summary["total"] == 7
+    assert summary["available"] == 6  # Silver has qty=0
     assert summary["synced_at"] is not None
 
 
@@ -153,7 +163,7 @@ def test_get_stock_summary_empty():
 def test_get_stock_summary_warehouse():
     _seed_stock()
     summary = get_stock_summary(warehouse="main")
-    assert summary["total"] == 6
+    assert summary["total"] == 7
 
 
 # ---------------------------------------------------------------------------
@@ -296,3 +306,77 @@ def test_alternatives_max_options():
     _seed_stock()
     result = select_best_alternatives("x@example.com", "Purple", max_options=1)
     assert len(result["alternatives"]) <= 1
+
+
+# ---------------------------------------------------------------------------
+# calculate_order_price
+# ---------------------------------------------------------------------------
+
+def test_calculate_price_sticks():
+    """Standard sticks: $110 each."""
+    _seed_stock()
+    stock = check_stock_for_order([
+        {"base_flavor": "Green", "quantity": 2, "product_name": "Tera Green"},
+    ])
+    price = calculate_order_price(stock["items"])
+    assert price == 220.0
+
+
+def test_calculate_price_device():
+    """ONE device: $99."""
+    _seed_stock()
+    stock = check_stock_for_order([
+        {"base_flavor": "ONE Green", "quantity": 1, "product_name": "ONE Green"},
+    ])
+    price = calculate_order_price(stock["items"])
+    assert price == 99.0
+
+
+def test_calculate_price_mixed():
+    """Sticks + device in one order."""
+    _seed_stock()
+    stock = check_stock_for_order([
+        {"base_flavor": "Green", "quantity": 2, "product_name": "Tera Green"},
+        {"base_flavor": "ONE Green", "quantity": 1, "product_name": "ONE Green"},
+    ])
+    price = calculate_order_price(stock["items"])
+    assert price == 319.0  # $110x2 + $99x1
+
+
+def test_calculate_price_japan():
+    """Japan sticks: $115 each."""
+    _seed_stock()
+    stock = check_stock_for_order([
+        {"base_flavor": "T Mint", "quantity": 3, "product_name": "T Mint"},
+    ])
+    price = calculate_order_price(stock["items"])
+    assert price == 345.0  # $115 x 3
+
+
+def test_calculate_price_unmatched_returns_none():
+    """Unmatched item → strict None."""
+    _seed_stock()
+    stock = check_stock_for_order([
+        {"base_flavor": "NonExistent", "quantity": 1, "product_name": "???"},
+    ])
+    price = calculate_order_price(stock["items"])
+    assert price is None
+
+
+def test_calculate_price_empty():
+    """Empty or None input → None."""
+    assert calculate_order_price([]) is None
+    assert calculate_order_price(None) is None
+
+
+def test_calculate_price_ambiguous_categories():
+    """Entries from different price groups → None (safety)."""
+    items = [{
+        "base_flavor": "Weird",
+        "ordered_qty": 1,
+        "stock_entries": [
+            {"category": "KZ_TEREA", "product_name": "Weird", "quantity": 5},
+            {"category": "TEREA_JAPAN", "product_name": "Weird", "quantity": 3},
+        ],
+    }]
+    assert calculate_order_price(items) is None
