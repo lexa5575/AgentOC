@@ -128,6 +128,7 @@ class TestEmailPipelineSmoke(unittest.TestCase):
     def setUp(self):
         self.saved = []
         self.telegrams = []
+        self.classifier_calls = 0
 
         self.clients = {
             "client1@example.com": {
@@ -270,6 +271,7 @@ class TestEmailPipelineSmoke(unittest.TestCase):
         }
 
     def _classifier_run(self, email_text: str):
+        self.classifier_calls += 1
         text = email_text.lower()
         if "where is my order" in text:
             payload = {
@@ -376,10 +378,16 @@ class TestEmailPipelineSmoke(unittest.TestCase):
         email = (
             "From: noreply@shipmecarton.com\n"
             "Reply-To: client1@example.com\n"
-            "Subject: Shipmecarton - Order 23432\n\n"
+            "Subject: Shipmecarton - Order 23432\n"
+            "Body: \n"
+            "1 Tera Green EU $110.00 2 $220.00\n"
             "Payment amount: $220.00\n"
             "Order ID: 23432\n"
             "Firstname: Test Client One\n"
+            "Street address1: 123 Main St\n"
+            "Town/City: Springfield\n"
+            "State: Illinois\n"
+            "Postcode/Zip: 62701\n"
             "Email: client1@example.com"
         )
         out = self.email_agent.classify_and_process(email)
@@ -389,6 +397,8 @@ class TestEmailPipelineSmoke(unittest.TestCase):
         self.assertEqual(len(self.saved), 2)
         self.assertEqual(self.saved[1]["direction"], "outbound")
         self.assertIn("Thank you so much for placing an order", self.saved[1]["body"])
+        # Parser handled this — LLM classifier must NOT have been called
+        self.assertEqual(self.classifier_calls, 0, "Parser should handle order, not LLM")
 
     def test_tracking_flow(self):
         email = (
@@ -419,7 +429,8 @@ class TestEmailPipelineSmoke(unittest.TestCase):
         email = (
             "From: noreply@shipmecarton.com\n"
             "Reply-To: client1@example.com\n"
-            "Subject: Shipmecarton - Order 77777\n\n"
+            "Subject: Shipmecarton - Order 77777\n"
+            "Body: \n"
             "1 Tera Turquoise EU $95.00 3 $285.00\n"
             "Payment amount: $285.00\n"
             "Order ID: 77777\n"
@@ -499,15 +510,21 @@ class TestEmailPipelineSmoke(unittest.TestCase):
             email = (
                 "From: noreply@shipmecarton.com\n"
                 "Reply-To: client1@example.com\n"
-                "Subject: Shipmecarton - Order 23432\n\n"
+                "Subject: Shipmecarton - Order 23432\n"
+                "Body: \n"
+                "1 Tera Green EU $110.00 2 $220.00\n"
                 "Payment amount: $220.00\n"
                 "Order ID: 23432\n"
                 "Firstname: Test Client One\n"
+                "Street address1: 123 Main St\n"
+                "Town/City: Springfield\n"
+                "State: Illinois\n"
+                "Postcode/Zip: 62701\n"
                 "Email: client1@example.com"
             )
             self.email_agent.classify_and_process(email)
 
-        # Classifier returns street="123 Main St", city_state_zip="Springfield, Illinois 62701"
+        # Parser extracts street="123 Main St", city_state_zip="Springfield, Illinois 62701"
         self.assertEqual(len(update_calls), 1)
         self.assertEqual(update_calls[0]["email"], "client1@example.com")
         self.assertEqual(update_calls[0]["fields"]["street"], "123 Main St")
@@ -529,6 +546,26 @@ class TestEmailPipelineSmoke(unittest.TestCase):
         self.assertIn("pay@example.com", out)  # zelle_address filled
         self.assertEqual(len(self.saved), 2)
         self.assertEqual(self.saved[1]["direction"], "outbound")
+
+
+    def test_reply_with_quoted_order_uses_llm(self):
+        """Customer reply quoting an order notification → parser skips, LLM classifies."""
+        email = (
+            "From: client1@example.com\n"
+            "Subject: Re: Shipmecarton - Order 23432\n"
+            "Body: Yes, please ship it!\n"
+            "\n"
+            "On Mon, Mar 3, 2026 at 10:00 AM Shipmecarton wrote:\n"
+            "> Order ID: 23432\n"
+            "> Payment amount: $220.00\n"
+            "> Email: client1@example.com\n"
+            "> 1 Tera Green EU $110.00 2 $220.00"
+        )
+        out = self.email_agent.classify_and_process(email)
+
+        # Parser should NOT have handled this (no Shipmecarton in From header)
+        # LLM classifier MUST have been called
+        self.assertGreater(self.classifier_calls, 0, "LLM should classify quoted-order reply")
 
 
 if __name__ == "__main__":

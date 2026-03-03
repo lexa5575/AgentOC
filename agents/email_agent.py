@@ -28,6 +28,7 @@ from agents.reply_templates import (
     format_thread_for_classifier,
     process_classified_email,
 )
+from tools.email_parser import try_parse_order, clean_email_body
 from agents.checker import CheckResult, check_reply, format_check_result_for_telegram
 from agents.context import load_policy
 from agents.router import route_to_handler
@@ -327,53 +328,66 @@ Summary: {state.get('summary', '')}
             except Exception as e:
                 logger.warning("Failed to get cross-thread context: %s", e)
 
-        # Step 1: LLM classifies (returns JSON text)
-        logger.info("Classifying email...")
-        classifier_input = conversation_context + "--- NEW EMAIL ---\n" + email_text if conversation_context else email_text
-        response = classifier_agent.run(classifier_input)
-        raw = response.content
+        # Step 0.9: Try deterministic parsing for website orders (0 tokens)
+        parsed_classification = try_parse_order(email_text)
+        if parsed_classification:
+            logger.info(
+                "Order parsed by regex (0 tokens): email=%s, order=%s",
+                parsed_classification.client_email,
+                parsed_classification.order_id,
+            )
+            classification = parsed_classification
+        else:
+            # Clean email body for LLM classifier (remove quoted blocks, signatures)
+            cleaned_email = clean_email_body(email_text)
 
-        # Parse JSON from LLM response (strip markdown code fences if present)
-        json_str = re.sub(r"^```json\s*|\s*```$", "", raw.strip())
-        data = json.loads(json_str)
+            # Step 1: LLM classifies (returns JSON text)
+            logger.info("Classifying email...")
+            classifier_input = conversation_context + "--- NEW EMAIL ---\n" + cleaned_email if conversation_context else cleaned_email
+            response = classifier_agent.run(classifier_input)
+            raw = response.content
 
-        # Robust field extraction: try expected names + common LLM variations + nested
-        # Parse order_items (structured list) before building classification
-        raw_order_items = _find_value(data, "order_items", "structured_items")
-        order_items_parsed = None
-        if raw_order_items and isinstance(raw_order_items, list):
-            try:
-                order_items_parsed = [
-                    OrderItem(
-                        product_name=item.get("product_name", ""),
-                        base_flavor=item.get("base_flavor", ""),
-                        quantity=item.get("quantity", 1),
-                    )
-                    for item in raw_order_items
-                    if item.get("base_flavor")
-                ]
-                if not order_items_parsed:
+            # Parse JSON from LLM response (strip markdown code fences if present)
+            json_str = re.sub(r"^```json\s*|\s*```$", "", raw.strip())
+            data = json.loads(json_str)
+
+            # Robust field extraction: try expected names + common LLM variations + nested
+            # Parse order_items (structured list) before building classification
+            raw_order_items = _find_value(data, "order_items", "structured_items")
+            order_items_parsed = None
+            if raw_order_items and isinstance(raw_order_items, list):
+                try:
+                    order_items_parsed = [
+                        OrderItem(
+                            product_name=item.get("product_name", ""),
+                            base_flavor=item.get("base_flavor", ""),
+                            quantity=item.get("quantity", 1),
+                        )
+                        for item in raw_order_items
+                        if item.get("base_flavor")
+                    ]
+                    if not order_items_parsed:
+                        order_items_parsed = None
+                except Exception as e:
+                    logger.warning("Failed to parse order_items: %s", e)
                     order_items_parsed = None
-            except Exception as e:
-                logger.warning("Failed to parse order_items: %s", e)
-                order_items_parsed = None
 
-        classification = EmailClassification(
-            needs_reply=_find_value(data, "needs_reply") if _find_value(data, "needs_reply") is not None else True,
-            situation=_find_value(data, "situation", "classification", "category") or "other",
-            client_email=_find_value(data, "client_email", "real_customer_email", "customer_email", "email") or "",
-            client_name=_find_value(data, "client_name", "customer_name", "name", "firstname"),
-            order_id=_find_value(data, "order_id", "order_number"),
-            price=_find_value(data, "price", "payment_amount", "total", "amount"),
-            customer_street=_find_value(data, "customer_street", "street", "street_address", "address"),
-            customer_city_state_zip=_find_value(data, "customer_city_state_zip", "city_state_zip"),
-            items=_find_value(data, "items", "products"),
-            order_items=order_items_parsed,
-            # Followup detection fields (Phase 5)
-            is_followup=_find_value(data, "is_followup") or False,
-            followup_to=_find_value(data, "followup_to"),
-            dialog_intent=_find_value(data, "dialog_intent"),
-        )
+            classification = EmailClassification(
+                needs_reply=_find_value(data, "needs_reply") if _find_value(data, "needs_reply") is not None else True,
+                situation=_find_value(data, "situation", "classification", "category") or "other",
+                client_email=_find_value(data, "client_email", "real_customer_email", "customer_email", "email") or "",
+                client_name=_find_value(data, "client_name", "customer_name", "name", "firstname"),
+                order_id=_find_value(data, "order_id", "order_number"),
+                price=_find_value(data, "price", "payment_amount", "total", "amount"),
+                customer_street=_find_value(data, "customer_street", "street", "street_address", "address"),
+                customer_city_state_zip=_find_value(data, "customer_city_state_zip", "city_state_zip"),
+                items=_find_value(data, "items", "products"),
+                order_items=order_items_parsed,
+                # Followup detection fields (Phase 5)
+                is_followup=_find_value(data, "is_followup") or False,
+                followup_to=_find_value(data, "followup_to"),
+                dialog_intent=_find_value(data, "dialog_intent"),
+            )
 
         logger.info(
             "Classified: email=%s, situation=%s, needs_reply=%s",
