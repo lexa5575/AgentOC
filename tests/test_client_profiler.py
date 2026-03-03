@@ -187,7 +187,7 @@ def test_backfill_order_items_success(mock_gmail_cls, mock_parse, mock_save):
 
     assert result == 2
     mock_gmail_instance.search_order_notifications.assert_called_once_with(
-        "client@example.com", max_results=50
+        "client@example.com", max_results=30
     )
     mock_parse.assert_called_once()
     # Verify fake_email constructed with Reply-To header

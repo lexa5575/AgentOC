@@ -53,7 +53,7 @@ def _backfill_order_items(client_email: str) -> int:
 
     try:
         gmail = GmailClient()
-        notifications = gmail.search_order_notifications(client_email, max_results=50)
+        notifications = gmail.search_order_notifications(client_email, max_results=30)
     except Exception as e:
         logger.warning("Gmail order search failed for %s: %s", client_email, e)
         return 0
