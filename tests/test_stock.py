@@ -263,16 +263,19 @@ def test_save_order_items_skip_duplicates():
 # select_best_alternatives
 # ---------------------------------------------------------------------------
 
-def test_alternatives_no_history_returns_empty():
-    """No order history → no alternatives (no fallback/same_flavor)."""
+def test_alternatives_fallback_excludes_oos_flavor():
+    """Fallback never includes the same flavor that is out of stock."""
     _seed_stock()
+    # No history for buyer — should get fallback, but NOT Turquoise itself
     result = select_best_alternatives("buyer@example.com", "Turquoise")
-    assert result["alternatives"] == []
-    assert result["reason"] == "none_available"
+    assert len(result["alternatives"]) > 0
+    for alt in result["alternatives"]:
+        assert "turquoise" not in alt["alternative"]["product_name"].lower()
+    assert result["alternatives"][0]["reason"] == "fallback"
 
 
 def test_alternatives_from_history():
-    """Flavors from customer order history that are in stock."""
+    """Priority 1: flavors from customer order history."""
     _seed_stock()
     # Give buyer history with Green
     save_order_items("hist@example.com", "O1", [
@@ -309,13 +312,7 @@ def test_alternatives_none_available():
 
 def test_alternatives_max_options():
     _seed_stock()
-    # Client with multiple history flavors
-    save_order_items("max@example.com", "O1", [
-        {"product_name": "Tera Green", "base_flavor": "Green", "quantity": 1},
-        {"product_name": "Tera Turquoise", "base_flavor": "Turquoise", "quantity": 1},
-        {"product_name": "Tera Silver", "base_flavor": "Silver", "quantity": 1},
-    ])
-    result = select_best_alternatives("max@example.com", "Purple", max_options=1)
+    result = select_best_alternatives("x@example.com", "Purple", max_options=1)
     assert len(result["alternatives"]) <= 1
 
 

@@ -362,21 +362,18 @@ def select_best_alternatives(
 ) -> dict:
     """Select up to N best alternatives for an out-of-stock flavor.
 
-    Only returns genuinely DIFFERENT products — never the same flavor
-    that the client already ordered (those are already counted in
-    check_stock_for_order's total_available).
+    Never suggests the same flavor that was ordered — those entries are
+    already counted in check_stock_for_order's total_available.
 
     Priority:
     1. Flavors from customer's order history that are currently in stock
        (personalized — what they actually like)
-
-    If history gives fewer than max_options, we return fewer.
-    Better 1-2 strong suggestions than 3 with random filler.
+    2. Other available items, excluding the OOS flavor (general fallback)
 
     Returns:
     {
       "alternatives": [
-        {"alternative": {...}, "reason": "history", "order_count": int|None},
+        {"alternative": {...}, "reason": "history|fallback", "order_count": int|None},
         ...
       ],
       "reason": str,
@@ -406,8 +403,8 @@ def select_best_alternatives(
                 "order_count": order_count,
             })
 
-        # History-based alternatives: flavors the client ordered before,
-        # excluding the OOS flavor itself, currently in stock.
+        # Priority 1: history-based alternatives — flavors the client ordered
+        # before, excluding the OOS flavor itself, currently in stock.
         history = get_client_flavor_history(client_email, product_type=product_type)
         for h in history:
             hist_flavor = h["base_flavor"]
@@ -427,6 +424,22 @@ def select_best_alternatives(
                     break
             if len(selected) >= max_options:
                 break
+
+        # Priority 2: fallback — any available item excluding the OOS flavor.
+        # Never includes the same flavor (e.g. "Amber from Armenia" when
+        # client ordered Amber and total_available already accounts for it).
+        if len(selected) < max_options:
+            q_any = session.query(StockItem).filter(
+                StockItem.category.in_(allowed_cats),
+                StockItem.quantity > 0,
+                ~StockItem.product_name.ilike(f"%{flavor}%"),
+            )
+            if warehouse:
+                q_any = q_any.filter_by(warehouse=warehouse)
+            for item in q_any.order_by(StockItem.quantity.desc()).all():
+                _push(item, reason="fallback")
+                if len(selected) >= max_options:
+                    break
 
         if not selected:
             return {
