@@ -14,6 +14,7 @@ Usage:
 import json
 import logging
 import re
+import time
 from os import getenv
 
 from google.auth.transport.requests import Request
@@ -23,6 +24,27 @@ from googleapiclient.discovery import build
 logger = logging.getLogger(__name__)
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+
+# Retry settings for transient network errors (timeouts, connection resets)
+MAX_RETRIES = 2
+RETRY_DELAY = 3  # seconds
+
+_RETRYABLE = (TimeoutError, ConnectionError, OSError)
+
+
+def _retry(func, *args, **kwargs):
+    """Execute func with retry on transient network errors."""
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            return func(*args, **kwargs)
+        except _RETRYABLE as e:
+            if attempt == MAX_RETRIES:
+                raise
+            logger.warning(
+                "Transient error (attempt %d/%d): %s. Retrying in %ds...",
+                attempt, MAX_RETRIES, e, RETRY_DELAY,
+            )
+            time.sleep(RETRY_DELAY)
 
 
 class SheetsClient:
@@ -63,10 +85,11 @@ class SheetsClient:
     def get_sheet_names(self, spreadsheet_id: str) -> list[str]:
         """Get all sheet/tab names in a spreadsheet."""
         service = self._get_service()
-        meta = service.spreadsheets().get(
+        req = service.spreadsheets().get(
             spreadsheetId=spreadsheet_id,
             fields="sheets.properties.title",
-        ).execute()
+        )
+        meta = _retry(req.execute)
 
         names = [s["properties"]["title"] for s in meta.get("sheets", [])]
         logger.info("Spreadsheet %s has tabs: %s", spreadsheet_id, names)
@@ -127,11 +150,12 @@ class SheetsClient:
         Empty trailing cells are omitted by the API, so rows may vary in length.
         """
         service = self._get_service()
-        result = service.spreadsheets().values().get(
+        req = service.spreadsheets().values().get(
             spreadsheetId=spreadsheet_id,
             range=sheet_name,
             valueRenderOption="UNFORMATTED_VALUE",
-        ).execute()
+        )
+        result = _retry(req.execute)
 
         values = result.get("values", [])
         logger.info(
