@@ -512,11 +512,17 @@ def build_structure_hints(
             lines.append(f'Label above sellers: "{sec.warehouse_label}" at ({r},{c})')
 
         if sec.sample_rows:
-            lines.append("Sample rows below marker:")
+            # Show absolute column indices for clarity
+            abs_col_start = max(0, sec.marker_col - 2)
+            lines.append(f"Sample rows below marker (absolute column indices):")
             for idx, sample in zip(sec.sample_row_indices, sec.sample_rows):
-                # Show compact representation
-                compact = [v if v else "" for v in sample]
-                lines.append(f"  Row {idx}: {compact}")
+                # Format as col{N}=value for non-empty cells
+                parts = []
+                for i, v in enumerate(sample):
+                    if v:
+                        abs_col = abs_col_start + i
+                        parts.append(f"col{abs_col}={v!r}")
+                lines.append(f"  Row {idx}: {', '.join(parts) if parts else '(empty)'}")
 
         lines.append("")
 

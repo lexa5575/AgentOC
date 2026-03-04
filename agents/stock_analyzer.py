@@ -77,25 +77,23 @@ For each section, identify these columns (0-based absolute indices):
 
 ## How to determine columns from sample rows
 
-Look at the sample rows. Example:
-  Row 90: ['25', '', 'Amber', '36', '', '3', '', '32', '1']
+Sample rows show non-empty cells with ABSOLUTE column indices like col2='Amber', col3=36.
+These column numbers are the exact values you should use for name_col, maks_col, etc.
 
-- '25' at position 0 = ARRIVED number
-- '' at position 1 = empty
-- 'Amber' at position 2 = product name → name_col
-- '36' at position 3 = total quantity
-- '' at position 4 = empty
-- '3' at position 5 = Farik sales (check seller headers)
-- '' at position 6 = empty
-- '32' at position 7 = Maks sales (check seller headers) → maks_col
-- '1' at position 8 = Nikita or remainder
+Example:
+  Row 90: col0=25, col2='Amber', col3=36, col5=3, col7=32, col8=1
+
+- col0=25 → ARRIVED number
+- col2='Amber' → product name → name_col=2
+- col3=36 → total quantity
+- col5=3 → Farik sales (cross-reference with seller header positions)
+- col7=32 → Maks sales (matches Maks header position) → maks_col=7
+- col8=1 → remainder → remainder_col=8
 
 Cross-reference with seller header positions to confirm which column is Maks.
 The remainder is typically the last number in the row, after all seller columns.
 
-IMPORTANT: The sample row indices shown (like "Row 90") are just for context.
-The column positions in the sample arrays start from col_start-2 (shown in hints).
-You must map sample array positions back to absolute column indices.
+IMPORTANT: All column indices in the hints are absolute (0-based). Use them directly.
 
 ## Response format
 
