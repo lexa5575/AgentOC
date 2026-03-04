@@ -33,7 +33,7 @@ class SectionConfig(BaseModel):
     """Configuration for one section in the spreadsheet."""
 
     name: str                           # "KZ_TEREA", "ARMENIA", etc.
-    marker_text: str                    # Exact text found in sheet
+    marker_text: str = ""               # Exact text found in sheet
     type: Literal["marker", "prefix"]   # marker-based or prefix-based
     prefix: str | None = None           # For prefix type: "ONE", "STND", "PRIME"
     col_start: int                      # Zone start column (0-based, inclusive)
