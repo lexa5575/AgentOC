@@ -3,22 +3,7 @@ Reply Templates & OOS Template Helpers
 ---------------------------------------
 
 Static reply templates and OOS email builder for the Email Agent.
-
-Phase 1: models and formatters moved to agents.models / agents.formatters.
-Phase 3: process_classified_email moved to agents.pipeline.
-Backward-compat re-exports kept until Phase 5 cleanup.
 """
-
-import logging
-
-# Phase 1 compatibility re-exports (removed in Phase 5)
-from agents.models import EmailClassification, OrderItem  # noqa: F401
-from agents.formatters import (  # noqa: F401
-    format_email_history,
-    format_result,
-    format_thread_for_classifier,
-)
-logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------

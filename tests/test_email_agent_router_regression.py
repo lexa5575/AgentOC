@@ -130,6 +130,7 @@ class TestEmailAgentRouterRegression(unittest.TestCase):
         cls.email_agent = importlib.import_module("agents.email_agent")
         cls.agents_pipeline = importlib.import_module("agents.pipeline")
         cls.agents_notifier = importlib.import_module("agents.notifier")
+        cls.agents_classifier = importlib.import_module("agents.classifier")
 
     def _classifier_payload(self, *, situation: str, needs_reply: bool = True) -> dict:
         return {
@@ -163,7 +164,7 @@ class TestEmailAgentRouterRegression(unittest.TestCase):
 
     def _run(self, payload: dict) -> str:
         with patch.object(
-            self.email_agent.classifier_agent,
+            self.agents_classifier.classifier_agent,
             "run",
             return_value=types.SimpleNamespace(content=json.dumps(payload)),
         ):

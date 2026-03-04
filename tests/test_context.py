@@ -169,7 +169,7 @@ def test_format_context_no_history():
 # ---------------------------------------------------------------------------
 def test_build_context_known_client():
     """build_context assembles all data correctly for known client."""
-    from agents.reply_templates import EmailClassification
+    from agents.models import EmailClassification
 
     classification = EmailClassification(
         needs_reply=True,
@@ -208,7 +208,7 @@ def test_build_context_known_client():
 
 def test_build_context_unknown_client():
     """build_context handles unknown client gracefully."""
-    from agents.reply_templates import EmailClassification
+    from agents.models import EmailClassification
 
     classification = EmailClassification(
         needs_reply=True,
@@ -294,7 +294,7 @@ def test_format_context_no_notes_no_summary():
 
 def test_build_context_with_thread_id():
     """When gmail_thread_id is in result, build_context uses thread history."""
-    from agents.reply_templates import EmailClassification
+    from agents.models import EmailClassification
 
     classification = EmailClassification(
         needs_reply=True,
@@ -324,7 +324,7 @@ def test_build_context_with_thread_id():
 
 def test_build_context_without_thread_id():
     """Without gmail_thread_id, build_context falls back to client email history."""
-    from agents.reply_templates import EmailClassification
+    from agents.models import EmailClassification
 
     classification = EmailClassification(
         needs_reply=True,
@@ -352,7 +352,7 @@ def test_build_context_without_thread_id():
 
 def test_build_context_with_profile(db_session):
     """build_context uses get_client_profile for enriched data."""
-    from agents.reply_templates import EmailClassification
+    from agents.models import EmailClassification
     from db.clients import add_client, update_client_notes, update_client_summary
 
     # Seed client

@@ -129,9 +129,9 @@ class TestEmailPipelineSmoke(unittest.TestCase):
     def setUpClass(cls):
         _install_import_stubs()
         cls.email_agent = importlib.import_module("agents.email_agent")
-        cls.reply_templates = importlib.import_module("agents.reply_templates")
         cls.agents_pipeline = importlib.import_module("agents.pipeline")
         cls.agents_notifier = importlib.import_module("agents.notifier")
+        cls.agents_classifier = importlib.import_module("agents.classifier")
         cls.checker = importlib.import_module("agents.checker")
         cls.h_general = importlib.import_module("agents.handlers.general")
         cls.h_tracking = importlib.import_module("agents.handlers.tracking")
@@ -168,7 +168,7 @@ class TestEmailPipelineSmoke(unittest.TestCase):
         fake_check = self.checker.CheckResult()  # is_ok=True by default
 
         self.patchers = [
-            patch.object(self.email_agent.classifier_agent, "run", side_effect=self._classifier_run),
+            patch.object(self.agents_classifier.classifier_agent, "run", side_effect=self._classifier_run),
             patch.object(self.agents_pipeline, "get_client", side_effect=self._get_client),
             patch.object(self.agents_pipeline, "get_stock_summary", side_effect=self._get_stock_summary),
             patch.object(self.agents_pipeline, "resolve_order_items", side_effect=lambda items, **kw: (items, [])),
@@ -500,7 +500,7 @@ class TestEmailPipelineSmoke(unittest.TestCase):
             }
             return types.SimpleNamespace(content=json.dumps(payload))
 
-        with patch.object(self.email_agent.classifier_agent, "run", side_effect=_classify_paid):
+        with patch.object(self.agents_classifier.classifier_agent, "run", side_effect=_classify_paid):
             email = (
                 "From: client1@example.com\n"
                 "Subject: Re: Order\n"
