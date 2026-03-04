@@ -26,13 +26,15 @@ logger = logging.getLogger(__name__)
 # Brand prefixes to strip before matching (mirrors email_parser logic)
 _BRAND_PREFIXES = ("Tera ", "Terea ", "Heets ")
 
-# Region suffixes to strip (case-insensitive)
+# Region and product-line suffixes to strip (case-insensitive)
 _REGION_SUFFIXES = (
     " made in middle east",
     " made in armenia",
     " eu",
     " japan",
     " kz",
+    " unique flavor",  # УНИКАЛЬНАЯ_ТЕРЕА line: "Black Purple Menthol Unique Flavor" → "Black Purple Menthol"
+    " unique",         # shorter variant
 )
 
 # Device model names — valid as standalone (no color required)
