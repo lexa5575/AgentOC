@@ -226,46 +226,60 @@ def delete_client(email: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def check_stock(query: str) -> str:
+def check_stock(query: str, warehouse: str = "") -> str:
     """Search for a product in stock by name (partial match).
 
     Args:
         query: Product name or part of it (e.g., "Amber", "ONE Red", "T Mint").
+        warehouse: Filter by warehouse (e.g., "LA_MAKS", "CHICAGO_MAX", "MIAMI_MAKS").
+                   Leave empty to search all warehouses.
 
     Returns:
         Matching products with quantities.
     """
-    items = db_search_stock(query)
+    wh = warehouse.strip() or None
+    items = db_search_stock(query, warehouse=wh)
     if not items:
-        return f"No products found matching '{query}'."
+        scope = f" in {warehouse}" if wh else ""
+        return f"No products found matching '{query}'{scope}."
 
-    lines = [f"Found {len(items)} product(s) matching '{query}':", ""]
+    scope = f" in {warehouse}" if wh else " (all warehouses)"
+    lines = [f"Found {len(items)} product(s) matching '{query}'{scope}:", ""]
     for item in items:
         status = "IN STOCK" if item["quantity"] > 0 else "OUT OF STOCK"
+        wh_label = item.get("warehouse", "?")
         lines.append(
-            f"- {item['category']} | {item['product_name']} | "
-            f"qty: {item['quantity']} | {status}"
+            f"- [{wh_label}] {item['category']} | {item['product_name']} | "
+            f"qty: {item['quantity']} | maks_sold: {item.get('maks_sales', 0)} | {status}"
         )
     return "\n".join(lines)
 
 
-def stock_by_category(category: str) -> str:
+def stock_by_category(category: str, warehouse: str = "") -> str:
     """Get all available (in stock) products in a category.
 
     Args:
         category: Category name (e.g., "KZ_TEREA", "TEREA_JAPAN", "ONE",
                   "STND", "PRIME", "ARMENIA", "TEREA_EUROPE", "УНИКАЛЬНАЯ_ТЕРЕА").
+        warehouse: Filter by warehouse (e.g., "LA_MAKS", "CHICAGO_MAX", "MIAMI_MAKS").
+                   Leave empty to show all warehouses.
 
     Returns:
         Available products in the category.
     """
-    items = db_get_available_by_category(category)
+    wh = warehouse.strip() or None
+    items = db_get_available_by_category(category, warehouse=wh)
     if not items:
-        return f"No available products in category '{category}'."
+        scope = f" in {warehouse}" if wh else ""
+        return f"No available products in category '{category}'{scope}."
 
-    lines = [f"Available in '{category}': {len(items)} product(s)", ""]
+    scope = f" in {warehouse}" if wh else " (all warehouses)"
+    lines = [f"Available in '{category}'{scope}: {len(items)} product(s)", ""]
     for item in items:
-        lines.append(f"- {item['product_name']} | qty: {item['quantity']}")
+        wh_label = item.get("warehouse", "?")
+        lines.append(
+            f"- [{wh_label}] {item['product_name']} | qty: {item['quantity']} | maks_sold: {item.get('maks_sales', 0)}"
+        )
     return "\n".join(lines)
 
 
@@ -368,20 +382,36 @@ def refresh_client_summary(email: str) -> str:
     return f"Could not generate summary for {email} (no email history or error)."
 
 
-def stock_summary() -> str:
+def stock_summary(warehouse: str = "") -> str:
     """Get overall stock summary: total items, available, last sync time.
+
+    Args:
+        warehouse: Filter by warehouse (e.g., "LA_MAKS", "CHICAGO_MAX", "MIAMI_MAKS").
+                   Leave empty for summary of all warehouses.
 
     Returns:
         Stock statistics.
     """
-    summary = db_get_stock_summary()
-    return (
-        f"Stock summary:\n"
-        f"- Total products: {summary['total']}\n"
-        f"- In stock (qty > 0): {summary['available']}\n"
-        f"- Fallback calculations: {summary['fallback']}\n"
-        f"- Last synced: {summary['synced_at'] or 'never'}"
-    )
+    wh = warehouse.strip() or None
+    if wh:
+        summary = db_get_stock_summary(warehouse=wh)
+        return (
+            f"Stock summary for {wh}:\n"
+            f"- Total products: {summary['total']}\n"
+            f"- In stock (qty > 0): {summary['available']}\n"
+            f"- Fallback calculations: {summary['fallback']}\n"
+            f"- Last synced: {summary['synced_at'] or 'never'}"
+        )
+
+    # Show per-warehouse breakdown
+    lines = ["Stock summary (all warehouses):", ""]
+    for w in ("LA_MAKS", "CHICAGO_MAX", "MIAMI_MAKS"):
+        s = db_get_stock_summary(warehouse=w)
+        lines.append(f"{w}: {s['total']} products, {s['available']} in stock")
+    total = db_get_stock_summary()
+    lines.append(f"\nTotal: {total['total']} products, {total['available']} in stock")
+    lines.append(f"Last synced: {total['synced_at'] or 'never'}")
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -435,17 +465,26 @@ Client intelligence:
 - set_operator_label: tag a client (e.g. "VIP", "проблемный клиент")
 
 Stock:
-- check_stock: search by product name (e.g. "Amber", "ONE Red")
-- stock_by_category: available products in a category
-- stock_summary: overall statistics
+- check_stock: search by product name (e.g. "Amber", "ONE Red"). Optional warehouse filter.
+- stock_by_category: available products in a category. Optional warehouse filter.
+- stock_summary: overall statistics or per-warehouse breakdown.
 
-Stock categories: KZ_TEREA, TEREA_JAPAN, TEREA_EUROPE, ONE, STND, PRIME, УНИКАЛЬНАЯ_ТЕРЕА, ARMENIA
+All stock tools accept optional warehouse parameter: "LA_MAKS", "CHICAGO_MAX", "MIAMI_MAKS".
+Leave empty to query all warehouses at once.
+
+Stock categories: KZ_TEREA, TEREA_JAPAN, TEREA_EUROPE, ONE, STND, PRIME, УНИКАЛЬНАЯ_ТЕРЕА, ARMENIA, INDONESIA, KZ_HEETS
+
+Warehouses:
+- LA_MAKS — Los Angeles (Maks)
+- CHICAGO_MAX — Chicago (Max)
+- MIAMI_MAKS — Miami (Maks)
 
 === RULES ===
 
 - payment_type: "prepay" (предоплата) or "postpay" (постоплата)
 - Always confirm the completed action to the user
-- Stock answers: always show quantity and status (in stock / out of stock)
+- Stock answers: always show warehouse, quantity, and status (in stock / out of stock)
+- When user asks about stock without specifying warehouse, show all warehouses
 - Address, zelle, name, payment type = structured fields → use add_client or update_client
 - set_operator_label is ONLY for short human labels, never for addresses or client data
 """
