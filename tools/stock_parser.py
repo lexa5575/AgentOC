@@ -166,6 +166,7 @@ def _parse_marker_section(
     records = []
     warnings = []
     category = cfg.name
+    found_product = False  # Track if we've seen any product row yet
 
     for row_idx in range(marker_row + 1, len(matrix)):
         row = matrix[row_idx] if row_idx < len(matrix) else []
@@ -175,9 +176,14 @@ def _parse_marker_section(
         for i in range(cfg.col_start, min(cfg.col_end, len(row))):
             subrow.append(row[i] if i < len(row) else "")
 
-        # Empty row = end of section
+        # Empty row handling
         if not any(str(c).strip() for c in subrow):
-            break
+            if found_product:
+                break  # End of section (empty row after products)
+            # Allow up to 3 empty/header rows between marker and first product
+            if row_idx - marker_row > 3:
+                break
+            continue
 
         # Skip header rows
         if _is_header_row(subrow):
@@ -190,6 +196,7 @@ def _parse_marker_section(
             continue
 
         product_name = _normalize_name(name_str)
+        found_product = True
 
         # Get quantity
         quantity = 0
