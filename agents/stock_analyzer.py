@@ -30,91 +30,96 @@ logger = logging.getLogger(__name__)
 _INSTRUCTIONS = """\
 You are a spreadsheet structure analyzer for a tobacco inventory tracking system.
 
-You receive "Structure Hints" — a compact description of detected sections
-in a Google Sheets inventory table. Each section has:
-- A marker (text label like "KZ TEREA KZ", "ARMENIA", "INDONESIA")
-- Nearby seller header positions (Farik, Maks, Никита)
-- Sample product rows below the marker
+You receive "Structure Hints" — detected sections from a Google Sheets inventory table.
+Your job: determine the exact column layout for each section.
 
-Your job: determine the column layout for each section.
+## What you receive
 
-## Column types
+Each section in the hints has:
+- A marker (text label like "KZ TEREA KZ", "ARMENIA")
+- Seller header positions: Farik(row,col), Maks(row,col), Nikita(row,col)
+- Sample product rows with absolute column indices: col2='Amber', col3=36, etc.
 
-For each section, identify these columns (0-based absolute indices):
+## Standard column layout
 
-1. **name_col** — column containing product names (text like "Amber", "Silver", "T Mint")
-   - This is the column with text (not numbers) in sample rows.
-   - For prefix sections (ONE/STND/PRIME), names include the prefix: "ONE Red", "STND Black".
+Each section follows this pattern (column order may vary between warehouses):
 
-2. **remainder_col** — column containing remaining stock quantity
-   - Usually the LAST column with numbers in each product row.
-   - Represents: ARRIVED - Farik - Maks - Nikita = remainder.
-   - If you can clearly identify it, set it. Otherwise set to null.
+  ARRIVED | [gap?] | PRODUCT_NAME | TOTAL | [gap?] | FARIK_SALES | MAKS_SALES | NIKITA_SALES | REMAINDER
 
-3. **maks_col** — column containing Maks sales data
-   - This is the column directly under the "Maks" or "Макс" seller header.
-   - Use the seller_headers positions from hints.
-   - If no Maks header found, set to null.
+The formula is: ARRIVED - FARIK - MAKS - NIKITA = REMAINDER
+(TOTAL may or may not equal ARRIVED; ignore TOTAL for column identification.)
 
-4. **col_start** / **col_end** — zone boundaries
-   - col_start = leftmost column used by this section (marker col or 2 cols before first data).
+## How to identify columns — STRICT RULES
+
+1. **name_col** — the column with TEXT (not numbers) in sample rows.
+   - Look for values like 'Amber', 'Silver', 'T Mint', 'ONE Red'.
+   - This is the ONLY column with text strings in product rows.
+
+2. **maks_col** — MUST be the EXACT same column index as the "Maks" or "Макс" seller header.
+   - If hints say Maks(86, 5) → maks_col=5. No exceptions.
+   - If no Maks header found → set to null.
+
+3. **remainder_col** — the column with the remaining stock after all seller sales.
+   - CRITICAL: remainder_col MUST NOT equal any seller header column (Farik, Maks, or Nikita).
+   - The remainder is the number left AFTER subtracting all seller sales from arrived quantity.
+
+4. **col_start** / **col_end** — zone boundaries.
+   - col_start = leftmost column used by this section.
    - col_end = rightmost column used + 1 (exclusive).
+
+## Verification step (MANDATORY)
+
+For EACH section, verify your column assignments using the arithmetic formula on sample rows:
+
+  ARRIVED - value_at_farik_col - value_at_maks_col - value_at_nikita_col ≈ value_at_remainder_col
+
+If the math doesn't add up, your column assignments are WRONG. Re-examine and fix them.
+
+Example verification:
+  Seller headers: Farik(86,3), Maks(86,5), Nikita(86,7)
+  Sample: col0=25, col2='Amber', col3=36, col5=3, col7=32, col8=1
+
+  → name_col=2 (text), maks_col=5 (Maks header), farik is col3, nikita is col7
+  → Remaining candidate: col8 (not a seller column)
+  → Verify: col0(ARRIVED)=25, col3(Farik)=36... wait, 36 > 25?
+  → col3=36 is probably TOTAL, not Farik. Farik must be at col3? No — Farik header is at col3.
+  → Re-check: ARRIVED might be col0=25 or col1 (empty). Actually col3=36 could be TOTAL.
+  → The formula: 25 - (some Farik value) - 3 - 32 wouldn't work either.
+  → Better: maybe ARRIVED is not shown, or TOTAL=36 and the formula uses TOTAL.
+  → Key point: seller columns MUST match their header positions exactly.
+
+When in doubt: trust the seller header positions over arithmetic guessing.
+
+## Two common column orders
+
+**Pattern A** (e.g., some warehouses):
+  Name → Total → Farik → Maks → Nikita → Remainder
+
+**Pattern B** (e.g., other warehouses):
+  Name → Total → Farik → Maks → Remainder → Nikita
+
+The seller header positions in the hints tell you which pattern this section uses.
+Do NOT assume all sections in the same warehouse follow the same pattern.
 
 ## Section types
 
-- **"marker"** — section identified by a text marker row (e.g., "KZ TEREA KZ", "ARMENIA").
-  Set prefix to null.
-- **"prefix"** — section identified by product name prefix (e.g., "ONE Red" → section "ONE").
-  Set prefix to the prefix string (e.g., "ONE", "STND", "PRIME").
+- **"marker"** — identified by a text marker row. Set prefix to null.
+- **"prefix"** — identified by product name prefix (e.g., "ONE Red" → prefix "ONE").
+  Set prefix to "ONE", "STND", or "PRIME".
 
 ## Section name rules
 
-- Use UPPERCASE with underscores: "KZ_TEREA", "TEREA_JAPAN", "TEREA_EUROPE", "ARMENIA"
-- For УНИКАЛЬНАЯ ТЕРЕА: use "УНИКАЛЬНАЯ_ТЕРЕА"
-- For INDONESIA: use "INDONESIA"
-- For KZ HEETS: use "KZ_HEETS"
-- For prefix sections: use the prefix itself ("ONE", "STND", "PRIME")
-
-## How to determine columns from sample rows
-
-Sample rows show non-empty cells with ABSOLUTE column indices like col2='Amber', col3=36.
-These column numbers are the exact values you should use for name_col, maks_col, etc.
-
-Example:
-  Row 90: col0=25, col2='Amber', col3=36, col5=3, col7=32, col8=1
-
-- col0=25 → ARRIVED number
-- col2='Amber' → product name → name_col=2
-- col3=36 → total quantity
-- col5=3 → Farik sales (cross-reference with seller header positions)
-- col7=32 → Maks sales (matches Maks header position) → maks_col=7
-- col8=1 → remainder → remainder_col=8
-
-Cross-reference with seller header positions to confirm which column is Maks.
-The remainder is typically the last number in the row, after all seller columns.
-
-IMPORTANT: All column indices in the hints are absolute (0-based). Use them directly.
+- UPPERCASE with underscores: "KZ_TEREA", "TEREA_JAPAN", "TEREA_EUROPE", "ARMENIA"
+- УНИКАЛЬНАЯ ТЕРЕА → "УНИКАЛЬНАЯ_ТЕРЕА"
+- INDONESIA → "INDONESIA"
+- KZ HEETS → "KZ_HEETS"
+- Prefix sections: use the prefix itself ("ONE", "STND", "PRIME")
 
 ## Response format
 
-Return ONLY a JSON object:
-{
-  "sections": [
-    {
-      "name": "KZ_TEREA",
-      "marker_text": "KZ TEREA KZ",
-      "type": "marker",
-      "prefix": null,
-      "col_start": 0,
-      "col_end": 9,
-      "name_col": 2,
-      "remainder_col": 8,
-      "maks_col": 6
-    }
-  ]
-}
+Return ONLY a JSON object (no markdown, no explanation, no code fences):
 
-No markdown, no explanation, no code fences. ONLY the JSON object.
+{"sections": [{"name": "KZ_TEREA", "marker_text": "KZ TEREA KZ", "type": "marker", "prefix": null, "col_start": 0, "col_end": 9, "name_col": 2, "remainder_col": 8, "maks_col": 5}]}
 """
 
 
