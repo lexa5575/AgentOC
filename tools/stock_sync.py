@@ -20,9 +20,10 @@ from dataclasses import dataclass
 from os import getenv
 
 from db.memory import get_stock_summary, sync_stock
-from db.sheet_config import load_sheet_config, save_sheet_config, is_config_stale
+from db.sheet_config import load_sheet_config, save_sheet_config
 from tools.google_sheets import SheetsClient
 from tools.stock_parser import ParseResult, parse_stock_with_config, records_to_dicts
+from tools.structure_analyzer import has_structure_changed
 from utils.telegram import send_telegram
 
 logger = logging.getLogger(__name__)
@@ -209,14 +210,18 @@ def _sync_single_warehouse(wh_cfg: WarehouseConfig) -> dict:
         # Step 3: Load or generate config
         config = load_sheet_config(wh_cfg.name)
 
-        need_analysis = (
-            config is None
-            or is_config_stale(config)
-            or config.sheet_name != sheet_name
-        )
+        reason = None
+        if config is None:
+            reason = "missing"
+        elif config.sheet_name != sheet_name:
+            reason = "sheet changed"
+        else:
+            # Check if table structure shifted (markers, sellers moved)
+            structure_change = has_structure_changed(matrix, config)
+            if structure_change:
+                reason = f"structure changed: {structure_change}"
 
-        if need_analysis:
-            reason = "missing" if config is None else "stale" if is_config_stale(config) else "sheet changed"
+        if reason:
             logger.info("Generating config for %s (reason: %s)", wh_cfg.name, reason)
             config = _run_llm_analysis(wh_cfg, sheet_name, matrix)
             if not config:

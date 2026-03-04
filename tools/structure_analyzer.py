@@ -571,3 +571,103 @@ def build_structure_hints(
     )
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Structure change detection
+# ---------------------------------------------------------------------------
+
+def get_structure_fingerprint(matrix: list[list]) -> dict:
+    """Build a lightweight fingerprint of the table structure.
+
+    Captures marker names, column positions, and seller column positions.
+    Does NOT capture product data or quantities — only layout.
+    """
+    marker_sections = detect_sections(matrix)
+    prefix_sections = detect_prefix_sections(matrix, marker_sections)
+
+    fingerprint: dict[str, dict] = {}
+
+    for sec in marker_sections:
+        seller_cols = sorted(c for _, c in sec.seller_headers.values())
+        fingerprint[sec.marker_text.upper().strip()] = {
+            "col": sec.marker_col,
+            "seller_cols": seller_cols,
+            "is_prefix": False,
+        }
+
+    for sec in prefix_sections:
+        seller_cols = sorted(c for _, c in sec.seller_headers.values())
+        fingerprint[sec.marker_text.upper().strip()] = {
+            "col": sec.marker_col,
+            "seller_cols": seller_cols,
+            "is_prefix": True,
+        }
+
+    return fingerprint
+
+
+def has_structure_changed(
+    matrix: list[list],
+    config: "SheetStructureConfig",
+) -> str | None:
+    """Compare current table structure with stored config.
+
+    Returns a reason string if structure changed, None if unchanged.
+    Only checks structural layout (marker positions, seller columns),
+    NOT product data or quantities.
+    """
+    current = get_structure_fingerprint(matrix)
+
+    # Build comparable dict from config sections
+    config_names = {s.name.upper().strip() for s in config.sections}
+    current_names = set(current.keys())
+
+    # Normalize config names for comparison (config uses _ , detection uses spaces)
+    config_name_map: dict[str, "SectionConfig"] = {}
+    for s in config.sections:
+        # Try both formats: "KZ_TEREA" and "KZ TEREA KZ"
+        config_name_map[s.name.upper().strip()] = s
+        if s.marker_text:
+            config_name_map[s.marker_text.upper().strip()] = s
+
+    # Check: new sections appeared
+    for name in current_names:
+        if name not in config_name_map:
+            return f"new section detected: {name}"
+
+    # Check: sections disappeared
+    matched_config = set()
+    for name in current_names:
+        if name in config_name_map:
+            matched_config.add(config_name_map[name].name)
+
+    for s in config.sections:
+        if s.name not in matched_config:
+            # Check by marker_text too
+            if s.marker_text.upper().strip() not in current_names:
+                return f"section disappeared: {s.name}"
+
+    # Check: column positions shifted
+    for name, info in current.items():
+        cfg_section = config_name_map.get(name)
+        if not cfg_section:
+            continue
+
+        # Marker column moved
+        if abs(info["col"] - cfg_section.col_start) > 2:
+            return f"section {name} moved: col {cfg_section.col_start} → {info['col']}"
+
+        # Seller columns changed
+        if info["seller_cols"]:
+            cfg_seller_cols = []
+            if cfg_section.maks_col is not None:
+                cfg_seller_cols.append(cfg_section.maks_col)
+            if cfg_seller_cols and info["seller_cols"]:
+                # Check if Maks column shifted
+                current_maks_candidates = [c for c in info["seller_cols"] if abs(c - cfg_section.maks_col) <= 1] if cfg_section.maks_col is not None else []
+                if cfg_section.maks_col is not None and not current_maks_candidates:
+                    return f"section {name}: seller columns shifted"
+
+    logger.debug("Structure unchanged for config %s", config.warehouse)
+    return None
