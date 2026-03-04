@@ -343,9 +343,12 @@ def detect_sections(matrix: list[list]) -> list[DetectedSection]:
             seller_cols = [c for _, c in sellers.values()]
             wh_label = _find_warehouse_label(matrix, row_idx, seller_cols)
 
-            # Extract sample rows
+            # Extract sample rows — col_end derived from seller positions
+            seller_cols = [c for _, c in sellers.values()] if sellers else []
+            max_seller_col = max(seller_cols) if seller_cols else col_idx + 5
+            sample_col_end = max_seller_col + 2  # +1 remainder, +1 exclusive
             samples, sample_indices = _extract_sample_rows(
-                matrix, row_idx, col_idx, col_idx + 10,
+                matrix, row_idx, col_idx, sample_col_end,
             )
 
             section = DetectedSection(
@@ -429,23 +432,18 @@ def detect_prefix_sections(
                 else:
                     break
 
-            # Collect samples from block_start
-            samples = []
-            sample_indices = []
+            # Check if we have prefix rows in this block
+            has_prefix_rows = False
             for r in range(block_start, min(block_start + 10, len(matrix))):
                 r_row = matrix[r] if r < len(matrix) else []
                 r_cell = _get_cell(r_row, col_idx)
                 if not r_cell:
                     break
-                r_upper = r_cell.upper()
-                if any(r_upper.startswith(p + " ") for p in PREFIX_CATEGORIES):
-                    subrow = []
-                    for c in range(max(0, col_idx - 2), min(col_idx + 12, 30)):
-                        subrow.append(_get_cell(r_row, c) if c < len(r_row) else "")
-                    samples.append(subrow)
-                    sample_indices.append(r)
+                if any(r_cell.upper().startswith(p + " ") for p in PREFIX_CATEGORIES):
+                    has_prefix_rows = True
+                    break
 
-            if not samples:
+            if not has_prefix_rows:
                 continue
 
             # If no sellers found for this prefix, look at the nearest marker section's sellers
@@ -458,6 +456,25 @@ def detect_prefix_sections(
                 # Only borrow sellers if in same general area
                 if abs(closest.marker_col - col_idx) < 15:
                     sellers = closest.seller_headers
+
+            # Re-collect samples with tight col bounds from seller positions
+            seller_cols_p = [c for _, c in sellers.values()] if sellers else []
+            max_seller_p = max(seller_cols_p) if seller_cols_p else col_idx + 5
+            prefix_col_end = max_seller_p + 2
+            samples = []
+            sample_indices = []
+            for r in range(block_start, min(block_start + 10, len(matrix))):
+                r_row = matrix[r] if r < len(matrix) else []
+                r_cell = _get_cell(r_row, col_idx)
+                if not r_cell:
+                    break
+                r_upper = r_cell.upper()
+                if any(r_upper.startswith(p + " ") for p in PREFIX_CATEGORIES):
+                    subrow = []
+                    for c in range(max(0, col_idx - 2), min(prefix_col_end + 1, 30)):
+                        subrow.append(_get_cell(r_row, c) if c < len(r_row) else "")
+                    samples.append(subrow)
+                    sample_indices.append(r)
 
             found_prefixes[matched_prefix] = DetectedSection(
                 marker_text=matched_prefix,
