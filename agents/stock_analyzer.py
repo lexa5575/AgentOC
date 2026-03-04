@@ -40,66 +40,40 @@ Each section in the hints has:
 - Seller header positions: Farik(row,col), Maks(row,col), Nikita(row,col)
 - Sample product rows with absolute column indices: col2='Amber', col3=36, etc.
 
-## Standard column layout
+## STRICT RULES for column identification
 
-Each section follows this pattern (column order may vary between warehouses):
-
-  ARRIVED | [gap?] | PRODUCT_NAME | TOTAL | [gap?] | FARIK_SALES | MAKS_SALES | NIKITA_SALES | REMAINDER
-
-The formula is: ARRIVED - FARIK - MAKS - NIKITA = REMAINDER
-(TOTAL may or may not equal ARRIVED; ignore TOTAL for column identification.)
-
-## How to identify columns — STRICT RULES
+All column indices are 0-based absolute. Use them directly from the hints.
 
 1. **name_col** — the column with TEXT (not numbers) in sample rows.
-   - Look for values like 'Amber', 'Silver', 'T Mint', 'ONE Red'.
-   - This is the ONLY column with text strings in product rows.
+   Look for values like 'Amber', 'Silver', 'T Mint', 'ONE Red'.
 
-2. **maks_col** — MUST be the EXACT same column index as the "Maks" or "Макс" seller header.
-   - If hints say Maks(86, 5) → maks_col=5. No exceptions.
-   - If no Maks header found → set to null.
+2. **maks_col** — MUST equal the EXACT column index from the Maks/Макс seller header.
+   If hints say Maks(86, 5) → maks_col=5. No exceptions. If no Maks header → null.
 
-3. **remainder_col** — the column with the remaining stock after all seller sales.
-   - CRITICAL: remainder_col MUST NOT equal any seller header column (Farik, Maks, or Nikita).
-   - The remainder is the number left AFTER subtracting all seller sales from arrived quantity.
+3. **remainder_col** — the LAST numeric column in product rows that is NOT a seller column.
+   MUST NOT equal any seller header column (Farik, Maks, or Nikita).
+   This is the remaining stock after all seller sales are subtracted.
 
-4. **col_start** / **col_end** — zone boundaries.
-   - col_start = leftmost column used by this section.
-   - col_end = rightmost column used + 1 (exclusive).
+4. **col_start** / **col_end** — zone boundaries (exclusive end).
+   IMPORTANT: Keep zones tight around the actual data. A section typically spans 7-9 columns.
+   col_start = marker column or first data column.
+   col_end = last data column + 1.
+   Do NOT extend col_end far beyond the last number in sample rows.
 
-## Verification step (MANDATORY)
+## How to determine remainder_col
 
-For EACH section, verify your column assignments using the arithmetic formula on sample rows:
+Look at the sample rows. Find all numeric columns. Cross-reference with seller headers:
+- Column matching Farik header → Farik sales (skip)
+- Column matching Maks header → Maks sales (skip)
+- Column matching Nikita header → Nikita sales (skip)
+- The remaining numeric column that is AFTER all seller columns → remainder_col
 
-  ARRIVED - value_at_farik_col - value_at_maks_col - value_at_nikita_col ≈ value_at_remainder_col
-
-If the math doesn't add up, your column assignments are WRONG. Re-examine and fix them.
-
-Example verification:
+Example:
   Seller headers: Farik(86,3), Maks(86,5), Nikita(86,7)
   Sample: col0=25, col2='Amber', col3=36, col5=3, col7=32, col8=1
-
-  → name_col=2 (text), maks_col=5 (Maks header), farik is col3, nikita is col7
-  → Remaining candidate: col8 (not a seller column)
-  → Verify: col0(ARRIVED)=25, col3(Farik)=36... wait, 36 > 25?
-  → col3=36 is probably TOTAL, not Farik. Farik must be at col3? No — Farik header is at col3.
-  → Re-check: ARRIVED might be col0=25 or col1 (empty). Actually col3=36 could be TOTAL.
-  → The formula: 25 - (some Farik value) - 3 - 32 wouldn't work either.
-  → Better: maybe ARRIVED is not shown, or TOTAL=36 and the formula uses TOTAL.
-  → Key point: seller columns MUST match their header positions exactly.
-
-When in doubt: trust the seller header positions over arithmetic guessing.
-
-## Two common column orders
-
-**Pattern A** (e.g., some warehouses):
-  Name → Total → Farik → Maks → Nikita → Remainder
-
-**Pattern B** (e.g., other warehouses):
-  Name → Total → Farik → Maks → Remainder → Nikita
-
-The seller header positions in the hints tell you which pattern this section uses.
-Do NOT assume all sections in the same warehouse follow the same pattern.
+  → Seller columns: 3, 5, 7
+  → col8=1 is NOT a seller column and is the LAST number → remainder_col=8
+  → name_col=2 (text), maks_col=5 (from header)
 
 ## Section types
 
@@ -111,9 +85,8 @@ Do NOT assume all sections in the same warehouse follow the same pattern.
 
 - UPPERCASE with underscores: "KZ_TEREA", "TEREA_JAPAN", "TEREA_EUROPE", "ARMENIA"
 - УНИКАЛЬНАЯ ТЕРЕА → "УНИКАЛЬНАЯ_ТЕРЕА"
-- INDONESIA → "INDONESIA"
-- KZ HEETS → "KZ_HEETS"
-- Prefix sections: use the prefix itself ("ONE", "STND", "PRIME")
+- INDONESIA → "INDONESIA", KZ HEETS → "KZ_HEETS"
+- Prefix sections: use the prefix ("ONE", "STND", "PRIME")
 
 ## Response format
 
