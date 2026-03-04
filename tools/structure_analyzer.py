@@ -79,7 +79,7 @@ PREFIX_CATEGORIES = {"ONE", "STND", "PRIME"}
 # Words that indicate a header row, not a product row
 _HEADER_WORDS = {
     "farik", "maks", "макс", "никита", "nikita", "la maks",
-    "chicago max", "chi maks", "mia", "arrived",
+    "chicago max", "chi maks", "arrived",
     "customer", "discount", "lost", "refund",
 }
 
