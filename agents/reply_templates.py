@@ -175,7 +175,9 @@ def _format_alternative(alt_entry: dict) -> str:
         # devices and unknown — no region label
         formatted = raw_name
 
-    if reason == "history":
+    if reason == "same_flavor":
+        formatted += " (same product, different region)"
+    elif reason == "history":
         formatted += " (you've ordered before)"
 
     return formatted

@@ -554,6 +554,7 @@ Summary: {state.get('summary', '')}
                 )
 
         tg_msg = None  # Will be set for OOS, sent after AI generates draft
+        tg_sent = False  # Track whether a Telegram notification was already sent
 
         # Telegram: notify if stock issue detected (enhanced with alternatives + draft)
         if result.get("stock_issue"):
@@ -606,6 +607,7 @@ Summary: {state.get('summary', '')}
                 if checker_obj and not checker_obj.is_ok:
                     checker_msg = "\n\n" + format_check_result_for_telegram(checker_obj)
                 send_telegram(tg_msg + f"\n--- DRAFT ---\n<pre>{draft_preview}</pre>" + checker_msg)
+                tg_sent = True
 
             # Send Telegram for non-OOS checker issues
             elif checker_obj and not checker_obj.is_ok:
@@ -617,6 +619,26 @@ Summary: {state.get('summary', '')}
                     + format_check_result_for_telegram(checker_obj)
                     + f"\n\n--- DRAFT ---\n<pre>{draft_preview}</pre>"
                 )
+                tg_sent = True
+
+        # Send Telegram for all other processed emails (template or LLM, no issues)
+        if not tg_sent and result.get("needs_reply") and result.get("draft_reply"):
+            draft_preview = result["draft_reply"][:400]
+            template_str = "шаблон" if result.get("template_used") else "ИИ"
+            details = ""
+            if classification.order_id:
+                details += f"<b>Заказ:</b> #{classification.order_id}\n"
+            if classification.price:
+                details += f"<b>Сумма:</b> {classification.price}\n"
+            if classification.items:
+                details += f"<b>Товар:</b> {classification.items}\n"
+            send_telegram(
+                f"\u2705 <b>Ответ готов</b> [{template_str}]\n\n"
+                f"<b>Клиент:</b> {classification.client_name or ''} ({classification.client_email})\n"
+                f"<b>Ситуация:</b> {classification.situation}\n"
+                + details
+                + f"\n--- DRAFT ---\n<pre>{draft_preview}</pre>"
+            )
 
         # Step 4: Format the output
         logger.info(

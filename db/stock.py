@@ -421,7 +421,22 @@ def select_best_alternatives(
     # 2. Fetch client order history
     history = get_client_flavor_history(client_email, product_type=product_type)
 
-    # 3. Ask LLM to pick alternatives — fallback on any failure (including import errors)
+    # 2b. Priority 0: same flavor, different region (e.g. "Silver ME" for "Silver EU")
+    # Normalize OOS flavor — if stripping a region suffix changes the name, it's a regional
+    # variant and we should suggest the same base product from another region first.
+    from db.product_resolver import _normalize as _resolver_normalize
+    normalized_oos = _resolver_normalize(base_flavor)
+    same_flavor_items: list[dict] = []
+    same_flavor_names: set[str] = set()
+    if normalized_oos.lower() != base_flavor.strip().lower():
+        for item in available:
+            if item["product_name"].lower() == normalized_oos.lower():
+                same_flavor_items.append(item)
+                same_flavor_names.add(item["product_name"])
+
+    # 3. Ask LLM to pick remaining alternatives — fallback on any failure
+    llm_slots = max(1, max_options - len(same_flavor_items))
+    llm_excluded = _excluded | same_flavor_names
     try:
         from agents.alternatives import get_llm_alternatives
         llm_items = get_llm_alternatives(
@@ -429,24 +444,30 @@ def select_best_alternatives(
             available_items=available,
             order_history=history,
             client_summary=client_summary,
-            max_options=max_options,
-            excluded_products=_excluded,
+            max_options=llm_slots,
+            excluded_products=llm_excluded,
         )
     except Exception as exc:
         logger.warning("LLM alternatives unavailable for '%s': %s", base_flavor, exc)
         llm_items = []
 
-    # 4. Build result from LLM picks (already validated inside get_llm_alternatives)
+    # 4. Build result: same_flavor first, then LLM picks
     selected: list[dict] = []
+    seen_names: set[str] = set()
+    for item in same_flavor_items:
+        selected.append({"alternative": item, "reason": "same_flavor", "order_count": None})
+        seen_names.add(item["product_name"])
     for item in llm_items:
-        if item["product_name"] not in _excluded:
+        if item["product_name"] not in (_excluded | seen_names):
             selected.append({"alternative": item, "reason": "llm", "order_count": None})
+            seen_names.add(item["product_name"])
 
     # 5. Fallback: LLM returned nothing valid → top-N by quantity
-    if not selected:
-        for item in available:  # already sorted by quantity desc
-            if item["product_name"] not in _excluded:
+    if len(selected) < max_options:
+        for item in available:
+            if item["product_name"] not in (_excluded | seen_names):
                 selected.append({"alternative": item, "reason": "fallback", "order_count": None})
+                seen_names.add(item["product_name"])
             if len(selected) >= max_options:
                 break
 
