@@ -168,11 +168,26 @@ def analyze_structure(
 
         data = json.loads(raw)
 
-        # Validate sections via Pydantic
-        sections = [SectionConfig(**s) for s in data.get("sections", [])]
+        # Validate sections via Pydantic, skip invalid ones
+        sections = []
+        for s in data.get("sections", []):
+            # Fix common LLM issues: null for required fields
+            if s.get("marker_text") is None:
+                s["marker_text"] = s.get("name", "")
+            if s.get("name_col") is None:
+                logger.warning("Skipping section '%s': name_col is null", s.get("name"))
+                continue
+            if s.get("col_start") is None or s.get("col_end") is None:
+                logger.warning("Skipping section '%s': col boundaries are null", s.get("name"))
+                continue
+            try:
+                sections.append(SectionConfig(**s))
+            except Exception as e:
+                logger.warning("Skipping invalid section '%s': %s", s.get("name"), e)
+                continue
 
         if not sections:
-            logger.warning("LLM returned empty sections for %s", warehouse_name)
+            logger.warning("LLM returned no valid sections for %s", warehouse_name)
             return None
 
         config = SheetStructureConfig(
@@ -182,6 +197,13 @@ def analyze_structure(
             sections=sections,
             analyzed_at=datetime.utcnow(),
         )
+
+        for s in sections:
+            logger.info(
+                "  Section '%s': type=%s, cols=%d-%d, name_col=%d, remainder_col=%s, maks_col=%s",
+                s.name, s.type, s.col_start, s.col_end, s.name_col,
+                s.remainder_col, s.maks_col,
+            )
 
         logger.info(
             "Structure analysis complete for %s: %d sections (%s)",
