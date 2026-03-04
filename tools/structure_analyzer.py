@@ -322,6 +322,16 @@ def detect_sections(matrix: list[list]) -> list[DetectedSection]:
             if marker in found_markers:
                 continue
 
+            # Skip if a more/less specific variant already found
+            # e.g., skip "KZ TEREA" if "KZ TEREA KZ" already exists
+            already_covered = False
+            for existing in found_markers:
+                if existing.startswith(marker) or marker.startswith(existing):
+                    already_covered = True
+                    break
+            if already_covered:
+                continue
+
             # Verify it has product rows below
             if not _has_product_rows_below(matrix, row_idx, col_idx):
                 continue

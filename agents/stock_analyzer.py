@@ -189,6 +189,17 @@ def analyze_structure(
                 logger.warning("Skipping invalid section '%s': %s", s.get("name"), e)
                 continue
 
+        # Deduplicate by section name (keep first occurrence)
+        seen_names: set[str] = set()
+        unique_sections: list[SectionConfig] = []
+        for s in sections:
+            if s.name in seen_names:
+                logger.warning("Duplicate section name '%s' — skipping (marker='%s')", s.name, s.marker_text)
+                continue
+            seen_names.add(s.name)
+            unique_sections.append(s)
+        sections = unique_sections
+
         if not sections:
             logger.warning("LLM returned no valid sections for %s", warehouse_name)
             return None
