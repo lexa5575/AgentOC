@@ -1,7 +1,5 @@
 """
-Data models for email classification.
-
-Moved from agents/reply_templates.py (Phase 1 refactor).
+Data models for email classification and order items.
 """
 
 from typing import Optional

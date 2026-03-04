@@ -3,8 +3,6 @@ Email Classifier
 ----------------
 
 LLM classifier agent, context builder, and classification runner.
-
-Moved from agents/email_agent.py (Phase 2 refactor).
 """
 
 import json

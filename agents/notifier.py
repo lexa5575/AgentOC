@@ -3,8 +3,6 @@ Email Notifier
 --------------
 
 Telegram notification functions for the email pipeline.
-
-Moved from agents/email_agent.py (Phase 3 refactor).
 All side effects (send_telegram calls) are isolated here.
 """
 

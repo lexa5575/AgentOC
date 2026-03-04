@@ -3,8 +3,8 @@ Email Pipeline
 --------------
 
 Core orchestration pipeline:
-  - process_classified_email  (moved from agents/reply_templates.py, Phase 3)
-  - classify_and_process      (moved from agents/email_agent.py, Phase 3)
+  - process_classified_email: classify email → build result dict
+  - classify_and_process: full end-to-end orchestration entry point
   - private helpers: _update_inbound_state, _persist_results
 
 All database persistence is owned by this module.

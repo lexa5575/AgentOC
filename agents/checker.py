@@ -192,13 +192,6 @@ def check_rules(
                 source="rule"
             )
     
-    # Rule 7: Check for tracking number consistency
-    # If we mention tracking, it should match history
-    tracking_match = re.search(r"9[24]00\s*\d{4}\s*\d{4}\s*\d{4}\s*\d{4}\s*\d{4}\s*\d{2}", draft)
-    if tracking_match:
-        # TODO: Verify against email history or order system
-        check.add_suggestion("Verify tracking number matches actual shipment")
-    
     return check
 
 

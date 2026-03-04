@@ -1,7 +1,6 @@
 """
 Email formatting utilities.
 
-Moved from agents/reply_templates.py (Phase 1 refactor).
 Three pure functions — no external dependencies.
 """
 
