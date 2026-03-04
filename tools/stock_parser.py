@@ -185,8 +185,10 @@ def _parse_marker_section(
                 break
             continue
 
-        # Skip header rows
-        if _is_header_row(subrow):
+        # Skip header rows (check only core columns near name_col
+        # to avoid false positives from adjacent sections' headers)
+        core_end = cfg.name_col - cfg.col_start + 6
+        if _is_header_row(subrow[:core_end]):
             continue
 
         # Get product name
@@ -289,7 +291,8 @@ def _parse_prefix_section(
 
         if not any(str(c).strip() for c in subrow):
             break
-        if _is_header_row(subrow):
+        core_end = cfg.name_col - cfg.col_start + 6
+        if _is_header_row(subrow[:core_end]):
             break
 
         name_cell = _get_cell(row, cfg.name_col)
@@ -316,7 +319,8 @@ def _parse_prefix_section(
 
         if not any(str(c).strip() for c in subrow):
             break
-        if _is_header_row(subrow):
+        core_end = cfg.name_col - cfg.col_start + 6
+        if _is_header_row(subrow[:core_end]):
             continue
 
         name_cell = _get_cell(row, cfg.name_col)
