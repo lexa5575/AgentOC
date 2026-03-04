@@ -8,7 +8,8 @@ Usage:
     python -m tests.test_email_agent
 """
 
-from agents.email_agent import email_agent, save_order_items
+from agents.email_agent import email_agent
+from db.memory import save_order_items
 from db.memory import add_client, get_client, get_client_flavor_history
 
 # ---------------------------------------------------------------------------

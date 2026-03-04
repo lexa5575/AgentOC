@@ -14,7 +14,7 @@ Two public functions:
 import logging
 import re
 
-from agents.reply_templates import EmailClassification, OrderItem
+from agents.models import EmailClassification, OrderItem
 
 logger = logging.getLogger(__name__)
 

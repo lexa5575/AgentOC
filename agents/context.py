@@ -16,7 +16,7 @@ from pathlib import Path
 
 import yaml
 
-from agents.reply_templates import format_email_history
+from agents.formatters import format_email_history
 from db.clients import get_client_profile
 from db.memory import get_full_email_history, get_full_thread_history
 

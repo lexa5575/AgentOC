@@ -26,6 +26,8 @@ def _install_import_stubs() -> None:
             or name == "agents.state_updater"
             or name.startswith("agents.handlers")
             or name == "db.conversation_state"
+            or name in ("agents.pipeline", "agents.notifier", "agents.classifier",
+                        "agents.formatters", "agents.models")
         ):
             sys.modules.pop(name, None)
 
@@ -126,6 +128,8 @@ class TestEmailAgentRouterRegression(unittest.TestCase):
     def setUpClass(cls):
         _install_import_stubs()
         cls.email_agent = importlib.import_module("agents.email_agent")
+        cls.agents_pipeline = importlib.import_module("agents.pipeline")
+        cls.agents_notifier = importlib.import_module("agents.notifier")
 
     def _classifier_payload(self, *, situation: str, needs_reply: bool = True) -> dict:
         return {
@@ -178,11 +182,11 @@ class TestEmailAgentRouterRegression(unittest.TestCase):
             needs_routing=False,
         )
         with (
-            patch.object(self.email_agent, "process_classified_email", return_value=processed),
-            patch.object(self.email_agent, "format_result", return_value="FORMATTED"),
-            patch.object(self.email_agent, "route_to_handler", return_value=routed) as route_mock,
-            patch.object(self.email_agent, "save_email") as save_email_mock,
-            patch.object(self.email_agent, "send_telegram"),
+            patch.object(self.agents_pipeline, "process_classified_email", return_value=processed),
+            patch.object(self.agents_pipeline, "format_result", return_value="FORMATTED"),
+            patch.object(self.agents_pipeline, "route_to_handler", return_value=routed) as route_mock,
+            patch.object(self.agents_pipeline, "save_email") as save_email_mock,
+            patch.object(self.agents_notifier, "send_telegram"),
         ):
             out = self._run(self._classifier_payload(situation="new_order"))
 
@@ -201,11 +205,11 @@ class TestEmailAgentRouterRegression(unittest.TestCase):
             needs_routing=False,
         )
         with (
-            patch.object(self.email_agent, "process_classified_email", return_value=processed),
-            patch.object(self.email_agent, "format_result", return_value="NO_REPLY"),
-            patch.object(self.email_agent, "route_to_handler") as route_mock,
-            patch.object(self.email_agent, "save_email") as save_email_mock,
-            patch.object(self.email_agent, "send_telegram"),
+            patch.object(self.agents_pipeline, "process_classified_email", return_value=processed),
+            patch.object(self.agents_pipeline, "format_result", return_value="NO_REPLY"),
+            patch.object(self.agents_pipeline, "route_to_handler") as route_mock,
+            patch.object(self.agents_pipeline, "save_email") as save_email_mock,
+            patch.object(self.agents_notifier, "send_telegram"),
         ):
             out = self._run(self._classifier_payload(situation="other", needs_reply=False))
 
@@ -228,11 +232,11 @@ class TestEmailAgentRouterRegression(unittest.TestCase):
             needs_routing=False,
         )
         with (
-            patch.object(self.email_agent, "process_classified_email", return_value=processed),
-            patch.object(self.email_agent, "route_to_handler", return_value=routed) as route_mock,
-            patch.object(self.email_agent, "format_result", side_effect=lambda r: r["draft_reply"]),
-            patch.object(self.email_agent, "save_email") as save_email_mock,
-            patch.object(self.email_agent, "send_telegram"),
+            patch.object(self.agents_pipeline, "process_classified_email", return_value=processed),
+            patch.object(self.agents_pipeline, "route_to_handler", return_value=routed) as route_mock,
+            patch.object(self.agents_pipeline, "format_result", side_effect=lambda r: r["draft_reply"]),
+            patch.object(self.agents_pipeline, "save_email") as save_email_mock,
+            patch.object(self.agents_notifier, "send_telegram"),
         ):
             out = self._run(self._classifier_payload(situation="tracking"))
 
@@ -253,11 +257,11 @@ class TestEmailAgentRouterRegression(unittest.TestCase):
             needs_routing=False,
         )
         with (
-            patch.object(self.email_agent, "process_classified_email", return_value=processed),
-            patch.object(self.email_agent, "route_to_handler", return_value=routed) as route_mock,
-            patch.object(self.email_agent, "format_result", side_effect=lambda r: r["draft_reply"]),
-            patch.object(self.email_agent, "save_email") as save_email_mock,
-            patch.object(self.email_agent, "send_telegram"),
+            patch.object(self.agents_pipeline, "process_classified_email", return_value=processed),
+            patch.object(self.agents_pipeline, "route_to_handler", return_value=routed) as route_mock,
+            patch.object(self.agents_pipeline, "format_result", side_effect=lambda r: r["draft_reply"]),
+            patch.object(self.agents_pipeline, "save_email") as save_email_mock,
+            patch.object(self.agents_notifier, "send_telegram"),
         ):
             out = self._run(self._classifier_payload(situation="shipping_timeline"))
 
@@ -280,12 +284,12 @@ class TestEmailAgentRouterRegression(unittest.TestCase):
             stock_issue={"stock_check": {"insufficient_items": []}, "best_alternatives": {}},
         )
         with (
-            patch.object(self.email_agent, "process_classified_email", return_value=processed),
-            patch.object(self.email_agent, "_build_oos_telegram", return_value="OOS ALERT"),
-            patch.object(self.email_agent, "route_to_handler", return_value=routed),
-            patch.object(self.email_agent, "format_result", side_effect=lambda r: r["draft_reply"]),
-            patch.object(self.email_agent, "save_email"),
-            patch.object(self.email_agent, "send_telegram") as send_telegram_mock,
+            patch.object(self.agents_pipeline, "process_classified_email", return_value=processed),
+            patch.object(self.agents_pipeline, "build_oos_message", return_value="OOS ALERT"),
+            patch.object(self.agents_pipeline, "route_to_handler", return_value=routed),
+            patch.object(self.agents_pipeline, "format_result", side_effect=lambda r: r["draft_reply"]),
+            patch.object(self.agents_pipeline, "save_email"),
+            patch.object(self.agents_notifier, "send_telegram") as send_telegram_mock,
         ):
             out = self._run(self._classifier_payload(situation="new_order"))
 

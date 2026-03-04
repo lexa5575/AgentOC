@@ -8,8 +8,17 @@ Covers:
 
 from unittest.mock import patch
 
-from agents.reply_templates import EmailClassification, OrderItem, process_classified_email
+import sys
+
+import agents.pipeline  # ensure initial load
+
+from agents.models import EmailClassification, OrderItem
 from agents.handlers.template_utils import fill_template_reply
+
+
+def _process_classified_email(classification):
+    """Always call via current sys.modules reference (survives module re-imports)."""
+    return sys.modules["agents.pipeline"].process_classified_email(classification)
 
 
 # ---------------------------------------------------------------------------
@@ -119,12 +128,13 @@ def test_guard_allows_template_without_price_placeholder():
 # process_classified_email: price alerts
 # ---------------------------------------------------------------------------
 
-@patch("agents.reply_templates.resolve_order_items", side_effect=lambda items, **kw: (items, []))
-@patch("agents.reply_templates.select_best_alternatives")
-@patch("agents.reply_templates.check_stock_for_order")
-@patch("agents.reply_templates.get_stock_summary")
-@patch("agents.reply_templates.get_client")
-def test_mismatch_alert(mock_client, mock_summary, mock_stock, mock_alts, mock_resolve):
+@patch("agents.pipeline.calculate_order_price", return_value=220.0)
+@patch("agents.pipeline.resolve_order_items", side_effect=lambda items, **kw: (items, []))
+@patch("agents.pipeline.select_best_alternatives")
+@patch("agents.pipeline.check_stock_for_order")
+@patch("agents.pipeline.get_stock_summary")
+@patch("agents.pipeline.get_client")
+def test_mismatch_alert(mock_client, mock_summary, mock_stock, mock_alts, mock_resolve, mock_price):
     """parser_used=True, site price ≠ catalog → price_alert type=mismatch."""
     mock_client.return_value = {"payment_type": "prepay", "name": "Test"}
     mock_summary.return_value = {"total": 10}
@@ -148,18 +158,19 @@ def test_mismatch_alert(mock_client, mock_summary, mock_stock, mock_alts, mock_r
         order_items=[OrderItem(product_name="Green", base_flavor="Green", quantity=2)],
     )
 
-    result = process_classified_email(classification)
+    result = _process_classified_email(classification)
     assert result.get("price_alert") is not None
     assert result["price_alert"]["type"] == "mismatch"
     assert result["price_alert"]["site_price"] == "$300.00"
     assert result["price_alert"]["calculated_price"] == "$220.00"
 
 
-@patch("agents.reply_templates.resolve_order_items", side_effect=lambda items, **kw: (items, []))
-@patch("agents.reply_templates.check_stock_for_order")
-@patch("agents.reply_templates.get_stock_summary")
-@patch("agents.reply_templates.get_client")
-def test_unmatched_alert(mock_client, mock_summary, mock_stock, mock_resolve):
+@patch("agents.pipeline.calculate_order_price", return_value=None)
+@patch("agents.pipeline.resolve_order_items", side_effect=lambda items, **kw: (items, []))
+@patch("agents.pipeline.check_stock_for_order")
+@patch("agents.pipeline.get_stock_summary")
+@patch("agents.pipeline.get_client")
+def test_unmatched_alert(mock_client, mock_summary, mock_stock, mock_resolve, mock_price):
     """parser_used=False, ambiguous categories → price_alert type=unmatched."""
     mock_client.return_value = {"payment_type": "prepay", "name": "Test"}
     mock_summary.return_value = {"total": 10}
@@ -183,18 +194,19 @@ def test_unmatched_alert(mock_client, mock_summary, mock_stock, mock_resolve):
         order_items=[OrderItem(product_name="Weird", base_flavor="WeirdItem", quantity=1)],
     )
 
-    result = process_classified_email(classification)
+    result = _process_classified_email(classification)
     assert result.get("price_alert") is not None
     assert result["price_alert"]["type"] == "unmatched"
     assert "WeirdItem" in result["price_alert"]["items"]
 
 
-@patch("agents.reply_templates.resolve_order_items", side_effect=lambda items, **kw: (items, []))
-@patch("agents.reply_templates.select_best_alternatives")
-@patch("agents.reply_templates.check_stock_for_order")
-@patch("agents.reply_templates.get_stock_summary")
-@patch("agents.reply_templates.get_client")
-def test_no_alert_when_prices_match(mock_client, mock_summary, mock_stock, mock_alts, mock_resolve):
+@patch("agents.pipeline.calculate_order_price", return_value=220.0)
+@patch("agents.pipeline.resolve_order_items", side_effect=lambda items, **kw: (items, []))
+@patch("agents.pipeline.select_best_alternatives")
+@patch("agents.pipeline.check_stock_for_order")
+@patch("agents.pipeline.get_stock_summary")
+@patch("agents.pipeline.get_client")
+def test_no_alert_when_prices_match(mock_client, mock_summary, mock_stock, mock_alts, mock_resolve, mock_price):
     """parser_used=True, site price = catalog → no price_alert."""
     mock_client.return_value = {"payment_type": "prepay", "name": "Test"}
     mock_summary.return_value = {"total": 10}
@@ -218,6 +230,6 @@ def test_no_alert_when_prices_match(mock_client, mock_summary, mock_stock, mock_
         order_items=[OrderItem(product_name="Green", base_flavor="Green", quantity=2)],
     )
 
-    result = process_classified_email(classification)
+    result = _process_classified_email(classification)
     assert result.get("price_alert") is None
     assert result["calculated_price"] == 220.0

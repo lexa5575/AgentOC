@@ -18,7 +18,7 @@ from agno.models.openai import OpenAIResponses
 
 from db.clients import get_client_profile, update_client_summary
 from db.memory import get_full_email_history
-from agents.reply_templates import format_email_history
+from agents.formatters import format_email_history
 
 logger = logging.getLogger(__name__)
 

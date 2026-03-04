@@ -1,6 +1,6 @@
 """Tests for cross-thread context helpers.
 
-Tests import production functions from agents.email_agent and agents.context
+Tests import production functions from agents.classifier and agents.context
 via lightweight module stubs (same pattern as test_email_agent_pipeline_smoke).
 """
 
@@ -16,8 +16,8 @@ import pytest
 # ---------------------------------------------------------------------------
 
 def _ensure_stubs():
-    """Install lightweight stubs so agents.email_agent can be imported."""
-    if "agents.email_agent" in sys.modules:
+    """Install lightweight stubs so agents.classifier can be imported."""
+    if "agents.classifier" in sys.modules:
         return  # already importable
 
     # agno
@@ -108,21 +108,17 @@ def _ensure_stubs():
             tools_ep.clean_email_body = lambda body: body
             sys.modules["tools.email_parser"] = tools_ep
 
-    # agents stubs (reply_templates needed by context.py)
+    # agents package stub (allows real submodule imports)
     if "agents" not in sys.modules:
         agents_mod = types.ModuleType("agents")
         agents_mod.__path__ = []
         sys.modules["agents"] = agents_mod
-    if "agents.reply_templates" not in sys.modules:
-        reply_mod = types.ModuleType("agents.reply_templates")
-        reply_mod.format_email_history = lambda h: ""
-        sys.modules["agents.reply_templates"] = reply_mod
 
 
 _ensure_stubs()
 
 # Now safe to import production code
-from agents.email_agent import _extract_sender_email, _format_other_threads
+from agents.classifier import _extract_sender_email, _format_other_threads
 from agents.context import EmailContext, format_context_for_prompt
 
 
