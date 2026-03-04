@@ -97,6 +97,74 @@ def test_sync_stock_separate_warehouses():
     assert backup[0]["quantity"] == 10
 
 
+def test_sync_stock_assigns_product_id():
+    sync_stock("main", [{"category": "TEREA_EUROPE", "product_name": "Green", "quantity": 5}])
+    rows = search_stock("Green", warehouse="main")
+    eu = next(r for r in rows if r["category"] == "TEREA_EUROPE" and r["product_name"] == "Green")
+    assert eu["product_id"] is not None
+
+
+def test_sync_stock_update_keeps_same_product_id():
+    sync_stock("main", [{"category": "TEREA_EUROPE", "product_name": "Green", "quantity": 5}])
+    first = next(
+        r for r in search_stock("Green", warehouse="main")
+        if r["category"] == "TEREA_EUROPE" and r["product_name"] == "Green"
+    )
+    first_id = first["product_id"]
+    assert first_id is not None
+
+    sync_stock("main", [{"category": "TEREA_EUROPE", "product_name": "Green", "quantity": 9}])
+    second = next(
+        r for r in search_stock("Green", warehouse="main")
+        if r["category"] == "TEREA_EUROPE" and r["product_name"] == "Green"
+    )
+    assert second["product_id"] == first_id
+    assert second["quantity"] == 9
+
+
+def test_sync_stock_same_category_name_same_product_id_across_warehouses():
+    sync_stock("main", [{"category": "TEREA_EUROPE", "product_name": "Green", "quantity": 5}])
+    sync_stock("backup", [{"category": "TEREA_EUROPE", "product_name": "Green", "quantity": 10}])
+
+    main_green = next(
+        r for r in search_stock("Green", warehouse="main")
+        if r["category"] == "TEREA_EUROPE" and r["product_name"] == "Green"
+    )
+    backup_green = next(
+        r for r in search_stock("Green", warehouse="backup")
+        if r["category"] == "TEREA_EUROPE" and r["product_name"] == "Green"
+    )
+    assert main_green["product_id"] is not None
+    assert main_green["product_id"] == backup_green["product_id"]
+
+
+def test_sync_stock_same_name_different_category_different_product_id():
+    sync_stock("main", [
+        {"category": "TEREA_EUROPE", "product_name": "Green", "quantity": 5},
+        {"category": "ARMENIA", "product_name": "Green", "quantity": 7},
+    ])
+    rows = [r for r in search_stock("Green", warehouse="main") if r["product_name"] == "Green"]
+    by_cat = {r["category"]: r for r in rows}
+    assert by_cat["TEREA_EUROPE"]["product_id"] is not None
+    assert by_cat["ARMENIA"]["product_id"] is not None
+    assert by_cat["TEREA_EUROPE"]["product_id"] != by_cat["ARMENIA"]["product_id"]
+
+
+def test_sync_stock_normalized_name_reuses_catalog_entry():
+    sync_stock("main", [{"category": "TEREA_EUROPE", "product_name": "Green", "quantity": 5}])
+    sync_stock("backup", [{"category": "TEREA_EUROPE", "product_name": "  green  ", "quantity": 6}])
+
+    main_green = next(
+        r for r in search_stock("Green", warehouse="main")
+        if r["category"] == "TEREA_EUROPE" and r["product_name"] == "Green"
+    )
+    backup_green = next(
+        r for r in search_stock("green", warehouse="backup")
+        if r["category"] == "TEREA_EUROPE" and r["product_name"].strip().lower() == "green"
+    )
+    assert main_green["product_id"] == backup_green["product_id"]
+
+
 # ---------------------------------------------------------------------------
 # search_stock
 # ---------------------------------------------------------------------------

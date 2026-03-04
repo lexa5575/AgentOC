@@ -15,6 +15,8 @@ Functions:
 import logging
 import re
 
+from sqlalchemy.exc import IntegrityError
+
 from db.models import ProductCatalog
 
 logger = logging.getLogger(__name__)
@@ -55,9 +57,24 @@ def ensure_catalog_entry(session, category: str, product_name: str) -> int:
         name_norm=name_norm,
         stock_name=product_name.strip(),
     )
-    session.add(entry)
-    session.flush()  # get id without committing (caller commits)
+    # Use savepoint so a race-condition IntegrityError doesn't roll back
+    # the entire transaction (which may contain StockItem upserts).
+    nested = session.begin_nested()
+    try:
+        session.add(entry)
+        nested.commit()
+    except IntegrityError:
+        nested.rollback()
+        existing = (
+            session.query(ProductCatalog)
+            .filter_by(category=category, name_norm=name_norm)
+            .first()
+        )
+        if existing:
+            return existing.id
+        raise  # should not happen — re-raise if still missing
 
+    session.flush()  # ensure id is populated
     logger.info("New catalog entry: %s | %s (id=%d)", category, product_name, entry.id)
     return entry.id
 
@@ -97,10 +114,22 @@ def ensure_catalog_entries(session, items: list[dict]) -> int:
             name_norm=name_norm,
             stock_name=product_name.strip(),
         )
-        session.add(entry)
-        session.flush()
-        seen[key] = entry.id
-        created += 1
+        nested = session.begin_nested()
+        try:
+            session.add(entry)
+            nested.commit()
+            session.flush()
+            seen[key] = entry.id
+            created += 1
+        except IntegrityError:
+            nested.rollback()
+            existing = (
+                session.query(ProductCatalog)
+                .filter_by(category=category, name_norm=name_norm)
+                .first()
+            )
+            if existing:
+                seen[key] = existing.id
 
     if created:
         logger.info("Created %d new catalog entries", created)
