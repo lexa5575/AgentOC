@@ -37,6 +37,18 @@ _REGION_SUFFIXES = (
     " unique",         # shorter variant
 )
 
+# Origin suffixes that indicate a specific regional variant (Armenia/EU/KZ/Japan).
+# Used to detect whether "Tera Purple" means Japan T Purple (no suffix) vs Armenia Purple
+# ("Tera Purple made in Middle East"). Does NOT include "unique flavor" since that's
+# a product-line marker, not a regional origin indicator.
+_ORIGIN_SUFFIXES = (
+    " made in middle east",
+    " made in armenia",
+    " eu",
+    " japan",
+    " kz",
+)
+
 # Device model names — valid as standalone (no color required)
 _DEVICE_MODELS = {"ONE", "STND", "PRIME"}
 
@@ -69,6 +81,21 @@ def _normalize(name: str) -> str:
             name = name[: len(name) - len(suffix)]
             break
     return name.strip()
+
+
+def _has_origin_suffix(raw_name: str) -> bool:
+    """Return True if raw_name contains an explicit regional origin suffix.
+
+    Used to distinguish "Tera Purple" (Japan T Purple) from
+    "Tera Purple made in Middle East" (Armenia Purple).
+    """
+    name = raw_name.strip()
+    for prefix in _BRAND_PREFIXES:
+        if name.startswith(prefix):
+            name = name[len(prefix):]
+            break
+    name_lower = name.lower()
+    return any(name_lower.endswith(s) for s in _ORIGIN_SUFFIXES)
 
 
 # ---------------------------------------------------------------------------
@@ -118,6 +145,22 @@ def resolve_product_name(
     # 1. Exact match (case-insensitive, after normalization)
     for name in known_names:
         if _normalize(name).lower() == normalized_lower:
+            # Japan T-prefix heuristic: if the input has NO regional origin suffix
+            # and a "T <name>" Japan variant exists, prefer it over the plain
+            # Armenia/EU/KZ product with the same base name.
+            # Example: "Tera PURPLE" (no ME/EU suffix) → T Purple, not Armenia Purple.
+            # "Tera Purple made in Middle East" (has ME suffix) → Armenia Purple.
+            if not _has_origin_suffix(raw_name):
+                t_variant = next(
+                    (n for n in known_names if n.lower() == "t " + normalized_lower),
+                    None,
+                )
+                if t_variant:
+                    logger.info(
+                        "Japan T-prefix heuristic: '%s' → '%s' (no origin suffix, T-variant exists)",
+                        raw_name, t_variant,
+                    )
+                    return ResolveResult(raw_name, t_variant, "high", 0.92, [t_variant, name])
             return ResolveResult(raw_name, name, "exact", 1.0, [name])
 
     # 2. Device model-only: "ONE", "STND", "PRIME" — valid without color

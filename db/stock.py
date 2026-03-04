@@ -230,7 +230,12 @@ def check_stock_for_order(
             stock_entries = (
                 session.query(StockItem)
                 .filter(
-                    StockItem.product_name.ilike(f"%{flavor}%"),
+                    # Exact case-insensitive match: after resolve_order_items the
+                    # flavor is a canonical DB name, so substring search is wrong —
+                    # it would aggregate unrelated products (e.g. "Purple" matches
+                    # T Purple + Black Purple Menthol + Armenia Purple mixing $110
+                    # and $115 tiers, breaking calculate_order_price).
+                    StockItem.product_name.ilike(flavor),
                     StockItem.category.in_(allowed_cats),
                 )
             )
