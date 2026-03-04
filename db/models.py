@@ -7,7 +7,7 @@ SQLAlchemy models for business data (clients, etc.).
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, Integer, String, Text, UniqueConstraint, create_engine
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, create_engine
 from sqlalchemy.orm import DeclarativeBase, Session
 
 from db.url import db_url
@@ -133,6 +133,7 @@ class StockItem(Base):
     is_fallback = Column(Boolean, default=False)
     source_row = Column(Integer, nullable=True)
     source_col = Column(Integer, nullable=True)
+    product_id = Column(Integer, ForeignKey("product_catalog.id"), nullable=True, index=True)
     synced_at = Column(DateTime, default=datetime.utcnow)
 
     def to_dict(self) -> dict:
@@ -145,6 +146,7 @@ class StockItem(Base):
             "is_fallback": self.is_fallback,
             "source_row": self.source_row,
             "source_col": self.source_col,
+            "product_id": self.product_id,
             "synced_at": self.synced_at,
         }
 
@@ -182,6 +184,32 @@ class StockBackup(Base):
     source_row = Column(Integer, nullable=True)
     source_col = Column(Integer, nullable=True)
     synced_at = Column(DateTime, nullable=True)
+
+
+class ProductCatalog(Base):
+    """Canonical product identity — one entry per unique product across all warehouses."""
+
+    __tablename__ = "product_catalog"
+    __table_args__ = (
+        UniqueConstraint("category", "name_norm", name="uq_catalog_entry"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    category = Column(String, nullable=False, index=True)    # "TEREA_JAPAN"
+    name_norm = Column(String, nullable=False)                # "t purple" (lower, trimmed)
+    stock_name = Column(String, nullable=False)               # "T Purple" (original from sheet)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "category": self.category,
+            "name_norm": self.name_norm,
+            "stock_name": self.stock_name,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
 
 
 class SheetConfig(Base):

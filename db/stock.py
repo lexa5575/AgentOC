@@ -11,6 +11,7 @@ import logging
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 
+from db.catalog import ensure_catalog_entry
 from db.models import ClientOrderItem, StockBackup, StockItem, get_session
 
 logger = logging.getLogger(__name__)
@@ -103,12 +104,15 @@ def sync_stock(warehouse: str, items: list[dict]) -> int:
                 )
                 .first()
             )
+            catalog_id = ensure_catalog_entry(session, item["category"], item["product_name"])
+
             if record:
                 record.quantity = item["quantity"]
                 record.maks_sales = item.get("maks_sales", 0)
                 record.is_fallback = item.get("is_fallback", False)
                 record.source_row = item.get("source_row")
                 record.source_col = item.get("source_col")
+                record.product_id = catalog_id
                 record.synced_at = now
             else:
                 session.add(StockItem(
@@ -120,6 +124,7 @@ def sync_stock(warehouse: str, items: list[dict]) -> int:
                     is_fallback=item.get("is_fallback", False),
                     source_row=item.get("source_row"),
                     source_col=item.get("source_col"),
+                    product_id=catalog_id,
                     synced_at=now,
                 ))
             count += 1

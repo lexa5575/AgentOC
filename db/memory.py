@@ -6,8 +6,13 @@ All business logic lives in domain modules:
   db.clients        — client CRUD
   db.email_history   — email history, Gmail state, Gmail thread search
   db.stock           — stock sync/search, order items, OOS alternatives
+  db.catalog         — product catalog (canonical product identity)
 """
 
+from db.catalog import (
+    ensure_catalog_entry,
+    normalize_product_name,
+)
 from db.clients import (
     add_client,
     decrement_discount,
@@ -51,6 +56,9 @@ from db.stock import (
 )
 
 __all__ = [
+    # catalog
+    "ensure_catalog_entry",
+    "normalize_product_name",
     # clients
     "add_client",
     "decrement_discount",
