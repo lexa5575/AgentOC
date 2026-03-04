@@ -105,18 +105,24 @@ def _stock_sync_thread():
     while True:
         try:
             result = sync_stock_from_sheets()
-            if result.get("status") == "ok":
-                logger.info(
-                    "Stock sync: %d items (%d available)",
-                    result.get("synced", 0), result.get("available", 0),
-                )
+            status = result.get("status", "?")
+            warehouses = result.get("warehouses", [])
+            if status in ("ok", "partial"):
+                for wh in warehouses:
+                    if wh.get("status") == "ok":
+                        logger.info(
+                            "Stock sync [%s]: %d items (%d available)",
+                            wh.get("warehouse", "?"),
+                            wh.get("synced", 0),
+                            wh.get("available", 0),
+                        )
         except Exception as e:
             logger.error("Stock sync thread error: %s", e, exc_info=True)
         time.sleep(STOCK_SYNC_INTERVAL)
 
 
 # Start stock sync as daemon thread (dies with main process)
-if getenv("STOCK_SPREADSHEET_ID", ""):
+if getenv("STOCK_WAREHOUSES", "") or getenv("STOCK_SPREADSHEET_ID", ""):
     threading.Thread(target=_stock_sync_thread, daemon=True).start()
     logger.info("Stock sync thread launched (every %ds)", STOCK_SYNC_INTERVAL)
 else:
@@ -130,6 +136,20 @@ async def trigger_stock_sync():
 
     result = sync_stock_from_sheets()
     return result
+
+
+@app.post("/api/stock/reanalyze")
+async def trigger_stock_reanalyze():
+    """Force LLM re-analysis of all warehouse sheet structures."""
+    from db.sheet_config import delete_sheet_config
+    from tools.stock_sync import _load_warehouse_configs, sync_stock_from_sheets
+
+    configs = _load_warehouse_configs()
+    for cfg in configs:
+        delete_sheet_config(cfg.name)
+
+    result = sync_stock_from_sheets()
+    return {"reanalyzed": len(configs), "sync_result": result}
 
 
 if __name__ == "__main__":

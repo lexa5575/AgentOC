@@ -129,6 +129,7 @@ class StockItem(Base):
     category = Column(String, nullable=False)
     product_name = Column(String, nullable=False)
     quantity = Column(Integer, nullable=False, default=0)
+    maks_sales = Column(Integer, nullable=False, default=0)
     is_fallback = Column(Boolean, default=False)
     source_row = Column(Integer, nullable=True)
     source_col = Column(Integer, nullable=True)
@@ -140,6 +141,7 @@ class StockItem(Base):
             "category": self.category,
             "product_name": self.product_name,
             "quantity": self.quantity,
+            "maks_sales": self.maks_sales,
             "is_fallback": self.is_fallback,
             "source_row": self.source_row,
             "source_col": self.source_col,
@@ -175,10 +177,23 @@ class StockBackup(Base):
     category = Column(String, nullable=False)
     product_name = Column(String, nullable=False)
     quantity = Column(Integer, nullable=False, default=0)
+    maks_sales = Column(Integer, nullable=False, default=0)
     is_fallback = Column(Boolean, default=False)
     source_row = Column(Integer, nullable=True)
     source_col = Column(Integer, nullable=True)
     synced_at = Column(DateTime, nullable=True)
+
+
+class SheetConfig(Base):
+    """LLM-generated sheet structure config per warehouse."""
+
+    __tablename__ = "sheet_configs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    warehouse = Column(String, unique=True, nullable=False, index=True)
+    config_json = Column(Text, nullable=False)
+    analyzed_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 def get_session() -> Session:

@@ -79,6 +79,7 @@ def sync_stock(warehouse: str, items: list[dict]) -> int:
                     category=item.category,
                     product_name=item.product_name,
                     quantity=item.quantity,
+                    maks_sales=item.maks_sales,
                     is_fallback=item.is_fallback,
                     source_row=item.source_row,
                     source_col=item.source_col,
@@ -104,6 +105,7 @@ def sync_stock(warehouse: str, items: list[dict]) -> int:
             )
             if record:
                 record.quantity = item["quantity"]
+                record.maks_sales = item.get("maks_sales", 0)
                 record.is_fallback = item.get("is_fallback", False)
                 record.source_row = item.get("source_row")
                 record.source_col = item.get("source_col")
@@ -114,6 +116,7 @@ def sync_stock(warehouse: str, items: list[dict]) -> int:
                     category=item["category"],
                     product_name=item["product_name"],
                     quantity=item["quantity"],
+                    maks_sales=item.get("maks_sales", 0),
                     is_fallback=item.get("is_fallback", False),
                     source_row=item.get("source_row"),
                     source_col=item.get("source_col"),

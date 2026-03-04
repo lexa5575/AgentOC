@@ -72,13 +72,20 @@ class SheetsClient:
         logger.info("Spreadsheet %s has tabs: %s", spreadsheet_id, names)
         return names
 
-    def find_active_sheet(self, spreadsheet_id: str) -> str:
+    def find_active_sheet(
+        self, spreadsheet_id: str, warehouse_pattern: str | None = None,
+    ) -> str:
         """Find the active (current) sheet name.
 
         Priority:
         1. Explicit STOCK_SHEET_NAME env var
-        2. Regex: tab matching warehouse pattern without "N/A"
+        2. Regex: tab matching warehouse_pattern without "N/A"
         3. Fallback: first tab without "N/A" prefix
+
+        Args:
+            spreadsheet_id: The spreadsheet to search.
+            warehouse_pattern: Pattern to match in tab names (e.g., "LA MAKS").
+                             Falls back to STOCK_WAREHOUSE_NAME env var if None.
         """
         explicit = getenv("STOCK_SHEET_NAME", "").strip()
         if explicit:
@@ -86,11 +93,13 @@ class SheetsClient:
             return explicit
 
         names = self.get_sheet_names(spreadsheet_id)
-        warehouse_name = getenv("STOCK_WAREHOUSE_NAME", "LA MAKS").replace("_", " ")
+
+        if warehouse_pattern is None:
+            warehouse_pattern = getenv("STOCK_WAREHOUSE_NAME", "LA MAKS").replace("_", " ")
 
         # Priority 2: match warehouse pattern (e.g., "LA MAKS FEB") without "N/A"
         pattern = re.compile(
-            rf"^(?!N/A).*{re.escape(warehouse_name)}",
+            rf"^(?!N/A).*{re.escape(warehouse_pattern)}",
             re.IGNORECASE,
         )
         for name in names:

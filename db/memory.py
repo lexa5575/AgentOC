@@ -31,6 +31,12 @@ from db.email_history import (
     set_gmail_state,
 )
 from db.product_resolver import resolve_order_items
+from db.sheet_config import (
+    delete_sheet_config,
+    is_config_stale,
+    load_sheet_config,
+    save_sheet_config,
+)
 from db.stock import (
     calculate_order_price,
     check_stock_for_order,
@@ -67,6 +73,11 @@ __all__ = [
     "set_gmail_state",
     # product resolver
     "resolve_order_items",
+    # sheet config
+    "delete_sheet_config",
+    "is_config_stale",
+    "load_sheet_config",
+    "save_sheet_config",
     # stock
     "calculate_order_price",
     "check_stock_for_order",
