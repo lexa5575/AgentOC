@@ -265,7 +265,7 @@ def _extract_sample_rows(
     """
     samples = []
     indices = []
-    col_end_safe = min(col_end + 4, 30)  # Extra cols for context
+    col_end_safe = min(col_end + 1, 30)  # Tight boundary to avoid adjacent zone data
 
     for r in range(marker_row + 1, min(marker_row + 20, len(matrix))):
         row = matrix[r] if r < len(matrix) else []
