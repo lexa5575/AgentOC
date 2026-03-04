@@ -462,8 +462,8 @@ def select_best_alternatives(
             selected.append({"alternative": item, "reason": "llm", "order_count": None})
             seen_names.add(item["product_name"])
 
-    # 5. Fallback: LLM returned nothing valid → top-N by quantity
-    if len(selected) < max_options:
+    # 5. Fallback: same_flavor empty AND LLM returned nothing → top-N by quantity
+    if not selected:
         for item in available:
             if item["product_name"] not in (_excluded | seen_names):
                 selected.append({"alternative": item, "reason": "fallback", "order_count": None})
