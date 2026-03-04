@@ -189,6 +189,8 @@ def _parse_marker_section(
         # to avoid false positives from adjacent sections' headers)
         core_end = cfg.name_col - cfg.col_start + 6
         if _is_header_row(subrow[:core_end]):
+            if found_product:
+                break  # Header after products = new section starting
             continue
 
         # Get product name
