@@ -192,17 +192,19 @@ def _find_seller_headers(
     marker_row: int,
     scan_col_start: int,
     scan_col_end: int,
+    row_range: int = 1,
+    col_margin: int = 10,
 ) -> dict[str, tuple[int, int]]:
     """Find seller header names (Farik, Maks, Никита) near a marker.
 
-    Searches rows marker_row-1, marker_row, marker_row+1 within
+    Searches rows within row_range of marker_row within
     the column range around the marker.
     """
     found: dict[str, tuple[int, int]] = {}
     col_start = max(0, scan_col_start - 2)
-    col_end = min(scan_col_end + 10, 30)
+    col_end = min(scan_col_end + col_margin, 30)
 
-    for r in range(max(0, marker_row - 1), min(marker_row + 2, len(matrix))):
+    for r in range(max(0, marker_row - row_range), min(marker_row + row_range + 1, len(matrix))):
         row = matrix[r]
         for c in range(col_start, min(col_end, len(row))):
             val = _get_cell(row, c).lower()
@@ -413,11 +415,7 @@ def detect_prefix_sections(
             if matched_prefix in found_prefixes:
                 continue
 
-            # Find seller headers nearby
-            sellers = _find_seller_headers(matrix, row_idx, col_idx, col_idx + 10)
-
-            # Collect a few sample rows around this one
-            # Look for the "block start" — go up until we find a header or empty
+            # Find the "block start" — go up until we find a header or empty row
             block_start = row_idx
             for r in range(row_idx - 1, max(row_idx - 15, -1), -1):
                 r_row = matrix[r] if r < len(matrix) else []
@@ -446,14 +444,26 @@ def detect_prefix_sections(
             if not has_prefix_rows:
                 continue
 
-            # If no sellers found for this prefix, look at the nearest marker section's sellers
+            # Find seller headers near block_start (sellers are ABOVE the product block)
+            # Use tight column range (col_idx to col_idx+7) to stay within device zone
+            sellers = _find_seller_headers(
+                matrix, block_start, col_idx, col_idx + 7,
+                row_range=2, col_margin=0,
+            )
+
+            # Fallback 1: share sellers from another prefix section in the same zone
+            if not sellers and found_prefixes:
+                for other in found_prefixes.values():
+                    if abs(other.marker_col - col_idx) < 3 and other.seller_headers:
+                        sellers = other.seller_headers
+                        break
+
+            # Fallback 2: borrow from nearest marker section (last resort)
             if not sellers and marker_sections:
-                # Find closest marker section by column distance
                 closest = min(
                     marker_sections,
                     key=lambda s: abs(s.marker_col - col_idx),
                 )
-                # Only borrow sellers if in same general area
                 if abs(closest.marker_col - col_idx) < 15:
                     sellers = closest.seller_headers
 
