@@ -456,7 +456,7 @@ class TestEmailPipelineSmoke(unittest.TestCase):
 
         self.assertIn("Situation: new_order", out)
         self.assertIn("STOCK CHECK", out)
-        self.assertIn("Unfortunately, we just ran out of Turquoise", out)
+        self.assertIn("Unfortunately, we just ran out of Terea Turquoise", out)
         self.assertEqual(len(self.saved), 2)
         self.assertTrue(any("Нет на складе" in t for t in self.telegrams))
 

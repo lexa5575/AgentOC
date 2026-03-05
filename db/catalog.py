@@ -174,11 +174,47 @@ def get_catalog_products() -> list[dict]:
 
 _DEVICE_PREFIXES = ("ONE", "STND", "PRIME")
 
+# Brand prefixes and region suffixes to strip before building display names.
+# Ensures idempotency: calling display functions on already-decorated names
+# (e.g. "Tera Green EU") won't produce "Terea Tera Green EU EU".
+_BRAND_STRIP = ("Terea ", "Tera ", "Heets ")
+_REGION_STRIP_SUFFIXES = (
+    " made in middle east",
+    " made in armenia",
+    " made in europe",
+    " made in japan",
+    " eu",
+    " me",
+    " kz",
+    " japan",
+)
+
+
+def _strip_decorations(name: str) -> str:
+    """Strip brand prefixes, T-prefix, and region suffixes from a product name.
+
+    Returns the bare product core: "Tera Green EU" → "Green", "T Purple" → "Purple".
+    """
+    name = name.strip()
+    for prefix in _BRAND_STRIP:
+        if name.startswith(prefix):
+            name = name[len(prefix):]
+            break
+    if name.startswith("T ") and len(name) > 2:
+        name = name[2:]
+    lower = name.lower()
+    for suffix in _REGION_STRIP_SUFFIXES:
+        if lower.endswith(suffix):
+            name = name[: len(name) - len(suffix)]
+            break
+    return name.strip()
+
 
 def get_display_name(stock_name: str, category: str) -> str:
     """Convert DB product name + category to customer-friendly display name.
 
     Includes region info to distinguish products from different origins.
+    Idempotent: strips existing decorations before applying new ones.
 
     Examples:
         ("T Purple", "TEREA_JAPAN") → "Terea Purple made in Japan"
@@ -187,13 +223,14 @@ def get_display_name(stock_name: str, category: str) -> str:
         ("Purple", "KZ_TEREA") → "Terea Purple ME"
         ("Fusion Menthol", "УНИКАЛЬНАЯ_ТЕРЕА") → "Terea Fusion Menthol made in Japan"
         ("ONE Green", "ONE") → "ONE Green"
+        ("Tera Green EU", "TEREA_EUROPE") → "Terea Green EU"  (no double-decoration)
     """
     upper = stock_name.upper().strip()
     for prefix in _DEVICE_PREFIXES:
         if upper == prefix or upper.startswith(prefix + " "):
             return stock_name
 
-    core = stock_name[2:] if stock_name.startswith("T ") else stock_name
+    core = _strip_decorations(stock_name)
 
     if category in ("TEREA_JAPAN", "УНИКАЛЬНАЯ_ТЕРЕА"):
         return f"Terea {core} made in Japan"
@@ -208,6 +245,7 @@ def get_base_display_name(stock_name: str) -> str:
     """Convert DB product name to generic customer-friendly name (no region).
 
     Used in OOS problem descriptions where the specific region doesn't matter.
+    Idempotent: strips existing decorations before applying new ones.
 
     Examples:
         "T Purple" → "Terea Purple"
@@ -215,11 +253,12 @@ def get_base_display_name(stock_name: str) -> str:
         "Silver" → "Terea Silver"
         "Fusion Menthol" → "Terea Fusion Menthol"
         "ONE Green" → "ONE Green"
+        "Tera Turquoise EU" → "Terea Turquoise"  (no double-decoration)
     """
     upper = stock_name.upper().strip()
     for prefix in _DEVICE_PREFIXES:
         if upper == prefix or upper.startswith(prefix + " "):
             return stock_name
 
-    core = stock_name[2:] if stock_name.startswith("T ") else stock_name
+    core = _strip_decorations(stock_name)
     return f"Terea {core}"
