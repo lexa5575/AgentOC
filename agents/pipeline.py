@@ -104,7 +104,7 @@ def process_classified_email(classification) -> dict:
                 for oi in classification.order_items
             ]
 
-            # Resolve misspelled product names (fuzzy matching)
+            # Resolve misspelled product names (multi-tier cascade)
             items_for_check, resolve_alerts = resolve_order_items(items_for_check)
             if resolve_alerts:
                 result["resolve_alerts"] = resolve_alerts
@@ -113,6 +113,28 @@ def process_classified_email(classification) -> dict:
                     classification.client_email,
                     resolve_alerts,
                 )
+
+                # Tier 4: all tiers failed → route to LLM handler
+                # Don't auto-process the order — products are unidentified.
+                unresolved_lines = []
+                for a in resolve_alerts:
+                    cands = ", ".join(a.get("candidates", [])[:3])
+                    unresolved_lines.append(
+                        f'- "{a["original"]}" '
+                        f'(confidence: {a["confidence"]}, '
+                        f'candidates: {cands or "none"})'
+                    )
+                result["situation"] = "other"
+                result["needs_routing"] = True
+                result["unresolved_context"] = (
+                    "UNRESOLVED PRODUCTS in this order:\n"
+                    + "\n".join(unresolved_lines)
+                    + "\n\nThe system could not identify these products "
+                    "after checking aliases, fuzzy matching, and LLM. "
+                    "Ask the customer to clarify which products they want, "
+                    "or escalate to the operator."
+                )
+                return result
 
             stock_result = check_stock_for_order(items_for_check)
 

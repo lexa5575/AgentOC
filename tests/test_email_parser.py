@@ -303,6 +303,13 @@ class TestTryParseOrder(unittest.TestCase):
     def test_base_flavor_terea_prefix(self):
         self.assertEqual(self._extract_base_flavor("Terea Purple EU"), "Purple")
 
+    def test_base_flavor_made_in_europe(self):
+        """'Tera AMBER made in Europe' → 'AMBER' (new suffix)."""
+        self.assertEqual(self._extract_base_flavor("Tera AMBER made in Europe"), "AMBER")
+
+    def test_base_flavor_made_in_europe_case_insensitive(self):
+        self.assertEqual(self._extract_base_flavor("Tera Silver Made in Europe"), "Silver")
+
 
 class TestCleanEmailBody(unittest.TestCase):
     @classmethod

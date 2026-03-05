@@ -41,6 +41,7 @@ BRAND_PREFIXES = ("Tera ", "Terea ", "Heets ")
 REGION_SUFFIXES = (
     " made in Middle East",
     " made in Armenia",
+    " made in Europe",
     " EU",
     " Japan",
     " KZ",

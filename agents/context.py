@@ -220,6 +220,11 @@ def build_context(
     situation = result.get("situation", "other")
     policy_rules = load_policy(situation)
 
+    # Extra context (e.g. Tier 4: unresolved product names)
+    extra = {}
+    if result.get("unresolved_context"):
+        extra["unresolved_context"] = result["unresolved_context"]
+
     return EmailContext(
         situation=situation,
         email_text=email_text,
@@ -238,6 +243,7 @@ def build_context(
         other_thread_states=other_thread_states,
         history_text=history_text,
         policy_rules=policy_rules,
+        extra=extra,
     )
 
 
@@ -299,6 +305,10 @@ def format_context_for_prompt(ctx: EmailContext) -> str:
     # === CONVERSATION HISTORY ===
     if ctx.history_text:
         sections.append(ctx.history_text)
+
+    # === UNRESOLVED PRODUCTS (Tier 4) ===
+    if ctx.extra.get("unresolved_context"):
+        sections.append(f"=== {ctx.extra['unresolved_context']}")
 
     # === POLICY RULES ===
     if ctx.policy_rules:

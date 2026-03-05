@@ -19,7 +19,9 @@ from unittest.mock import MagicMock, patch
 # Direct import — no DB access needed since we pass known_names explicitly
 from db.product_resolver import (
     ResolveResult,
+    _extract_region_categories,
     _normalize,
+    _resolve_via_alias,
     resolve_order_items,
     resolve_product_name,
 )
@@ -153,17 +155,17 @@ class TestResolveProductName(unittest.TestCase):
     # --- Word-prefix match (site names with extra words) ---
 
     def test_word_prefix_summer_breeze(self):
-        """'SUMMER BREEZE' matches 'Summer' via word-prefix (site adds 'Breeze')."""
+        """'SUMMER BREEZE' matches 'Summer' via alias (Tier 1) or word-prefix."""
         known = KNOWN_NAMES + ["Summer"]
         r = resolve_product_name("SUMMER BREEZE", known)
-        self.assertEqual(r.confidence, "high")
+        self.assertIn(r.confidence, ("exact", "high"))  # alias → exact, word-prefix → high
         self.assertEqual(r.resolved, "Summer")
 
     def test_word_prefix_with_brand(self):
-        """'Tera SUMMER BREEZE' → strip 'Tera', then word-prefix 'SUMMER' → 'Summer'."""
+        """'Tera SUMMER BREEZE' → alias or word-prefix → 'Summer'."""
         known = KNOWN_NAMES + ["Summer"]
         r = resolve_product_name("Tera SUMMER BREEZE", known)
-        self.assertEqual(r.confidence, "high")
+        self.assertIn(r.confidence, ("exact", "high"))
         self.assertEqual(r.resolved, "Summer")
 
     def test_word_prefix_purple_wave_no_false_positive(self):
@@ -195,6 +197,89 @@ class TestResolveProductName(unittest.TestCase):
         self.assertEqual(r.confidence, "low")
         self.assertEqual(r.resolved, "Silver")
         self.assertAlmostEqual(r.score, 0.0)
+
+
+class TestAliasLookup(unittest.TestCase):
+    """Test Tier 1: alias-based deterministic matching."""
+
+    def test_alias_abbreviation_pw(self):
+        """'pw' → 'Purple Wave' via alias."""
+        known = KNOWN_NAMES  # has "Purple Wave"
+        r = resolve_product_name("pw", known)
+        self.assertEqual(r.confidence, "exact")
+        self.assertEqual(r.resolved, "Purple Wave")
+
+    def test_alias_abbreviation_purple_w(self):
+        """'purple w' → 'Purple Wave' via alias."""
+        r = resolve_product_name("purple w", KNOWN_NAMES)
+        self.assertEqual(r.confidence, "exact")
+        self.assertEqual(r.resolved, "Purple Wave")
+
+    def test_alias_tourquoise(self):
+        """'tourquoise' → 'Turquoise' via alias (multi-char typo)."""
+        r = resolve_product_name("tourquoise", KNOWN_NAMES)
+        self.assertEqual(r.confidence, "exact")
+        self.assertEqual(r.resolved, "Turquoise")
+
+    def test_alias_summer_breeze(self):
+        """'summer breeze' → 'Summer' via alias (site pattern)."""
+        known = KNOWN_NAMES + ["Summer"]
+        r = resolve_product_name("summer breeze", known)
+        self.assertEqual(r.confidence, "exact")
+        self.assertEqual(r.resolved, "Summer")
+
+    def test_alias_not_in_known_names_skipped(self):
+        """Alias target not in known_names → fall through to other tiers."""
+        # "Summer" is not in base KNOWN_NAMES
+        r = resolve_product_name("summer breeze", KNOWN_NAMES)
+        # Should fall through since "Summer" isn't available
+        self.assertNotEqual(r.resolved, "Summer")
+
+    def test_resolve_via_alias_function(self):
+        """Direct test of _resolve_via_alias."""
+        self.assertEqual(_resolve_via_alias("pw"), "Purple Wave")
+        self.assertEqual(_resolve_via_alias("Tera tourquoise"), "Turquoise")
+        self.assertIsNone(_resolve_via_alias("Silver"))  # not an alias
+
+
+class TestExtractRegionCategories(unittest.TestCase):
+    """Test region detection from product names."""
+
+    def test_made_in_europe(self):
+        cats = _extract_region_categories("Tera AMBER made in Europe")
+        self.assertEqual(cats, frozenset({"TEREA_EUROPE"}))
+
+    def test_eu_suffix(self):
+        cats = _extract_region_categories("Tera Silver EU")
+        self.assertEqual(cats, frozenset({"TEREA_EUROPE"}))
+
+    def test_made_in_middle_east(self):
+        cats = _extract_region_categories("Green made in Middle East")
+        self.assertEqual(cats, frozenset({"ARMENIA", "KZ_TEREA"}))
+
+    def test_made_in_armenia(self):
+        cats = _extract_region_categories("Terea Purple made in Armenia")
+        self.assertEqual(cats, frozenset({"ARMENIA"}))
+
+    def test_japan(self):
+        cats = _extract_region_categories("Purple Japan")
+        self.assertEqual(cats, frozenset({"TEREA_JAPAN", "УНИКАЛЬНАЯ_ТЕРЕА"}))
+
+    def test_kz(self):
+        cats = _extract_region_categories("Amber KZ")
+        self.assertEqual(cats, frozenset({"KZ_TEREA"}))
+
+    def test_me_suffix(self):
+        cats = _extract_region_categories("Tera Turquoise ME")
+        self.assertEqual(cats, frozenset({"ARMENIA", "KZ_TEREA"}))
+
+    def test_no_region(self):
+        cats = _extract_region_categories("Silver")
+        self.assertIsNone(cats)
+
+    def test_no_region_with_brand(self):
+        cats = _extract_region_categories("Tera Silver")
+        self.assertIsNone(cats)
 
 
 class TestLLMFallback(unittest.TestCase):

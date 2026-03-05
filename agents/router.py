@@ -74,8 +74,9 @@ def route_to_handler(
     Returns:
         Updated result dict
     """
-    situation = classification.situation
-    
+    # Allow pipeline to override situation (e.g. Tier 4: unresolved products)
+    situation = result.get("situation", classification.situation)
+
     # Get handler for this situation, default to general
     handler = SITUATION_HANDLERS.get(situation, handle_general)
     

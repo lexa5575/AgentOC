@@ -3,16 +3,21 @@ Product Name Resolver
 ---------------------
 
 Multi-tier product name matching:
-1. Exact match (case-insensitive, after normalization)
-2. Device models (ONE, STND, PRIME)
-3. Word-prefix ("SUMMER BREEZE" → "SUMMER" → match)
-4. Fuzzy match (SequenceMatcher >= 0.80 + gap)
-5. LLM fallback (gpt-4o-mini for medium confidence — ~1-5% of cases)
-6. Return medium/low → operator alert
+1. Alias lookup (deterministic, 0ms)
+2. Exact match (case-insensitive, after normalization)
+3. Device models (ONE, STND, PRIME)
+4. Word-prefix ("SUMMER BREEZE" → "SUMMER" → match)
+5. Fuzzy match (SequenceMatcher >= 0.80 + gap)
+6. LLM fallback (gpt-4o-mini for medium confidence — ~1-5% of cases)
+7. Return medium/low → operator alert
+
+Region-aware: if the original product name contains a region hint
+(e.g. "made in Europe", "EU"), product_ids are filtered to the matching
+category. "Tera AMBER made in Europe" → only TEREA_EUROPE ids.
 
 Usage:
     resolved_items, alerts = resolve_order_items(items)
-    # resolved_items: items with auto-corrected names (exact/high)
+    # resolved_items: items with auto-corrected names + product_ids (exact/high)
     # alerts: list of unresolved items (medium/low) for operator attention
 """
 
@@ -62,6 +67,35 @@ _ORIGIN_SUFFIXES = (
 # Device model names — valid as standalone (no color required)
 _DEVICE_MODELS = {"ONE", "STND", "PRIME"}
 
+# ---------------------------------------------------------------------------
+# Tier 1: Aliases (deterministic, 0ms)
+# ---------------------------------------------------------------------------
+# Maps alternative/misspelled names → canonical stock name.
+# Keys are lowercased. Add new entries as new site patterns are discovered.
+_ALIASES: dict[str, str] = {
+    # Abbreviations (fuzzy can't match short forms)
+    "pw": "Purple Wave",
+    "purple w": "Purple Wave",
+    # Multi-character typos (fuzzy gives medium, not high)
+    "tourquoise": "Turquoise",
+    "turqoise": "Turquoise",
+    # Site-specific naming patterns (word-prefix handles some, alias is faster)
+    "summer breeze": "Summer",
+}
+
+# ---------------------------------------------------------------------------
+# Region detection: suffix → allowed stock categories
+# ---------------------------------------------------------------------------
+_REGION_TO_CATEGORIES: dict[str, frozenset[str]] = {
+    " made in europe": frozenset({"TEREA_EUROPE"}),
+    " eu": frozenset({"TEREA_EUROPE"}),
+    " made in middle east": frozenset({"ARMENIA", "KZ_TEREA"}),
+    " made in armenia": frozenset({"ARMENIA"}),
+    " me": frozenset({"ARMENIA", "KZ_TEREA"}),
+    " japan": frozenset({"TEREA_JAPAN", "УНИКАЛЬНАЯ_ТЕРЕА"}),
+    " kz": frozenset({"KZ_TEREA"}),
+}
+
 
 @dataclass
 class ResolveResult:
@@ -109,6 +143,39 @@ def _has_origin_suffix(raw_name: str) -> bool:
             break
     name_lower = name.lower()
     return any(name_lower.endswith(s) for s in _ORIGIN_SUFFIXES)
+
+
+def _resolve_via_alias(raw_name: str) -> str | None:
+    """Tier 1: Look up normalized name in alias dictionary.
+
+    Returns canonical product name or None if no alias found.
+    """
+    normalized = _normalize(raw_name).lower()
+    return _ALIASES.get(normalized)
+
+
+def _extract_region_categories(name: str) -> frozenset[str] | None:
+    """Extract target stock categories from a region suffix in the product name.
+
+    Strips brand prefix first, then checks for region suffixes.
+    Returns matching categories or None if no region detected.
+
+    Examples:
+        "Tera AMBER made in Europe" → {"TEREA_EUROPE"}
+        "Silver EU" → {"TEREA_EUROPE"}
+        "Green made in Middle East" → {"ARMENIA", "KZ_TEREA"}
+        "Silver" → None (no region)
+    """
+    name = name.strip()
+    for prefix in _BRAND_PREFIXES:
+        if name.startswith(prefix):
+            name = name[len(prefix):]
+            break
+    name_lower = name.lower()
+    for suffix, cats in _REGION_TO_CATEGORIES.items():
+        if name_lower.endswith(suffix):
+            return cats
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -206,10 +273,19 @@ def resolve_product_name(
         # No stock data — pass through unchanged
         return ResolveResult(raw_name, raw_name, "low", 0.0, [])
 
+    # 1. Alias lookup (Tier 1 — deterministic, 0ms)
+    alias_match = _resolve_via_alias(raw_name)
+    if alias_match:
+        # Verify alias target exists in known_names
+        for name in known_names:
+            if name.lower() == alias_match.lower():
+                logger.info("Alias match: '%s' → '%s'", raw_name, name)
+                return ResolveResult(raw_name, name, "exact", 1.0, [name])
+
     normalized = _normalize(raw_name)
     normalized_lower = normalized.lower()
 
-    # 1. Exact match (case-insensitive, after normalization)
+    # 2. Exact match (case-insensitive, after normalization)
     for name in known_names:
         if _normalize(name).lower() == normalized_lower:
             # Japan T-prefix heuristic: if the input has NO regional origin suffix
@@ -230,11 +306,11 @@ def resolve_product_name(
                     return ResolveResult(raw_name, t_variant, "high", 0.92, [t_variant, name])
             return ResolveResult(raw_name, name, "exact", 1.0, [name])
 
-    # 2. Device model-only: "ONE", "STND", "PRIME" — valid without color
+    # 3. Device model-only: "ONE", "STND", "PRIME" — valid without color
     if normalized.upper() in _DEVICE_MODELS:
         return ResolveResult(raw_name, normalized.upper(), "exact", 1.0, [normalized.upper()])
 
-    # 3. Word-prefix match: "SUMMER BREEZE" → try "SUMMER" → matches "Summer"
+    # 4. Word-prefix match: "SUMMER BREEZE" → try "SUMMER" → matches "Summer"
     #    Site/email names often add extra words to the base product name.
     words = normalized.split()
     if len(words) >= 2:
@@ -265,7 +341,7 @@ def resolve_product_name(
                 )
                 return ResolveResult(raw_name, matched, "high", 0.95, [matched])
 
-    # 4. Fuzzy match via SequenceMatcher
+    # 5. Fuzzy match via SequenceMatcher
     scores = []
     for name in known_names:
         name_norm = _normalize(name).lower()
@@ -281,7 +357,7 @@ def resolve_product_name(
     if best_score >= 0.80 and gap >= 0.15:
         return ResolveResult(raw_name, best_name, "high", best_score, top_candidates)
 
-    # 5. LLM fallback for medium confidence (gpt-4o-mini)
+    # 6. LLM fallback for medium confidence (gpt-4o-mini)
     if best_score >= 0.55 and USE_LLM_RESOLVER:
         llm_match = _resolve_via_llm(raw_name, known_names)
         if llm_match:
@@ -303,19 +379,25 @@ def resolve_product_name(
 def resolve_product_to_catalog(
     raw_name: str,
     catalog_entries: list[dict] | None = None,
+    original_product_name: str | None = None,
 ) -> ResolveResult:
     """Resolve a product name against the ProductCatalog.
 
     Like resolve_product_name() but uses catalog as source of truth
     and returns product_ids for downstream lookups.
 
-    If USE_CATALOG_RESOLVER is False, returns an empty result so callers
-    fall back to the legacy string path.
+    Region-aware: if original_product_name (or raw_name) contains a region
+    suffix (e.g. "made in Europe", "EU"), product_ids are filtered to the
+    matching category only. This prevents "Tera AMBER made in Europe" from
+    matching KZ Amber when EU Amber is out of stock.
 
     Args:
         raw_name: Customer-provided product name (may be misspelled).
         catalog_entries: Optional pre-fetched catalog entries from
             get_catalog_products(). If None, queries the database.
+        original_product_name: Full product name from the order (e.g.
+            "Tera AMBER made in Europe"). Used for region detection.
+            Falls back to raw_name if not provided.
 
     Returns:
         ResolveResult with product_ids, name_norm, and display_name populated
@@ -359,13 +441,34 @@ def resolve_product_to_catalog(
             e for e in filtered
             if _normalize(e["stock_name"]).lower() == resolved_norm
         ]
+
+        # Region-aware filtering: if the product name contains a region
+        # suffix, narrow product_ids to only the matching category.
+        region_source = original_product_name or raw_name
+        region_cats = _extract_region_categories(region_source)
+        if region_cats and matching:
+            region_matching = [e for e in matching if e["category"] in region_cats]
+            if region_matching:
+                logger.info(
+                    "Region filter: '%s' → categories %s (%d/%d catalog entries)",
+                    region_source, set(region_cats),
+                    len(region_matching), len(matching),
+                )
+                matching = region_matching
+
         result.product_ids = [e["id"] for e in matching]
         result.name_norm = matching[0]["name_norm"] if matching else None
 
-        # Display name (generic, no region)
+        # Display name: region-specific if one category, generic otherwise
         if matching:
-            from db.catalog import get_base_display_name
-            result.display_name = get_base_display_name(matching[0]["stock_name"])
+            from db.catalog import get_base_display_name, get_display_name
+            categories = {e["category"] for e in matching}
+            if len(categories) == 1:
+                result.display_name = get_display_name(
+                    matching[0]["stock_name"], matching[0]["category"]
+                )
+            else:
+                result.display_name = get_base_display_name(matching[0]["stock_name"])
 
     return result
 
@@ -414,7 +517,11 @@ def _resolve_order_items_catalog(
     alerts = []
 
     for item in items:
-        result = resolve_product_to_catalog(item["base_flavor"], catalog_entries)
+        result = resolve_product_to_catalog(
+            item["base_flavor"],
+            catalog_entries,
+            original_product_name=item.get("product_name"),
+        )
 
         if result.confidence in ("exact", "high"):
             resolved_item = {**item}
