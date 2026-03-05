@@ -294,6 +294,9 @@ def check_stock_for_order(
             # Preserve display_name for OOS template
             if item.get("display_name"):
                 entry["display_name"] = item["display_name"]
+            # Preserve original_product_name for region-aware alternatives
+            if item.get("original_product_name"):
+                entry["original_product_name"] = item["original_product_name"]
             results.append(entry)
 
             if not is_sufficient:
@@ -437,6 +440,7 @@ def select_best_alternatives(
     max_options: int = 3,
     client_summary: str = "",
     excluded_products: set[str] | None = None,
+    original_product_name: str | None = None,
 ) -> dict:
     """Select up to N best alternatives for an out-of-stock flavor using LLM.
 
@@ -452,6 +456,9 @@ def select_best_alternatives(
         client_summary: Client's llm_summary text (pass client_data.get("llm_summary", "")).
         excluded_products: Product names already suggested for other OOS flavors in
             the same order. Prevents identical alternatives across multiple OOS flavors.
+        original_product_name: Full product name from order (e.g. "Tera AMBER made
+            in Europe"). Used for region detection in Priority 0. Falls back to
+            base_flavor if not provided.
 
     Returns:
         {"alternatives": [...], "reason": str, "order_count": None}
@@ -480,18 +487,34 @@ def select_best_alternatives(
     # 2. Fetch client order history
     history = get_client_flavor_history(client_email, product_type=product_type)
 
-    # 2b. Priority 0: same flavor, different region (e.g. "Silver ME" for "Silver EU")
-    # Normalize OOS flavor — if stripping a region suffix changes the name, it's a regional
-    # variant and we should suggest the same base product from another region first.
-    from db.product_resolver import _normalize as _resolver_normalize
+    # 2b. Priority 0: same flavor, different region (e.g. "Amber ME" for "Amber EU")
+    # The resolver normalizes base_flavor early (e.g. "AMBER" → "Amber"),
+    # so we use original_product_name (e.g. "Tera AMBER made in Europe") to
+    # detect whether a region was specified. If yes, the same flavor from
+    # another region is the best alternative. Even without a region suffix,
+    # we still check — the same base_flavor may exist in other categories
+    # that were excluded by the region filter during stock check.
+    from db.product_resolver import _normalize as _resolver_normalize, _extract_region_categories
+    region_source = original_product_name or base_flavor
+    oos_region_cats = _extract_region_categories(region_source)
     normalized_oos = _resolver_normalize(base_flavor)
     same_flavor_items: list[dict] = []
     same_flavor_names: set[str] = set()
-    if normalized_oos.lower() != base_flavor.strip().lower():
+    # If region was detected, find the same flavor in OTHER regions
+    if oos_region_cats:
         for item in available:
-            if item["product_name"].lower() == normalized_oos.lower():
+            if (
+                item["product_name"].lower() == normalized_oos.lower()
+                and item["category"] not in oos_region_cats
+            ):
                 same_flavor_items.append(item)
                 same_flavor_names.add(item["product_name"])
+        if same_flavor_items:
+            logger.info(
+                "Priority 0: same flavor '%s' found in other regions: %s",
+                normalized_oos,
+                [(it["category"], it["quantity"]) for it in same_flavor_items],
+            )
 
     # 3. Ask LLM to pick remaining alternatives — fallback on any failure
     llm_slots = max(1, max_options - len(same_flavor_items))

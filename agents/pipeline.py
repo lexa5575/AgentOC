@@ -100,6 +100,7 @@ def process_classified_email(classification) -> dict:
                     "product_name": oi.product_name,
                     "base_flavor": oi.base_flavor,
                     "quantity": oi.quantity,
+                    "original_product_name": oi.product_name,
                 }
                 for oi in classification.order_items
             ]
@@ -149,6 +150,7 @@ def process_classified_email(classification) -> dict:
                         max_options=3,
                         client_summary=client.get("llm_summary", "") if client else "",
                         excluded_products=already_suggested,
+                        original_product_name=insuff.get("original_product_name"),
                     )
                     best_alternatives[insuff["base_flavor"]] = best
                     already_suggested.update(
