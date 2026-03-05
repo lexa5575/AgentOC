@@ -102,23 +102,14 @@ def _format_alternative(alt_entry: dict) -> str:
     Returns:
         Formatted string like "Terea Purple made in Japan", "Terea Green EU", "Terea Amber ME"
     """
+    from db.catalog import get_display_name
+
     alt = alt_entry["alternative"]
     reason = alt_entry.get("reason", "fallback")
     raw_name = alt["product_name"]
     category = alt.get("category", "")
 
-    if category in ("TEREA_JAPAN", "УНИКАЛЬНАЯ_ТЕРЕА"):
-        # "T Purple" → "Terea Purple made in Japan"
-        # "Fusion Menthol" → "Terea Fusion Menthol made in Japan"
-        core = raw_name[2:] if raw_name.startswith("T ") else raw_name
-        formatted = f"Terea {core} made in Japan"
-    elif category == "TEREA_EUROPE":
-        formatted = f"Terea {raw_name} EU"
-    elif category in ("ARMENIA", "KZ_TEREA"):
-        formatted = f"Terea {raw_name} ME"
-    else:
-        # devices and unknown — no region label
-        formatted = raw_name
+    formatted = get_display_name(raw_name, category)
 
     if reason == "same_flavor":
         formatted += " (same product, different region)"
@@ -158,21 +149,27 @@ def fill_out_of_stock_template(
         else:
             partial_oos.append(item)
     
+    # Helper: get customer-friendly name for an item
+    from db.catalog import get_base_display_name
+
+    def _display(item: dict) -> str:
+        return item.get("display_name") or get_base_display_name(item["base_flavor"])
+
     # Step 2: Build the problem description
     problem_parts = []
-    
+
     if full_oos:
         if len(full_oos) == 1:
-            problem_parts.append(f"we just ran out of {full_oos[0]['base_flavor']}")
+            problem_parts.append(f"we just ran out of {_display(full_oos[0])}")
         else:
-            flavors = ", ".join([i["base_flavor"] for i in full_oos[:-1]])
-            flavors += f" and {full_oos[-1]['base_flavor']}"
+            flavors = ", ".join([_display(i) for i in full_oos[:-1]])
+            flavors += f" and {_display(full_oos[-1])}"
             problem_parts.append(f"we just ran out of {flavors}")
-    
+
     if partial_oos:
         for p in partial_oos:
             problem_parts.append(
-                f"we only have {p['total_available']} {p['base_flavor']} available "
+                f"we only have {p['total_available']} {_display(p)} available "
                 f"(you ordered {p['ordered_qty']})"
             )
     
@@ -192,18 +189,18 @@ def fill_out_of_stock_template(
         flavor = item["base_flavor"]
         decision = best_alternatives.get(flavor, {})
         alts = decision.get("alternatives", [])
-        
+
         if alts:
             has_alternatives = True
             # Format up to 3 alternatives
             formatted_alts = [_format_alternative(a) for a in alts[:3]]
-            
+
             if len(insufficient_items) == 1:
                 # Single flavor — no need to specify "For X:"
                 alt_lines.append(", ".join(formatted_alts))
             else:
-                # Multiple flavors — specify which flavor
-                alt_lines.append(f"For {flavor}: {', '.join(formatted_alts)}")
+                # Multiple flavors — specify which flavor (customer-friendly name)
+                alt_lines.append(f"For {_display(item)}: {', '.join(formatted_alts)}")
     
     # Step 4: Build the final email
     lines = [

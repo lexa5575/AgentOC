@@ -155,11 +155,33 @@ def sync_stock(warehouse: str, items: list[dict]) -> int:
 
 
 def search_stock(query: str, warehouse: str | None = None) -> list[dict]:
-    """Search stock by substring match (ILIKE %query%)."""
+    """Search stock by substring match (ILIKE %query%).
+
+    Used by LLM agents via search_stock_tool — intentionally broad.
+    """
     session = get_session()
     try:
         q = session.query(StockItem).filter(
             StockItem.product_name.ilike(f"%{query.strip()}%")
+        )
+        if warehouse:
+            q = q.filter_by(warehouse=warehouse)
+        return [item.to_dict() for item in q.all()]
+    finally:
+        session.close()
+
+
+def search_stock_by_ids(
+    product_ids: list[int],
+    warehouse: str | None = None,
+) -> list[dict]:
+    """Get stock items by product catalog IDs (exact match)."""
+    if not product_ids:
+        return []
+    session = get_session()
+    try:
+        q = session.query(StockItem).filter(
+            StockItem.product_id.in_(product_ids),
         )
         if warehouse:
             q = q.filter_by(warehouse=warehouse)
@@ -235,18 +257,25 @@ def check_stock_for_order(
             product_type = get_product_type(flavor)
             allowed_cats = _get_allowed_categories(product_type)
 
-            stock_entries = (
-                session.query(StockItem)
-                .filter(
-                    # Exact case-insensitive match: after resolve_order_items the
-                    # flavor is a canonical DB name, so substring search is wrong —
-                    # it would aggregate unrelated products (e.g. "Purple" matches
-                    # T Purple + Black Purple Menthol + Armenia Purple mixing $110
-                    # and $115 tiers, breaking calculate_order_price).
-                    StockItem.product_name.ilike(flavor),
-                    StockItem.category.in_(allowed_cats),
+            # Phase 2: product_id path (exact) vs legacy string path (ILIKE)
+            product_ids = item.get("product_ids")
+            if product_ids:
+                stock_entries = (
+                    session.query(StockItem)
+                    .filter(
+                        StockItem.product_id.in_(product_ids),
+                        StockItem.category.in_(allowed_cats),
+                    )
                 )
-            )
+            else:
+                # Legacy fallback: exact case-insensitive match by name
+                stock_entries = (
+                    session.query(StockItem)
+                    .filter(
+                        StockItem.product_name.ilike(flavor),
+                        StockItem.category.in_(allowed_cats),
+                    )
+                )
             if warehouse:
                 stock_entries = stock_entries.filter_by(warehouse=warehouse)
             stock_entries = stock_entries.all()
@@ -262,6 +291,9 @@ def check_stock_for_order(
                 "total_available": total_available,
                 "is_sufficient": is_sufficient,
             }
+            # Preserve display_name for OOS template
+            if item.get("display_name"):
+                entry["display_name"] = item["display_name"]
             results.append(entry)
 
             if not is_sufficient:
@@ -371,15 +403,25 @@ def _get_available_items(
     allowed_cats: set[str],
     warehouse: str | None = None,
     exclude_flavor: str = "",
+    exclude_product_ids: list[int] | None = None,
 ) -> list[dict]:
-    """Return available stock items filtered by category, warehouse, and flavor exclusion."""
+    """Return available stock items filtered by category, warehouse, and exclusion.
+
+    Args:
+        allowed_cats: Set of allowed stock categories.
+        warehouse: Optional warehouse filter.
+        exclude_flavor: Legacy: exclude by substring ILIKE.
+        exclude_product_ids: Phase 2: exclude by product_id (exact, preferred).
+    """
     session = get_session()
     try:
         q = session.query(StockItem).filter(
             StockItem.category.in_(allowed_cats),
             StockItem.quantity > 0,
         )
-        if exclude_flavor:
+        if exclude_product_ids:
+            q = q.filter(~StockItem.product_id.in_(exclude_product_ids))
+        elif exclude_flavor:
             q = q.filter(~StockItem.product_name.ilike(f"%{exclude_flavor}%"))
         if warehouse:
             q = q.filter_by(warehouse=warehouse)
@@ -422,7 +464,16 @@ def select_best_alternatives(
         max_options = 1
 
     # 1. Fetch available stock (correct categories, qty > 0, not the OOS flavor)
-    available = _get_available_items(allowed_cats, warehouse, base_flavor)
+    # Try to resolve OOS flavor to product_ids for precise exclusion
+    from db.product_resolver import resolve_product_to_catalog
+    oos_resolve = resolve_product_to_catalog(base_flavor)
+    oos_product_ids = oos_resolve.product_ids if oos_resolve.product_ids else None
+
+    available = _get_available_items(
+        allowed_cats, warehouse,
+        exclude_flavor=base_flavor if not oos_product_ids else "",
+        exclude_product_ids=oos_product_ids,
+    )
     if not available:
         return {"alternatives": [], "reason": "none_available", "order_count": None}
 

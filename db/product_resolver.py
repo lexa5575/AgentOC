@@ -18,10 +18,15 @@ Usage:
 """
 
 import logging
+import os
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 
 logger = logging.getLogger(__name__)
+
+# Feature flag: use ProductCatalog instead of StockItem for resolution.
+# Set USE_CATALOG_RESOLVER=false in env to revert to legacy string path.
+USE_CATALOG_RESOLVER = os.environ.get("USE_CATALOG_RESOLVER", "true").lower() == "true"
 
 # Brand prefixes to strip before matching (mirrors email_parser logic)
 _BRAND_PREFIXES = ("Tera ", "Terea ", "Heets ")
@@ -64,6 +69,9 @@ class ResolveResult:
     confidence: str  # "exact", "high", "medium", "low"
     score: float
     candidates: list[str] = field(default_factory=list)
+    product_ids: list[int] = field(default_factory=list)
+    name_norm: str | None = None
+    display_name: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -101,7 +109,7 @@ def _has_origin_suffix(raw_name: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Known names from stock DB
+# Known names from stock DB (legacy — kept for backward compat / fallback)
 # ---------------------------------------------------------------------------
 
 def get_known_product_names() -> list[str]:
@@ -117,7 +125,7 @@ def get_known_product_names() -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Single name resolver
+# Single name resolver (core matching logic)
 # ---------------------------------------------------------------------------
 
 def resolve_product_name(
@@ -190,6 +198,80 @@ def resolve_product_name(
 
 
 # ---------------------------------------------------------------------------
+# Catalog-backed resolver (Phase 2)
+# ---------------------------------------------------------------------------
+
+def resolve_product_to_catalog(
+    raw_name: str,
+    catalog_entries: list[dict] | None = None,
+) -> ResolveResult:
+    """Resolve a product name against the ProductCatalog.
+
+    Like resolve_product_name() but uses catalog as source of truth
+    and returns product_ids for downstream lookups.
+
+    If USE_CATALOG_RESOLVER is False, returns an empty result so callers
+    fall back to the legacy string path.
+
+    Args:
+        raw_name: Customer-provided product name (may be misspelled).
+        catalog_entries: Optional pre-fetched catalog entries from
+            get_catalog_products(). If None, queries the database.
+
+    Returns:
+        ResolveResult with product_ids, name_norm, and display_name populated
+        for exact/high confidence matches.
+    """
+    if not USE_CATALOG_RESOLVER:
+        return ResolveResult(raw_name, None, "low", 0.0)
+
+    if catalog_entries is None:
+        from db.catalog import get_catalog_products
+        catalog_entries = get_catalog_products()
+
+    if not catalog_entries:
+        return ResolveResult(raw_name, raw_name, "low", 0.0, [])
+
+    # Filter catalog by product type (sticks vs devices)
+    from db.stock import STICK_CATEGORIES, DEVICE_CATEGORIES, get_product_type
+    product_type = get_product_type(raw_name)
+    allowed_cats = DEVICE_CATEGORIES if product_type == "device" else STICK_CATEGORIES
+    filtered = [e for e in catalog_entries if e["category"] in allowed_cats]
+
+    if not filtered:
+        return ResolveResult(raw_name, raw_name, "low", 0.0, [])
+
+    # Extract unique stock_names (deduplicated by normalized form)
+    seen_norms: set[str] = set()
+    known_names: list[str] = []
+    for entry in filtered:
+        norm_key = _normalize(entry["stock_name"]).lower()
+        if norm_key not in seen_norms:
+            seen_norms.add(norm_key)
+            known_names.append(entry["stock_name"])
+
+    # Use existing matching logic
+    result = resolve_product_name(raw_name, known_names)
+
+    # Enrich with catalog data if match found
+    if result.resolved and result.confidence in ("exact", "high"):
+        resolved_norm = _normalize(result.resolved).lower()
+        matching = [
+            e for e in filtered
+            if _normalize(e["stock_name"]).lower() == resolved_norm
+        ]
+        result.product_ids = [e["id"] for e in matching]
+        result.name_norm = matching[0]["name_norm"] if matching else None
+
+        # Display name (generic, no region)
+        if matching:
+            from db.catalog import get_base_display_name
+            result.display_name = get_base_display_name(matching[0]["stock_name"])
+
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Batch resolver for order items
 # ---------------------------------------------------------------------------
 
@@ -199,15 +281,81 @@ def resolve_order_items(
 ) -> tuple[list[dict], list[dict]]:
     """Resolve product names in a list of order items.
 
+    Uses ProductCatalog when USE_CATALOG_RESOLVER is True (default),
+    falls back to legacy StockItem names otherwise.
+
     Args:
         items: List of dicts with keys: base_flavor, product_name, quantity.
-        known_names: Optional pre-fetched known names (avoids repeated DB calls).
+        known_names: Optional pre-fetched known names (legacy path only).
 
     Returns:
         (resolved_items, alerts):
-        - resolved_items: items with auto-corrected names (exact/high confidence)
+        - resolved_items: items with auto-corrected names + product_ids (exact/high)
         - alerts: list of unresolved items for operator attention
     """
+    # If known_names explicitly provided, always use legacy path (tests + manual override)
+    if known_names is not None:
+        return _resolve_order_items_legacy(items, known_names)
+    if USE_CATALOG_RESOLVER:
+        return _resolve_order_items_catalog(items)
+    return _resolve_order_items_legacy(items, None)
+
+
+def _resolve_order_items_catalog(
+    items: list[dict],
+) -> tuple[list[dict], list[dict]]:
+    """Resolve order items using ProductCatalog as source of truth."""
+    from db.catalog import get_catalog_products
+
+    catalog_entries = get_catalog_products()
+    if not catalog_entries:
+        return items, []  # No catalog data — pass through
+
+    resolved = []
+    alerts = []
+
+    for item in items:
+        result = resolve_product_to_catalog(item["base_flavor"], catalog_entries)
+
+        if result.confidence in ("exact", "high"):
+            resolved_item = {**item}
+            if result.resolved and result.resolved != item["base_flavor"]:
+                resolved_item["base_flavor"] = result.resolved
+                resolved_item["product_name"] = result.resolved
+                logger.info(
+                    "Product resolved (catalog): '%s' → '%s' (confidence=%s, score=%.2f, ids=%s)",
+                    item["base_flavor"], result.resolved,
+                    result.confidence, result.score, result.product_ids,
+                )
+            # Enrich with catalog data
+            if result.product_ids:
+                resolved_item["product_ids"] = result.product_ids
+            if result.display_name:
+                resolved_item["display_name"] = result.display_name
+            resolved.append(resolved_item)
+        else:
+            # medium/low — pass through unchanged, add to alerts
+            resolved.append(item)
+            alerts.append({
+                "original": item["base_flavor"],
+                "confidence": result.confidence,
+                "score": round(result.score, 2),
+                "candidates": result.candidates,
+            })
+            logger.warning(
+                "Product unresolved: '%s' (confidence=%s, score=%.2f, candidates=%s)",
+                item["base_flavor"], result.confidence,
+                result.score, result.candidates[:3],
+            )
+
+    return resolved, alerts
+
+
+def _resolve_order_items_legacy(
+    items: list[dict],
+    known_names: list[str] | None = None,
+) -> tuple[list[dict], list[dict]]:
+    """Resolve order items using legacy StockItem names (fallback path)."""
     if known_names is None:
         known_names = get_known_product_names()
 

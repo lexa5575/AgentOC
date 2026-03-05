@@ -19,9 +19,12 @@ import logging
 from db.stock import (
     CATEGORY_PRICES,
     search_stock,
+    search_stock_by_ids,
     select_best_alternatives,
     get_product_type,
 )
+from db.catalog import get_base_display_name
+from db.product_resolver import resolve_product_to_catalog
 from agents.context import build_context, format_context_for_prompt
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
@@ -140,8 +143,14 @@ def handle_stock_question(
         from agents.handlers.general import handle_general
         return handle_general(classification, result, email_text)
 
-    # Check stock
-    stock_items = search_stock(flavor)
+    # Resolve via catalog for exact lookup, fallback to substring search
+    catalog_result = resolve_product_to_catalog(flavor)
+    display_name = catalog_result.display_name or get_base_display_name(flavor)
+
+    if catalog_result.product_ids:
+        stock_items = search_stock_by_ids(catalog_result.product_ids)
+    else:
+        stock_items = search_stock(flavor)
     available = [it for it in stock_items if it["quantity"] > 0]
 
     client_name = result.get("client_name") or (
@@ -153,7 +162,7 @@ def handle_stock_question(
     # -----------------------------------------------------------------------
     if available:
         price = _price_for_items(available)
-        result["draft_reply"] = _build_in_stock_reply(client_name, flavor, available, price)
+        result["draft_reply"] = _build_in_stock_reply(client_name, display_name, available, price)
         result["template_used"] = True
         result["needs_routing"] = False
 

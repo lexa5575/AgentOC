@@ -10,6 +10,9 @@ Functions:
 - normalize_product_name(name) → lowered, trimmed, collapsed spaces
 - ensure_catalog_entry(session, category, product_name) → catalog id
 - ensure_catalog_entries(session, items) → count of new entries created
+- get_catalog_products() → all catalog entries for resolver matching
+- get_display_name(stock_name, category) → customer-friendly name with region
+- get_base_display_name(stock_name) → customer-friendly name without region
 """
 
 import logging
@@ -134,3 +137,89 @@ def ensure_catalog_entries(session, items: list[dict]) -> int:
     if created:
         logger.info("Created %d new catalog entries", created)
     return created
+
+
+# ---------------------------------------------------------------------------
+# Catalog queries (Phase 2)
+# ---------------------------------------------------------------------------
+
+def get_catalog_products() -> list[dict]:
+    """Get all catalog entries for resolver matching.
+
+    Returns:
+        List of dicts: [{id, category, name_norm, stock_name}, ...]
+        Deduplicated by definition (UNIQUE constraint on category + name_norm).
+    """
+    from db.models import get_session
+
+    session = get_session()
+    try:
+        entries = session.query(ProductCatalog).all()
+        return [
+            {
+                "id": e.id,
+                "category": e.category,
+                "name_norm": e.name_norm,
+                "stock_name": e.stock_name,
+            }
+            for e in entries
+        ]
+    finally:
+        session.close()
+
+
+# ---------------------------------------------------------------------------
+# Display names (customer-facing)
+# ---------------------------------------------------------------------------
+
+_DEVICE_PREFIXES = ("ONE", "STND", "PRIME")
+
+
+def get_display_name(stock_name: str, category: str) -> str:
+    """Convert DB product name + category to customer-friendly display name.
+
+    Includes region info to distinguish products from different origins.
+
+    Examples:
+        ("T Purple", "TEREA_JAPAN") → "Terea Purple made in Japan"
+        ("Purple", "TEREA_EUROPE") → "Terea Purple EU"
+        ("Purple", "ARMENIA") → "Terea Purple ME"
+        ("Purple", "KZ_TEREA") → "Terea Purple ME"
+        ("Fusion Menthol", "УНИКАЛЬНАЯ_ТЕРЕА") → "Terea Fusion Menthol made in Japan"
+        ("ONE Green", "ONE") → "ONE Green"
+    """
+    upper = stock_name.upper().strip()
+    for prefix in _DEVICE_PREFIXES:
+        if upper == prefix or upper.startswith(prefix + " "):
+            return stock_name
+
+    core = stock_name[2:] if stock_name.startswith("T ") else stock_name
+
+    if category in ("TEREA_JAPAN", "УНИКАЛЬНАЯ_ТЕРЕА"):
+        return f"Terea {core} made in Japan"
+    if category == "TEREA_EUROPE":
+        return f"Terea {core} EU"
+    if category in ("ARMENIA", "KZ_TEREA"):
+        return f"Terea {core} ME"
+    return stock_name
+
+
+def get_base_display_name(stock_name: str) -> str:
+    """Convert DB product name to generic customer-friendly name (no region).
+
+    Used in OOS problem descriptions where the specific region doesn't matter.
+
+    Examples:
+        "T Purple" → "Terea Purple"
+        "Purple" → "Terea Purple"
+        "Silver" → "Terea Silver"
+        "Fusion Menthol" → "Terea Fusion Menthol"
+        "ONE Green" → "ONE Green"
+    """
+    upper = stock_name.upper().strip()
+    for prefix in _DEVICE_PREFIXES:
+        if upper == prefix or upper.startswith(prefix + " "):
+            return stock_name
+
+    core = stock_name[2:] if stock_name.startswith("T ") else stock_name
+    return f"Terea {core}"

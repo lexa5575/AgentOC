@@ -11,6 +11,9 @@ All business logic lives in domain modules:
 
 from db.catalog import (
     ensure_catalog_entry,
+    get_base_display_name,
+    get_catalog_products,
+    get_display_name,
     normalize_product_name,
 )
 from db.clients import (
@@ -35,7 +38,7 @@ from db.email_history import (
     save_email,
     set_gmail_state,
 )
-from db.product_resolver import resolve_order_items
+from db.product_resolver import resolve_order_items, resolve_product_to_catalog
 from db.sheet_config import (
     delete_sheet_config,
     is_config_stale,
@@ -51,6 +54,7 @@ from db.stock import (
     get_stock_summary,
     save_order_items,
     search_stock,
+    search_stock_by_ids,
     select_best_alternatives,
     sync_stock,
 )
@@ -58,6 +62,9 @@ from db.stock import (
 __all__ = [
     # catalog
     "ensure_catalog_entry",
+    "get_base_display_name",
+    "get_catalog_products",
+    "get_display_name",
     "normalize_product_name",
     # clients
     "add_client",
@@ -81,12 +88,14 @@ __all__ = [
     "set_gmail_state",
     # product resolver
     "resolve_order_items",
+    "resolve_product_to_catalog",
     # sheet config
     "delete_sheet_config",
     "is_config_stale",
     "load_sheet_config",
     "save_sheet_config",
     # stock
+    "search_stock_by_ids",
     "calculate_order_price",
     "check_stock_for_order",
     "get_available_by_category",
