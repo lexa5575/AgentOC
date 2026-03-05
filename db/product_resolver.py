@@ -177,7 +177,38 @@ def resolve_product_name(
     if normalized.upper() in _DEVICE_MODELS:
         return ResolveResult(raw_name, normalized.upper(), "exact", 1.0, [normalized.upper()])
 
-    # 3. Fuzzy match via SequenceMatcher
+    # 3. Word-prefix match: "SUMMER BREEZE" → try "SUMMER" → matches "Summer"
+    #    Site/email names often add extra words to the base product name.
+    words = normalized.split()
+    if len(words) >= 2:
+        # Build known names lookup (normalized → original)
+        known_lookup: dict[str, str] = {}
+        for name in known_names:
+            known_lookup[_normalize(name).lower()] = name
+        # Try removing trailing words one by one
+        for end in range(len(words) - 1, 0, -1):
+            prefix_lower = " ".join(words[:end]).lower()
+            if prefix_lower in known_lookup:
+                matched = known_lookup[prefix_lower]
+                # Apply Japan T-prefix heuristic (same as exact match)
+                if not _has_origin_suffix(raw_name):
+                    t_variant = next(
+                        (n for n in known_names if n.lower() == "t " + prefix_lower),
+                        None,
+                    )
+                    if t_variant:
+                        logger.info(
+                            "Word-prefix + T-heuristic: '%s' → '%s'",
+                            raw_name, t_variant,
+                        )
+                        return ResolveResult(raw_name, t_variant, "high", 0.95, [t_variant, matched])
+                logger.info(
+                    "Word-prefix match: '%s' → '%s' (dropped trailing words)",
+                    raw_name, matched,
+                )
+                return ResolveResult(raw_name, matched, "high", 0.95, [matched])
+
+    # 4. Fuzzy match via SequenceMatcher
     scores = []
     for name in known_names:
         name_norm = _normalize(name).lower()

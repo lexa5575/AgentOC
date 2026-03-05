@@ -147,6 +147,34 @@ class TestResolveProductName(unittest.TestCase):
         self.assertEqual(r.confidence, "high")
         self.assertEqual(r.resolved, "Turquoise")
 
+    # --- Word-prefix match (site names with extra words) ---
+
+    def test_word_prefix_summer_breeze(self):
+        """'SUMMER BREEZE' matches 'Summer' via word-prefix (site adds 'Breeze')."""
+        known = KNOWN_NAMES + ["Summer"]
+        r = resolve_product_name("SUMMER BREEZE", known)
+        self.assertEqual(r.confidence, "high")
+        self.assertEqual(r.resolved, "Summer")
+
+    def test_word_prefix_with_brand(self):
+        """'Tera SUMMER BREEZE' → strip 'Tera', then word-prefix 'SUMMER' → 'Summer'."""
+        known = KNOWN_NAMES + ["Summer"]
+        r = resolve_product_name("Tera SUMMER BREEZE", known)
+        self.assertEqual(r.confidence, "high")
+        self.assertEqual(r.resolved, "Summer")
+
+    def test_word_prefix_purple_wave_no_false_positive(self):
+        """'Purple Wave' is an exact match — should NOT trigger word-prefix for 'Purple'."""
+        r = resolve_product_name("Purple Wave", KNOWN_NAMES)
+        self.assertEqual(r.confidence, "exact")
+        self.assertEqual(r.resolved, "Purple Wave")
+
+    def test_word_prefix_single_word_no_trigger(self):
+        """Single-word name should NOT trigger word-prefix (goes to fuzzy)."""
+        r = resolve_product_name("Sillver", KNOWN_NAMES)
+        self.assertEqual(r.confidence, "high")
+        self.assertEqual(r.resolved, "Silver")
+
     # --- Low confidence (no reasonable match) ---
 
     def test_low_confidence_gibberish(self):
