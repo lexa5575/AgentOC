@@ -8,10 +8,13 @@ Tests:
 - Device model standalone ("ONE", "STND", "PRIME") → exact
 - Brand prefix stripping ("Tera Green" → matches "Green")
 - Region suffix stripping ("Silver EU" → matches "Silver")
+- LLM fallback for medium confidence cases
 - Batch resolver (resolve_order_items) integration
 """
 
 import unittest
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 # Direct import — no DB access needed since we pass known_names explicitly
 from db.product_resolver import (
@@ -192,6 +195,70 @@ class TestResolveProductName(unittest.TestCase):
         self.assertEqual(r.confidence, "low")
         self.assertEqual(r.resolved, "Silver")
         self.assertAlmostEqual(r.score, 0.0)
+
+
+class TestLLMFallback(unittest.TestCase):
+    """Test LLM fallback for medium confidence cases."""
+
+    def _mock_openai_response(self, content: str):
+        """Create a mock OpenAI client that returns given content."""
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.choices = [
+            MagicMock(message=MagicMock(content=content))
+        ]
+        mock_client.chat.completions.create.return_value = mock_response
+        return mock_client
+
+    @patch("db.product_resolver.USE_LLM_RESOLVER", True)
+    @patch("openai.OpenAI")
+    def test_llm_resolves_medium_confidence(self, mock_openai_cls):
+        """Medium confidence item → LLM returns correct match → high confidence."""
+        mock_openai_cls.return_value = self._mock_openai_response("Summer")
+        # "Breeze Summer" (reversed) — fuzzy gives medium, word-prefix won't catch
+        known = KNOWN_NAMES + ["Summer"]
+        r = resolve_product_name("Breeze Summer", known)
+        self.assertEqual(r.confidence, "high")
+        self.assertEqual(r.resolved, "Summer")
+        self.assertAlmostEqual(r.score, 0.85)
+
+    @patch("db.product_resolver.USE_LLM_RESOLVER", True)
+    @patch("openai.OpenAI")
+    def test_llm_returns_garbage_falls_to_medium(self, mock_openai_cls):
+        """LLM returns something not in known_names → medium confidence (operator alert)."""
+        mock_openai_cls.return_value = self._mock_openai_response("NotARealProduct")
+        known = KNOWN_NAMES + ["Summer"]
+        r = resolve_product_name("Breeze Summer", known)
+        self.assertEqual(r.confidence, "medium")
+        self.assertIsNone(r.resolved)
+
+    @patch("db.product_resolver.USE_LLM_RESOLVER", True)
+    @patch("openai.OpenAI")
+    def test_llm_api_error_falls_to_medium(self, mock_openai_cls):
+        """OpenAI API error → graceful fallback to medium confidence."""
+        mock_openai_cls.side_effect = Exception("API timeout")
+        known = KNOWN_NAMES + ["Summer"]
+        r = resolve_product_name("Breeze Summer", known)
+        self.assertEqual(r.confidence, "medium")
+        self.assertIsNone(r.resolved)
+
+    @patch("db.product_resolver.USE_LLM_RESOLVER", False)
+    def test_llm_disabled_skips_to_medium(self):
+        """USE_LLM_RESOLVER=false → no LLM call, medium confidence."""
+        known = KNOWN_NAMES + ["Summer"]
+        r = resolve_product_name("Breeze Summer", known)
+        self.assertEqual(r.confidence, "medium")
+        self.assertIsNone(r.resolved)
+
+    @patch("db.product_resolver.USE_LLM_RESOLVER", True)
+    @patch("openai.OpenAI")
+    def test_llm_returns_none_falls_to_medium(self, mock_openai_cls):
+        """LLM returns 'NONE' → medium confidence (operator alert)."""
+        mock_openai_cls.return_value = self._mock_openai_response("NONE")
+        known = KNOWN_NAMES + ["Summer"]
+        r = resolve_product_name("Breeze Summer", known)
+        self.assertEqual(r.confidence, "medium")
+        self.assertIsNone(r.resolved)
 
 
 class TestResolveOrderItems(unittest.TestCase):

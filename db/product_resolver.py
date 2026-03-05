@@ -2,14 +2,13 @@
 Product Name Resolver
 ---------------------
 
-Deterministic fuzzy matching for misspelled product names.
-Uses difflib.SequenceMatcher (stdlib) — no new dependencies.
-
-Confidence levels:
-- exact:  case-insensitive exact match after normalization
-- high:   score >= 0.80 with clear winner (gap >= 0.15 to second)
-- medium: score >= 0.55 but ambiguous or borderline
-- low:    score < 0.55 — no reasonable match
+Multi-tier product name matching:
+1. Exact match (case-insensitive, after normalization)
+2. Device models (ONE, STND, PRIME)
+3. Word-prefix ("SUMMER BREEZE" → "SUMMER" → match)
+4. Fuzzy match (SequenceMatcher >= 0.80 + gap)
+5. LLM fallback (gpt-4o-mini for medium confidence — ~1-5% of cases)
+6. Return medium/low → operator alert
 
 Usage:
     resolved_items, alerts = resolve_order_items(items)
@@ -27,6 +26,10 @@ logger = logging.getLogger(__name__)
 # Feature flag: use ProductCatalog instead of StockItem for resolution.
 # Set USE_CATALOG_RESOLVER=false in env to revert to legacy string path.
 USE_CATALOG_RESOLVER = os.environ.get("USE_CATALOG_RESOLVER", "true").lower() == "true"
+
+# Feature flag: use LLM (gpt-4o-mini) for medium confidence cases.
+# Set USE_LLM_RESOLVER=false in env to disable LLM fallback.
+USE_LLM_RESOLVER = os.environ.get("USE_LLM_RESOLVER", "true").lower() == "true"
 
 # Brand prefixes to strip before matching (mirrors email_parser logic)
 _BRAND_PREFIXES = ("Tera ", "Terea ", "Heets ")
@@ -122,6 +125,60 @@ def get_known_product_names() -> list[str]:
         return sorted(set(r[0] for r in rows))
     finally:
         session.close()
+
+
+# ---------------------------------------------------------------------------
+# LLM fallback (Tier 3 — gpt-4o-mini for medium confidence)
+# ---------------------------------------------------------------------------
+
+def _resolve_via_llm(raw_name: str, known_names: list[str]) -> str | None:
+    """Ask gpt-4o-mini to match a product name when fuzzy matching is uncertain.
+
+    Called only for medium confidence cases (~1-5% of lookups).
+    Returns the matched product name or None if LLM can't determine.
+
+    Validates LLM response against known_names to prevent hallucination.
+    On any API error, returns None (graceful fallback to medium/operator alert).
+    """
+    try:
+        import openai
+
+        catalog_list = ", ".join(known_names)
+        prompt = (
+            f'Customer ordered: "{raw_name}"\n\n'
+            f"Our product catalog:\n{catalog_list}\n\n"
+            f"Which product did the customer mean?\n"
+            f'Reply with ONLY the exact product name from the catalog above.\n'
+            f'If you cannot determine, reply with "NONE".'
+        )
+
+        client = openai.OpenAI()
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+            max_tokens=50,
+        )
+        answer = response.choices[0].message.content.strip()
+
+        if answer == "NONE":
+            logger.info("LLM resolver: NONE for '%s'", raw_name)
+            return None
+
+        # Validate: answer must exactly match a known name
+        for name in known_names:
+            if name.lower() == answer.lower():
+                return name
+
+        logger.warning(
+            "LLM resolver: response '%s' not in known names for '%s'",
+            answer, raw_name,
+        )
+        return None
+
+    except Exception as e:
+        logger.warning("LLM resolver error for '%s': %s", raw_name, e)
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -223,6 +280,17 @@ def resolve_product_name(
 
     if best_score >= 0.80 and gap >= 0.15:
         return ResolveResult(raw_name, best_name, "high", best_score, top_candidates)
+
+    # 5. LLM fallback for medium confidence (gpt-4o-mini)
+    if best_score >= 0.55 and USE_LLM_RESOLVER:
+        llm_match = _resolve_via_llm(raw_name, known_names)
+        if llm_match:
+            logger.info(
+                "LLM resolved: '%s' → '%s' (fuzzy was medium, score=%.2f)",
+                raw_name, llm_match, best_score,
+            )
+            return ResolveResult(raw_name, llm_match, "high", 0.85, top_candidates)
+
     if best_score >= 0.55:
         return ResolveResult(raw_name, None, "medium", best_score, top_candidates)
     return ResolveResult(raw_name, None, "low", best_score, top_candidates)
