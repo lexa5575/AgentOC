@@ -471,9 +471,13 @@ def select_best_alternatives(
         max_options = 1
 
     # 1. Fetch available stock (correct categories, qty > 0, not the OOS flavor)
-    # Try to resolve OOS flavor to product_ids for precise exclusion
+    # Resolve with original_product_name so region filter excludes only
+    # the OOS region's product_ids (e.g. Amber EU id=52), NOT all Amber ids.
     from db.product_resolver import resolve_product_to_catalog
-    oos_resolve = resolve_product_to_catalog(base_flavor)
+    oos_resolve = resolve_product_to_catalog(
+        base_flavor,
+        original_product_name=original_product_name,
+    )
     oos_product_ids = oos_resolve.product_ids if oos_resolve.product_ids else None
 
     available = _get_available_items(
