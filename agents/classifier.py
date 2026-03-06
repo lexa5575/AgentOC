@@ -37,6 +37,13 @@ When available, CONVERSATION STATE and THREAD HISTORY are prepended before
 "--- NEW EMAIL ---". Use them to understand context — especially for detecting
 followups and customer intent.
 
+CRITICAL: Classify based on the CURRENT email content (after "--- NEW EMAIL ---"),
+NOT the thread subject or history. Customers often reply to old threads with
+completely new requests. Thread history is BACKGROUND CONTEXT only — the situation
+must reflect what the customer is saying in THIS message.
+Example: customer replies to "PAYMENT REMINDER" thread with "please send 4 cartons
+of Silver" → this is new_order, NOT payment_received.
+
 ## Sender identification
 
 If the email is from @shipmecarton.com, noreply@, or no-reply@ — this is a system notification.
