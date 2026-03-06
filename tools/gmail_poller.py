@@ -94,6 +94,11 @@ def process_client_email(client_email: str) -> str:
 
     # Search for unread messages from this sender
     unread = client.search_unread_from(client_email, max_results=5)
+
+    # Fallback: website orders come from order@shipmecarton.com with client email in body
+    if not unread:
+        unread = client.search_unread_order_notifications(client_email)
+
     if not unread:
         return f"Нет непрочитанных писем от {client_email}."
 

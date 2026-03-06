@@ -328,6 +328,35 @@ class GmailClient:
 
         return [{"msg_id": m["id"]} for m in result.get("messages", [])]
 
+    def search_unread_order_notifications(
+        self, client_email: str, max_results: int = 5
+    ) -> list[dict]:
+        """Search for unread order notifications mentioning this client email.
+
+        Website orders arrive from order@shipmecarton.com with the client's
+        email in the body. This finds those unread notifications.
+
+        Returns list of dicts: [{msg_id}, ...] (newest first).
+        """
+        service = self._get_service()
+        try:
+            result = service.users().messages().list(
+                userId="me",
+                q=(
+                    f"from:(order@shipmecarton.com OR noreply@shipmecarton.com) "
+                    f"{client_email} is:unread"
+                ),
+                maxResults=max_results,
+            ).execute()
+        except Exception as e:
+            logger.error(
+                "Gmail unread order notification search failed for %s: %s",
+                client_email, e,
+            )
+            return []
+
+        return [{"msg_id": m["id"]} for m in result.get("messages", [])]
+
     def search_order_notifications(
         self,
         client_email: str,
