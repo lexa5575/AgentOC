@@ -124,7 +124,7 @@ def test_maybe_refresh_stale_summary_refreshed(mock_generate, mock_profile):
     result = maybe_refresh_summary("stale@example.com")
 
     assert result == "Updated summary"
-    mock_generate.assert_called_once_with("stale@example.com")
+    mock_generate.assert_called_once_with("stale@example.com", gmail_account="default")
 
 
 @patch("agents.client_profiler.get_client_profile")
@@ -139,7 +139,7 @@ def test_maybe_refresh_never_generated(mock_generate, mock_profile):
     result = maybe_refresh_summary("new@example.com")
 
     assert result == "First summary"
-    mock_generate.assert_called_once_with("new@example.com")
+    mock_generate.assert_called_once_with("new@example.com", gmail_account="default")
 
 
 @patch("agents.client_profiler.get_client_profile", return_value=None)
