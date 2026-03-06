@@ -154,10 +154,29 @@ def sync_stock(warehouse: str, items: list[dict]) -> int:
         session.close()
 
 
+# Region keywords → stock categories (for search_stock when query is a region name)
+_REGION_CATEGORY_MAP: dict[str, set[str]] = {
+    "japan": {"TEREA_JAPAN", "УНИКАЛЬНАЯ_ТЕРЕА"},
+    "japanese": {"TEREA_JAPAN", "УНИКАЛЬНАЯ_ТЕРЕА"},
+    "eu": {"TEREA_EUROPE"},
+    "europe": {"TEREA_EUROPE"},
+    "european": {"TEREA_EUROPE"},
+    "armenia": {"ARMENIA"},
+    "armenian": {"ARMENIA"},
+    "me": {"ARMENIA", "KZ_TEREA"},
+    "middle east": {"ARMENIA", "KZ_TEREA"},
+    "kz": {"KZ_TEREA"},
+    "kazakhstan": {"KZ_TEREA"},
+    "unique": {"УНИКАЛЬНАЯ_ТЕРЕА"},
+}
+
+
 def search_stock(query: str, warehouse: str | None = None) -> list[dict]:
     """Search stock by substring match (ILIKE %query%).
 
     Also searches spelling equivalents (e.g. "Sienna" also finds "Siena").
+    If the query is a region name (e.g. "Japan"), returns all products
+    from that region's categories.
     Used by LLM agents via search_stock_tool — intentionally broad.
     """
     from sqlalchemy import or_
@@ -167,6 +186,17 @@ def search_stock(query: str, warehouse: str | None = None) -> list[dict]:
     session = get_session()
     try:
         trimmed = query.strip()
+
+        # Check if query is a region name → search by category instead
+        region_cats = _REGION_CATEGORY_MAP.get(trimmed.lower())
+        if region_cats:
+            q = session.query(StockItem).filter(
+                StockItem.category.in_(region_cats),
+            )
+            if warehouse:
+                q = q.filter_by(warehouse=warehouse)
+            return [item.to_dict() for item in q.order_by(StockItem.product_name).all()]
+
         # Strip common prefixes that aren't in stock names
         # Stock items are "Green", "Turquoise" — not "Terea Green"
         import re
