@@ -46,10 +46,13 @@ Read the CONVERSATION STATE carefully — it contains:
 DIALOG INTENT HANDLING:
 
 1. **agrees_to_alternative** — Customer accepts our suggested alternative
-   - Confirm we'll update their order with the alternative
-   - Mention the product they'll receive
-   - Confirm total price (if known from state)
-   - End with shipping/payment info based on their payment type
+   This is an ORDER CONFIRMATION. You MUST include:
+   - List the specific items + quantities they'll receive
+   - Calculate total price using STOCK PRICES (provided in prompt)
+   - For postpay: "We will ship your package ASAP", "Pay when received via Zelle or Cash App"
+   - For prepay: provide Zelle address for payment
+   - Include customer name and address if available from CLIENT PROFILE
+   - Format like a real order confirmation, not just "Got it!"
 
 2. **declines_alternative** — Customer doesn't want the alternative
    - Acknowledge their choice politely
@@ -291,19 +294,13 @@ def handle_oos_followup(
                 )
                 return result
 
-            # --- Outcome C: Fallback → oos_agrees template (legacy) ---
-            result, template_found = fill_template_reply(
-                classification=classification,
-                result=result,
-                situation="oos_agrees",
+            # --- Outcome C: No pending_oos_resolution → fall through to LLM ---
+            # Don't use the generic oos_agrees template (no price, no items).
+            # Let the LLM generate a proper reply using conversation state context.
+            logger.info(
+                "OOS agrees: no pending_oos_resolution for %s — LLM fallback",
+                classification.client_email,
             )
-            if template_found:
-                _clear_pending_oos(result)
-                logger.info(
-                    "OOS agrees → oos_agrees fallback for %s (0 tokens)",
-                    classification.client_email,
-                )
-                return result
 
     # === declines_alternative → decline template ===
     if intent == "declines_alternative":
@@ -318,7 +315,7 @@ def handle_oos_followup(
             )
             return result
 
-    # === asks_question / provides_info / unknown → LLM ===
+    # === asks_question / provides_info / unknown / agrees fallback → LLM ===
     ctx = build_context(classification, result, email_text)
 
     # Inject live stock data if customer is asking about a specific product.
@@ -354,12 +351,35 @@ def handle_oos_followup(
                 f"IGNORE all {other} rules."
             )
 
+    # For agrees_to_alternative: inject pricing info so LLM can calculate total
+    pricing_context = ""
+    if intent == "agrees_to_alternative":
+        from db.stock import CATEGORY_PRICES
+        price_lines = [f"- {cat}: ${p:.0f}/box" for cat, p in sorted(CATEGORY_PRICES.items())]
+        pricing_context = (
+            "\n\n=== STOCK PRICES ===\n"
+            + "\n".join(price_lines)
+            + "\n\nUse these prices to calculate the total for the confirmed items."
+            + "\nJapanese products (TEREA_JAPAN) and unique terea (УНИКАЛЬНАЯ_ТЕРЕА) have the same price."
+        )
+
+    write_instruction = "\n\nWrite a reply:"
+    if intent == "agrees_to_alternative":
+        write_instruction = (
+            "\n\nWrite an ORDER CONFIRMATION reply. Include:"
+            "\n- The specific items + quantities the customer confirmed"
+            "\n- Calculate total price (qty × price per box)"
+            "\n- Shipping and payment info based on their payment type"
+            "\n- Customer name and address if available"
+        )
+
     prompt = (
         format_context_for_prompt(ctx)
         + stock_context
+        + pricing_context
         + intent_info
         + payment_type_hint
-        + "\n\nWrite a reply:"
+        + write_instruction
     )
 
     logger.info(
