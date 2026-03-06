@@ -213,6 +213,7 @@ def process_classified_email(classification) -> dict:
                 display = get_display_name(name, cat)
                 summary_parts.append(f"{item['ordered_qty']} x {display}")
             result["order_summary"] = ", ".join(summary_parts)
+            result["_stock_check_items"] = items_for_check
 
     # All reply generation is delegated to specialized handlers via router.
     result["needs_routing"] = True
@@ -571,6 +572,11 @@ def classify_and_process(
                 result["gmail_draft_id"] = draft_id
             except Exception as e:
                 logger.error("Failed to create Gmail draft: %s", e, exc_info=True)
+
+        # Step 3.95: Fulfillment — maks_sales increment (after successful draft)
+        if result.get("gmail_draft_id"):
+            from agents.handlers.fulfillment_trigger import try_fulfillment
+            try_fulfillment(classification, result, gmail_message_id)
 
         # Step 4: Format the output
         logger.info(

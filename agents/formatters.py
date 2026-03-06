@@ -125,6 +125,43 @@ def format_result(result: dict) -> str:
                 lines.append(f"  {flavor} → " + " | ".join(rendered))
         lines.append("")
 
+    # Fulfillment section
+    if result.get("fulfillment"):
+        lines.append("=" * 50)
+        lines.append("FULFILLMENT")
+        lines.append("=" * 50)
+        ff = result["fulfillment"]
+        lines.append(f"Status: {ff['status']}")
+
+        if ff.get("warehouse"):
+            lines.append(f"Warehouse: {ff['warehouse']}")
+
+        if ff["status"] == "updated":
+            ur = ff.get("update_result", {})
+            lines.append(f"Updated rows: {ur.get('updated', 0)}")
+            for detail in ur.get("details", []):
+                if "old_maks" in detail:
+                    lines.append(
+                        f"- {detail['product_name']}: "
+                        f"{detail['old_maks']} -> {detail['new_maks']}"
+                    )
+        elif ff["status"] == "skipped_split":
+            lines.append("Reason: no single warehouse can fulfill all items")
+            lines.append("maks_sales was NOT updated")
+        elif ff["status"] == "skipped_duplicate":
+            lines.append("Reason: already processed (duplicate)")
+        elif ff["status"] == "skipped_unresolved_order":
+            lines.append("Reason: no resolved order items found")
+        elif ff["status"] == "error":
+            lines.append(f"Error: {ff.get('error', 'unknown')}")
+            ur = ff.get("update_result", {})
+            for err in ur.get("errors", []):
+                lines.append(f"  - {err}")
+
+        if ff.get("tried_warehouses"):
+            lines.append(f"Tried: {', '.join(ff['tried_warehouses'])}")
+        lines.append("")
+
     lines.append("=" * 50)
     lines.append("DRAFT REPLY")
     lines.append("=" * 50)
