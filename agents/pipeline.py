@@ -526,6 +526,35 @@ def classify_and_process(
         if not tg_sent:
             notify_reply_ready(classification, result)
 
+        # Step 3.9: Create Gmail draft in the same thread
+        draft_reply = result.get("draft_reply") or ""
+        _SKIP_PREFIXES = ("(", "—")  # system messages, not real replies
+        if (
+            result["needs_reply"]
+            and draft_reply
+            and not draft_reply.startswith(_SKIP_PREFIXES)
+            and gmail_thread_id
+        ):
+            try:
+                from tools.gmail import GmailClient
+
+                subject = ""
+                for line in email_text.split("\n"):
+                    if line.lower().startswith("subject:"):
+                        subject = line.split(":", 1)[1].strip()
+                        break
+                reply_subject = f"Re: {subject}" if subject else ""
+
+                draft_id = GmailClient().create_draft(
+                    to=classification.client_email,
+                    subject=reply_subject,
+                    body=draft_reply,
+                    thread_id=gmail_thread_id,
+                )
+                result["gmail_draft_id"] = draft_id
+            except Exception as e:
+                logger.error("Failed to create Gmail draft: %s", e, exc_info=True)
+
         # Step 4: Format the output
         logger.info(
             "Done: email=%s, template=%s, client_found=%s",

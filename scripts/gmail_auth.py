@@ -24,7 +24,10 @@ from pathlib import Path
 
 from google_auth_oauthlib.flow import InstalledAppFlow
 
-SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.compose",
+]
 
 CREDENTIALS_FILE = Path(__file__).parent / "credentials.json"
 

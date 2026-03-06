@@ -14,6 +14,7 @@ Usage:
 import base64
 import logging
 from datetime import datetime, timezone
+from email.mime.text import MIMEText
 from email.utils import parseaddr
 from os import getenv
 
@@ -23,7 +24,10 @@ from googleapiclient.discovery import build
 
 logger = logging.getLogger(__name__)
 
-SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.compose",
+]
 
 # Gmail category labels to skip (only process PRIMARY inbox)
 _SKIP_LABELS = {
@@ -368,6 +372,47 @@ class GmailClient:
             client_email, len(messages),
         )
         return messages
+
+    def create_draft(
+        self,
+        to: str,
+        subject: str,
+        body: str,
+        thread_id: str | None = None,
+    ) -> str:
+        """Create a Gmail draft in the specified thread.
+
+        Args:
+            to: Recipient email address.
+            subject: Email subject (typically "Re: ...").
+            body: Plain text body of the reply.
+            thread_id: Gmail thread ID to attach the draft to.
+
+        Returns:
+            Gmail draft ID.
+        """
+        service = self._get_service()
+
+        message = MIMEText(body)
+        message["to"] = to
+        message["subject"] = subject
+
+        raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
+
+        draft_body: dict = {"message": {"raw": raw}}
+        if thread_id:
+            draft_body["message"]["threadId"] = thread_id
+
+        draft = (
+            service.users()
+            .drafts()
+            .create(userId="me", body=draft_body)
+            .execute()
+        )
+
+        draft_id = draft["id"]
+        logger.info("Gmail draft created: draft_id=%s, thread=%s, to=%s", draft_id, thread_id, to)
+        return draft_id
 
     def _extract_body(self, payload: dict) -> str:
         """Extract plain text body from Gmail message payload.
