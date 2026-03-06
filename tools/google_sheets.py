@@ -2,7 +2,7 @@
 Google Sheets Client
 --------------------
 
-Read-only access to Google Sheets via OAuth refresh token.
+Read/write access to Google Sheets via OAuth refresh token.
 Auth pattern matches tools/gmail.py (same env var style).
 
 Usage:
@@ -23,7 +23,7 @@ from googleapiclient.discovery import build
 
 logger = logging.getLogger(__name__)
 
-SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
 # Retry settings for transient network errors (timeouts, connection resets)
 MAX_RETRIES = 2
@@ -163,3 +163,52 @@ class SheetsClient:
             len(values), sheet_name, spreadsheet_id,
         )
         return values
+
+    def update_cell(
+        self,
+        spreadsheet_id: str,
+        sheet_name: str,
+        row: int,
+        col: int,
+        value,
+    ) -> dict:
+        """Write a single cell value.
+
+        Args:
+            spreadsheet_id: The spreadsheet to write to.
+            sheet_name: Tab name (e.g. "LA MAKS FEB").
+            row: 0-based row index.
+            col: 0-based column index.
+            value: The value to write.
+
+        Returns:
+            API response dict.
+        """
+        cell_ref = f"'{sheet_name}'!{col_to_a1(col)}{row + 1}"
+        service = self._get_service()
+        req = service.spreadsheets().values().update(
+            spreadsheetId=spreadsheet_id,
+            range=cell_ref,
+            valueInputOption="RAW",
+            body={"values": [[value]]},
+        )
+        result = _retry(req.execute)
+        logger.info("Wrote %s = %s in spreadsheet %s", cell_ref, value, spreadsheet_id)
+        return result
+
+
+def col_to_a1(col: int) -> str:
+    """Convert 0-based column index to A1-notation letter(s).
+
+    Examples: 0→A, 25→Z, 26→AA, 27→AB, 51→AZ, 52→BA.
+    """
+    if col < 0:
+        raise ValueError(f"Column index must be >= 0, got {col}")
+    letters = []
+    c = col
+    while True:
+        letters.append(chr(ord("A") + c % 26))
+        c = c // 26 - 1
+        if c < 0:
+            break
+    return "".join(reversed(letters))
