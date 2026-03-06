@@ -436,6 +436,7 @@ def classify_and_process(
     email_text: str,
     gmail_message_id: str | None = None,
     gmail_thread_id: str | None = None,
+    gmail_account: str = "default",
 ) -> str:
     """Classify an incoming email and generate a reply draft.
 
@@ -559,7 +560,7 @@ def classify_and_process(
                 reply_subject = f"Re: {subject}" if subject else ""
 
                 draft_html = result.get("draft_reply_html")
-                draft_id = GmailClient().create_draft(
+                draft_id = GmailClient(account=gmail_account).create_draft(
                     to=classification.client_email,
                     subject=reply_subject,
                     body=draft_html or draft_reply,

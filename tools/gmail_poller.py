@@ -122,6 +122,7 @@ def process_client_email(client_email: str, account: str = "default") -> str:
                 email_text,
                 gmail_message_id=msg_id,
                 gmail_thread_id=msg.get("gmail_thread_id"),
+                gmail_account=account,
             )
 
             _send_telegram_result(msg, result)

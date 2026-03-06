@@ -52,6 +52,8 @@ services:
       - GMAIL_CLIENT_ID=${GMAIL_CLIENT_ID:-}
       - GMAIL_CLIENT_SECRET=${GMAIL_CLIENT_SECRET:-}
       - GMAIL_REFRESH_TOKEN=${GMAIL_REFRESH_TOKEN:-}
+      - GMAIL_REFRESH_TOKEN_TILDA=${GMAIL_REFRESH_TOKEN_TILDA:-}
+      - STOCK_WAREHOUSES=${STOCK_WAREHOUSES:-}
     depends_on:
       - agentos-db
     networks:
