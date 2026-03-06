@@ -369,7 +369,9 @@ class TestEmailPipelineSmoke(unittest.TestCase):
                 "customer_street": None,
                 "customer_city_state_zip": None,
                 "items": None,
-                "order_items": None,
+                "order_items": [
+                    {"product_name": "Tera Green EU", "base_flavor": "Green", "quantity": 3}
+                ],
                 "is_followup": True,
                 "followup_to": "oos_notification",
                 "dialog_intent": "agrees_to_alternative",
@@ -547,17 +549,33 @@ class TestEmailPipelineSmoke(unittest.TestCase):
 
     def test_oos_followup_flow(self):
         """OOS followup — customer agrees to alternative, routed to oos_followup handler (template)."""
-        email = (
-            "From: client1@example.com\n"
-            "Subject: Re: Your order\n"
-            "Body: Yes I'll take the green instead"
-        )
-        out = self.email_agent.classify_and_process(email)
+        stock_ok = {
+            "all_in_stock": True,
+            "items": [
+                {
+                    "base_flavor": "Green",
+                    "product_name": "Green",
+                    "ordered_qty": 3,
+                    "stock_entries": [{"category": "TEREA_EUROPE", "product_name": "Green", "quantity": 10}],
+                    "total_available": 10,
+                    "is_sufficient": True,
+                }
+            ],
+            "insufficient_items": [],
+        }
+        with patch.object(self.h_oos_followup, "check_stock_for_order", return_value=stock_ok):
+            with patch.object(self.h_oos_followup, "calculate_order_price", return_value=330.0):
+                email = (
+                    "From: client1@example.com\n"
+                    "Subject: Re: Your order\n"
+                    "Body: Yes I'll take the green instead"
+                )
+                out = self.email_agent.classify_and_process(email)
 
         self.assertIn("Situation: oos_followup", out)
-        # agrees_to_alternative + prepay + zelle → template, not LLM
+        # agrees_to_alternative + classifier items → new_order template with price
         self.assertIn("[Template - exact copy]", out)
-        self.assertIn("We will update your order with the alternative.", out)
+        self.assertIn("$330.00", out)
         self.assertIn("pay@example.com", out)  # zelle_address filled
         self.assertEqual(len(self.saved), 2)
         self.assertEqual(self.saved[1]["direction"], "outbound")

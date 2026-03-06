@@ -158,7 +158,7 @@ If the email contains a clear product list/table, extract:
   Keep non-Tera brands intact: "ONE Green" → "ONE Green", "PRIME Black" → "PRIME Black"
 - quantity: number of units (default 1)
 
-Extract order_items for new_order, price_question, AND stock_question situations.
+Extract order_items for new_order, price_question, stock_question, AND oos_followup situations.
 For stock_question: extract ALL products or regions being asked about as separate
 order_items (quantity defaults to 1). If the customer asks about multiple categories
 (e.g. "any European? and Japan regular?"), create one order_item per category/product.
@@ -166,6 +166,13 @@ Example: "any European? and japan regular?" →
   [{"base_flavor": "Europe", ...}, {"base_flavor": "Regular", ...}]
   (Europe = region query; Regular = specific product, NOT "Japan")
 For region queries, use the region name as base_flavor (e.g. "Europe", "Japan").
+For oos_followup with dialog_intent=agrees_to_alternative: extract the items the customer
+is confirming as order_items. Look at CONVERSATION STATE and previous emails to identify
+what products and quantities were offered as alternatives — those are the confirmed items.
+Example: if our previous email offered "2 Japanese Tropical + 1 Japanese Black" and customer
+says "Yes pls", extract:
+  [{"base_flavor": "Tropical", "product_name": "Japanese Tropical", "quantity": 2},
+   {"base_flavor": "Black", "product_name": "Japanese Black", "quantity": 1}]
 If no clear product list → set order_items to null.
 
 ## Output format

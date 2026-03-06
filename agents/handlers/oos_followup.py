@@ -214,6 +214,31 @@ def _build_clarification_reply(pending_oos: dict) -> str:
     return "\n".join(lines)
 
 
+def _resolve_from_classifier(classification) -> list[dict] | None:
+    """Extract confirmed items from classifier's order_items.
+
+    Fallback when pending_oos_resolution is missing — the classifier
+    can see conversation history and extract what the customer agreed to.
+    """
+    order_items = getattr(classification, "order_items", None) or []
+    if not order_items:
+        return None
+
+    confirmed = []
+    for oi in order_items:
+        bf = getattr(oi, "base_flavor", None)
+        pn = getattr(oi, "product_name", None)
+        qty = getattr(oi, "quantity", 1)
+        if bf or pn:
+            confirmed.append({
+                "base_flavor": bf or pn,
+                "product_name": pn or bf,
+                "quantity": qty or 1,
+            })
+
+    return confirmed if confirmed else None
+
+
 def _clear_pending_oos(result: dict) -> None:
     """Remove pending_oos_resolution from state facts (persisted by email_agent outbound save)."""
     state = result.get("conversation_state") or {}
@@ -294,11 +319,39 @@ def handle_oos_followup(
                 )
                 return result
 
-            # --- Outcome C: No pending_oos_resolution → fall through to LLM ---
-            # Don't use the generic oos_agrees template (no price, no items).
-            # Let the LLM generate a proper reply using conversation state context.
+            # --- Outcome C: Try classifier-extracted items → new_order template ---
+            # When pending_oos_resolution is missing (imported history) or resolution
+            # failed, the classifier may have extracted items from conversation context.
+            confirmed_from_classifier = _resolve_from_classifier(classification)
+            if confirmed_from_classifier:
+                try:
+                    stock_result = check_stock_for_order(confirmed_from_classifier)
+                    if stock_result["all_in_stock"]:
+                        calc_price = calculate_order_price(stock_result["items"])
+                        if calc_price is not None:
+                            result["calculated_price"] = calc_price
+                            result, template_found = fill_template_reply(
+                                classification=classification,
+                                result=result,
+                                situation="new_order",
+                            )
+                            if template_found:
+                                _clear_pending_oos(result)
+                                logger.info(
+                                    "OOS agrees → new_order template via classifier items "
+                                    "for %s ($%.2f, 0 tokens)",
+                                    classification.client_email, calc_price,
+                                )
+                                return result
+                except Exception as e:
+                    logger.warning(
+                        "OOS agrees classifier-items resolution failed for %s: %s",
+                        classification.client_email, e,
+                    )
+
+            # --- Outcome D: Fall through to LLM ---
             logger.info(
-                "OOS agrees: no pending_oos_resolution for %s — LLM fallback",
+                "OOS agrees: could not resolve items for %s — LLM fallback",
                 classification.client_email,
             )
 

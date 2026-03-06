@@ -2,7 +2,10 @@
 
 Tests that:
 - agrees_to_alternative + pending_oos → new_order template with price (0 tokens)
-- agrees_to_alternative + no pending_oos → oos_agrees fallback (legacy)
+- agrees_to_alternative + no pending_oos + classifier items → new_order template (0 tokens)
+- agrees_to_alternative + no pending_oos + no items → LLM fallback
+- agrees_to_alternative + no alternatives → LLM fallback
+- agrees_to_alternative + stock changed → LLM fallback
 - agrees_to_alternative + multiple alternatives + ambiguous → clarification reply
 - agrees_to_alternative + multiple alternatives + explicit → new_order template
 - agrees_to_alternative + prepay without zelle → LLM fallback
@@ -360,16 +363,41 @@ class TestOOSFollowupIntents(unittest.TestCase):
     # agrees_to_alternative — new_order resolution tests
     # ---------------------------------------------------------------
 
-    def test_agrees_no_pending_oos_uses_oos_agrees(self):
-        """No pending_oos_resolution → falls back to oos_agrees template (legacy)."""
+    def test_agrees_no_pending_oos_with_classifier_items(self):
+        """No pending_oos_resolution but classifier extracted items → new_order template."""
+        cls = _FakeClassification(
+            dialog_intent="agrees_to_alternative",
+            order_items=[
+                types.SimpleNamespace(base_flavor="Tropical", product_name="Japanese Tropical", quantity=2),
+                types.SimpleNamespace(base_flavor="Black", product_name="Japanese Black", quantity=1),
+            ],
+        )
+        result = self._make_result(payment_type="postpay", zelle_address="")
+
+        with patch.object(self.handler_mod, "check_stock_for_order", return_value=self._mock_stock_all_ok()):
+            with patch.object(self.handler_mod, "calculate_order_price", return_value=345.0):
+                out = self.handler_mod.handle_oos_followup(cls, result, "Yes pls. Ty")
+
+        self.assertTrue(out["template_used"])
+        self.assertIn("$345.00", out["draft_reply"])
+        self.assertIn("Thank you very much for placing an order", out["draft_reply"])
+        self.assertFalse(out["needs_routing"])
+
+    def test_agrees_no_pending_oos_no_items_falls_to_llm(self):
+        """No pending_oos_resolution AND no classifier items → LLM fallback."""
         cls = _FakeClassification(dialog_intent="agrees_to_alternative")
         result = self._make_result(payment_type="prepay", zelle_address="pay@example.com")
 
-        out = self.handler_mod.handle_oos_followup(cls, result, "email text")
+        with patch.object(
+            self.handler_mod.oos_followup_agent,
+            "run",
+            return_value=types.SimpleNamespace(content="LLM order confirmation"),
+        ) as run_mock:
+            out = self.handler_mod.handle_oos_followup(cls, result, "email text")
 
-        self.assertTrue(out["template_used"])
-        self.assertIn("We will update your order with the alternative.", out["draft_reply"])
-        self.assertFalse(out["needs_routing"])
+        run_mock.assert_called_once()
+        self.assertFalse(out["template_used"])
+        self.assertEqual(out["draft_reply"], "LLM order confirmation")
 
     def test_agrees_partial_oos_reduces_qty(self):
         """Partial OOS (available_qty > 0) → qty reduced to available, new_order template."""
@@ -394,8 +422,8 @@ class TestOOSFollowupIntents(unittest.TestCase):
         self.assertTrue(out["template_used"])
         self.assertIn("$330.00", out["draft_reply"])
 
-    def test_agrees_no_alternatives_falls_to_oos_agrees(self):
-        """Full OOS + empty alternatives → oos_agrees fallback."""
+    def test_agrees_no_alternatives_falls_to_llm(self):
+        """Full OOS + empty alternatives + no classifier items → LLM fallback."""
         cls = _FakeClassification(dialog_intent="agrees_to_alternative")
         state = self._make_pending_oos(num_alternatives=0)
         # Remove alternatives completely
@@ -405,13 +433,18 @@ class TestOOSFollowupIntents(unittest.TestCase):
             conversation_state=state,
         )
 
-        out = self.handler_mod.handle_oos_followup(cls, result, "email text")
+        with patch.object(
+            self.handler_mod.oos_followup_agent,
+            "run",
+            return_value=types.SimpleNamespace(content="LLM fallback reply"),
+        ) as run_mock:
+            out = self.handler_mod.handle_oos_followup(cls, result, "email text")
 
-        self.assertTrue(out["template_used"])
-        self.assertIn("We will update your order with the alternative.", out["draft_reply"])
+        run_mock.assert_called_once()
+        self.assertFalse(out["template_used"])
 
-    def test_agrees_stock_changed_falls_to_oos_agrees(self):
-        """Alternative sold out since OOS email → oos_agrees fallback."""
+    def test_agrees_stock_changed_falls_to_llm(self):
+        """Alternative sold out since OOS email + no classifier items → LLM fallback."""
         cls = _FakeClassification(dialog_intent="agrees_to_alternative")
         state = self._make_pending_oos(num_alternatives=1)
         result = self._make_result(
@@ -425,10 +458,15 @@ class TestOOSFollowupIntents(unittest.TestCase):
         }
 
         with patch.object(self.handler_mod, "check_stock_for_order", return_value=stock_not_ok):
-            out = self.handler_mod.handle_oos_followup(cls, result, "email text")
+            with patch.object(
+                self.handler_mod.oos_followup_agent,
+                "run",
+                return_value=types.SimpleNamespace(content="LLM stock changed reply"),
+            ) as run_mock:
+                out = self.handler_mod.handle_oos_followup(cls, result, "email text")
 
-        self.assertTrue(out["template_used"])
-        self.assertIn("We will update your order with the alternative.", out["draft_reply"])
+        run_mock.assert_called_once()
+        self.assertFalse(out["template_used"])
 
     def test_pending_oos_cleared_after_success(self):
         """After new_order template sent, pending_oos_resolution is cleared from state."""
