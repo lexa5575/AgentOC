@@ -83,7 +83,14 @@ Examples of needs_reply=true (even if starts with "thank you"):
   "do you have EU?", "what's available from Armenia?", "any Japanese sticks?"
   KEY: no quantity, no price query — pure availability question. If quantity is present → new_order.
   If it's inside an oos_followup thread → use oos_followup instead.
-  For region queries, set order_items with base_flavor = region name (e.g. "Japan", "EU", "Armenia").
+  For PURE region queries (no specific flavor), set base_flavor = region name (e.g. "Japan", "EU", "Armenia").
+  For specific product within a region (e.g. "japan regular", "EU silver"), set base_flavor = the FLAVOR
+  (e.g. "Regular", "Silver"), NOT the region. The region is context, the flavor is what they're asking about.
+  Examples:
+  - "what Japan do you have?" → base_flavor = "Japan" (pure region query, list everything)
+  - "do you have japan regular?" → base_flavor = "Regular" (specific product, not a region dump)
+  - "any European available?" → base_flavor = "Europe" (pure region query)
+  - "is EU silver in stock?" → base_flavor = "Silver" (specific product)
 - "payment_question" — asks WHERE or HOW to pay ("how do I pay?", "what's the Zelle?")
 - "payment_received" — confirms payment was sent ("I paid via Zelle", "sent CashApp")
 - "discount_request" — asks for discount or better price (NOT a price quote request)
@@ -150,6 +157,9 @@ Extract order_items for new_order, price_question, AND stock_question situations
 For stock_question: extract ALL products or regions being asked about as separate
 order_items (quantity defaults to 1). If the customer asks about multiple categories
 (e.g. "any European? and Japan regular?"), create one order_item per category/product.
+Example: "any European? and japan regular?" →
+  [{"base_flavor": "Europe", ...}, {"base_flavor": "Regular", ...}]
+  (Europe = region query; Regular = specific product, NOT "Japan")
 For region queries, use the region name as base_flavor (e.g. "Europe", "Japan").
 If no clear product list → set order_items to null.
 
