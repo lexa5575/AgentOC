@@ -84,6 +84,15 @@ Examples of needs_reply=true (even if starts with "thank you"):
   "Yes, that is perfect", "Please send final total"
 - "other" — anything that doesn't fit above (general questions, complaints, etc.)
 
+## Multi-intent priority
+
+When a message contains MULTIPLE intents, use this priority order:
+1. payment_received — if customer confirms payment ("money sent", "I paid", "sent via Zelle")
+   AND also asks about tracking/shipping → classify as payment_received, NOT tracking.
+   Asking for tracking after paying is natural and the handler will address both.
+2. new_order — if customer places an order AND asks something else → new_order wins.
+3. For other combinations, pick the intent that requires ACTION from us (not just info).
+
 ## Rules for followup detection
 
 Use CONVERSATION STATE and THREAD HISTORY to detect followups.
