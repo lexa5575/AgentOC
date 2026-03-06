@@ -22,6 +22,7 @@ from db.stock import (
     search_stock_by_ids,
     select_best_alternatives,
     get_product_type,
+    resolve_warehouse,
 )
 from db.catalog import get_base_display_name
 from db.product_resolver import resolve_product_to_catalog
@@ -102,6 +103,13 @@ def _price_for_items(stock_items: list[dict]) -> float | None:
     return None
 
 
+_WAREHOUSE_DISPLAY = {
+    "LA_MAKS": "California",
+    "CHICAGO_MAX": "Chicago",
+    "MIAMI_MAKS": "Miami",
+}
+
+
 def _is_region_query(flavor: str) -> bool:
     """Check if flavor is a region name (Japan, EU, Armenia, etc.)."""
     from db.stock import _REGION_CATEGORY_MAP
@@ -115,9 +123,12 @@ def _build_in_stock_reply(
     price: float | None,
     *,
     is_region: bool = False,
+    warehouse: str | None = None,
 ) -> str:
     """Deterministic reply when product IS in stock (0 LLM tokens)."""
     greeting = f"Hi {client_name}," if client_name else "Hi,"
+    location = _WAREHOUSE_DISPLAY.get(warehouse, "") if warehouse else ""
+    loc_suffix = f" from our {location} warehouse" if location else ""
 
     # Region query (e.g. "Japan") → list all available products
     distinct_names = sorted({it["product_name"] for it in stock_items})
@@ -131,7 +142,7 @@ def _build_in_stock_reply(
         product_list = ", ".join(display_names)
         price_str = f" ${price:.0f} per box." if price is not None else ""
         return (
-            f"{greeting} we have these {flavor} products in stock:{price_str}\n"
+            f"{greeting} we have these {flavor} products in stock{loc_suffix}:{price_str}\n"
             f"{product_list}\n"
             f"Let us know which one you'd like! Thank you!"
         )
@@ -139,7 +150,7 @@ def _build_in_stock_reply(
     # Single product query
     price_str = f" It's ${price:.0f} per box." if price is not None else ""
     return (
-        f"{greeting} yes, we have {flavor} in stock!{price_str} "
+        f"{greeting} yes, we have {flavor} in stock{loc_suffix}!{price_str} "
         f"Let us know how many boxes you'd like and we'll get it ready for you. "
         f"Thank you!"
     )
@@ -170,14 +181,19 @@ def handle_stock_question(
         from agents.handlers.general import handle_general
         return handle_general(classification, result, email_text)
 
+    # Optional warehouse filter (e.g. "from CA" → LA_MAKS)
+    warehouse = resolve_warehouse(email_text)
+    if warehouse:
+        logger.info("Stock question: warehouse filter=%s for %s", warehouse, result["client_email"])
+
     # Resolve via catalog for exact lookup, fallback to substring search
     catalog_result = resolve_product_to_catalog(flavor)
     display_name = catalog_result.display_name or get_base_display_name(flavor)
 
     if catalog_result.product_ids:
-        stock_items = search_stock_by_ids(catalog_result.product_ids)
+        stock_items = search_stock_by_ids(catalog_result.product_ids, warehouse=warehouse)
     else:
-        stock_items = search_stock(flavor)
+        stock_items = search_stock(flavor, warehouse=warehouse)
     available = [it for it in stock_items if it["quantity"] > 0]
 
     client_name = result.get("client_name") or (
@@ -191,7 +207,8 @@ def handle_stock_question(
         price = _price_for_items(available)
         is_region = _is_region_query(flavor)
         result["draft_reply"] = _build_in_stock_reply(
-            client_name, display_name, available, price, is_region=is_region,
+            client_name, display_name, available, price,
+            is_region=is_region, warehouse=warehouse,
         )
         result["template_used"] = True
         result["needs_routing"] = False
@@ -215,6 +232,7 @@ def handle_stock_question(
         client_email=result["client_email"],
         base_flavor=flavor,
         client_summary=client_summary,
+        warehouse=warehouse,
     )
     alternatives = alts_result.get("alternatives", [])
 

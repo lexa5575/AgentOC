@@ -170,6 +170,36 @@ _REGION_CATEGORY_MAP: dict[str, set[str]] = {
     "unique": {"УНИКАЛЬНАЯ_ТЕРЕА"},
 }
 
+# Location keywords → warehouse names (for filtering by shipping origin)
+WAREHOUSE_ALIASES: dict[str, str] = {
+    "los angeles": "LA_MAKS",
+    "california": "LA_MAKS",
+    "illinois": "CHICAGO_MAX",
+    "florida": "MIAMI_MAKS",
+    "chicago": "CHICAGO_MAX",
+    "miami": "MIAMI_MAKS",
+    "ca": "LA_MAKS",
+    "la": "LA_MAKS",
+    "il": "CHICAGO_MAX",
+    "fl": "MIAMI_MAKS",
+}
+
+
+def resolve_warehouse(text: str) -> str | None:
+    """Extract warehouse from free text by matching location keywords.
+
+    Checks longer aliases first, uses word boundaries to prevent
+    false positives (e.g. "la" inside "balanced").
+    """
+    import re
+
+    text_lower = text.lower()
+    # Check longest keys first to match "los angeles" before "la"
+    for alias in sorted(WAREHOUSE_ALIASES, key=len, reverse=True):
+        if re.search(rf"\b{re.escape(alias)}\b", text_lower):
+            return WAREHOUSE_ALIASES[alias]
+    return None
+
 
 def search_stock(query: str, warehouse: str | None = None) -> list[dict]:
     """Search stock by substring match (ILIKE %query%).
