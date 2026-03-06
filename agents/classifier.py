@@ -147,7 +147,10 @@ If the email contains a clear product list/table, extract:
 - quantity: number of units (default 1)
 
 Extract order_items for new_order, price_question, AND stock_question situations.
-For stock_question: extract the product being asked about (quantity defaults to 1).
+For stock_question: extract ALL products or regions being asked about as separate
+order_items (quantity defaults to 1). If the customer asks about multiple categories
+(e.g. "any European? and Japan regular?"), create one order_item per category/product.
+For region queries, use the region name as base_flavor (e.g. "Europe", "Japan").
 If no clear product list → set order_items to null.
 
 ## Output format

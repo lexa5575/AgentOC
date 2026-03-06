@@ -5,13 +5,13 @@ Stock Question Handler
 Handles questions about product availability:
 - "Do you have Tropical?"
 - "Is Silver in stock?"
-- "Do you carry Blue?"
+- "Any European available? And do you have Japan regular?"
 
 Flow:
-1. Extract the asked-about flavor from order_items (classifier) or conversation state
-2. search_stock(flavor) → real stock data
-3. If in stock  → deterministic reply with price (0 LLM tokens)
-4. If not       → select_best_alternatives() + LLM reply with alternatives
+1. Extract ALL asked-about flavors from order_items (classifier) or conversation state
+2. For each flavor: search_stock(flavor) → real stock data
+3. Build composite reply covering all queried products (0 LLM tokens when all in stock)
+4. If any OOS → LLM reply with stock info + alternatives
 """
 
 import logging
@@ -24,7 +24,7 @@ from db.stock import (
     get_product_type,
     resolve_warehouse,
 )
-from db.catalog import get_base_display_name
+from db.catalog import get_base_display_name, get_display_name
 from db.product_resolver import resolve_product_to_catalog
 from agents.context import build_context, format_context_for_prompt
 from agno.agent import Agent
@@ -33,7 +33,7 @@ from agno.models.openai import OpenAIResponses
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Agent (used only when product is NOT in stock — for alternatives reply)
+# Agent (used only when any product is NOT in stock — for alternatives reply)
 # ---------------------------------------------------------------------------
 
 _oos_instructions = """\
@@ -41,16 +41,16 @@ You are James, answering a product availability question for shipmecarton.com.
 
 ## Style rules (STRICT)
 - Write like a casual text message: short, warm, no formality
-- 2-4 sentences MAX. Never write a long paragraph.
+- 2-5 sentences MAX. Never write a long paragraph.
 - Start with "Hi {name}," if name is known, otherwise start directly
 - Always end with exactly "Thank you!" — nothing after it
 - No bullet points, no bold, no lists
 
 ## Content rules
 - ALWAYS use the STOCK INFO section — never make up availability
-- The product is NOT available — say so clearly but warmly
-- Mention the alternatives by name (from STOCK INFO) and their price
-- Ask if any of those alternatives work for the customer
+- For products that ARE available: list them clearly with price
+- For products that are NOT available: say so and mention alternatives if provided
+- Ask if any of the available products or alternatives work for the customer
 - Never invent product names or prices not listed in STOCK INFO
 """
 
@@ -67,8 +67,8 @@ _oos_agent = Agent(
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _extract_flavor(classification, result: dict) -> str | None:
-    """Extract the product being asked about.
+def _extract_flavors(classification, result: dict) -> list[str]:
+    """Extract ALL products being asked about.
 
     Priority:
     1. classification.order_items (classifier parsed the email)
@@ -77,10 +77,14 @@ def _extract_flavor(classification, result: dict) -> str | None:
     # 1. Classifier extracted items
     order_items = getattr(classification, "order_items", None) or []
     if order_items:
-        item = order_items[0]
-        return getattr(item, "base_flavor", None) or getattr(item, "product_name", None)
+        flavors = []
+        for item in order_items:
+            f = getattr(item, "base_flavor", None) or getattr(item, "product_name", None)
+            if f and f not in flavors:
+                flavors.append(f)
+        return flavors
 
-    # 2. Conversation state
+    # 2. Conversation state (single item fallback)
     state = result.get("conversation_state") or {}
     facts = state.get("facts") or {}
     for key in ("confirmed_order_items", "pending_order_items", "order_items"):
@@ -88,10 +92,12 @@ def _extract_flavor(classification, result: dict) -> str | None:
         if items:
             first = items[0]
             if isinstance(first, str):
-                return first
-            return first.get("base_flavor") or first.get("product_name")
+                return [first]
+            f = first.get("base_flavor") or first.get("product_name")
+            if f:
+                return [f]
 
-    return None
+    return []
 
 
 def _price_for_items(stock_items: list[dict]) -> float | None:
@@ -133,7 +139,6 @@ def _build_in_stock_reply(
     # Region query (e.g. "Japan") → list all available products
     distinct_names = sorted({it["product_name"] for it in stock_items})
     if is_region and len(distinct_names) > 1:
-        from db.catalog import get_display_name
         display_names = []
         for it in stock_items:
             dn = get_display_name(it["product_name"], it["category"])
@@ -156,6 +161,65 @@ def _build_in_stock_reply(
     )
 
 
+def _build_multi_stock_reply(
+    client_name: str | None,
+    sections: list[dict],
+    *,
+    warehouse: str | None = None,
+) -> str:
+    """Deterministic reply for multiple stock queries, all in stock (0 LLM tokens).
+
+    Each section: {"flavor": str, "display_name": str, "available": list, "price": float|None, "is_region": bool}
+    """
+    greeting = f"Hi {client_name}," if client_name else "Hi,"
+    location = _WAREHOUSE_DISPLAY.get(warehouse, "") if warehouse else ""
+    loc_suffix = f" from our {location} warehouse" if location else ""
+
+    parts = [f"{greeting} here's what we have in stock{loc_suffix}:"]
+
+    for sec in sections:
+        flavor = sec["display_name"]
+        available = sec["available"]
+        price = sec["price"]
+        is_region = sec["is_region"]
+        price_str = f" ${price:.0f} per box" if price is not None else ""
+
+        distinct_names = sorted({it["product_name"] for it in available})
+        if is_region and len(distinct_names) > 1:
+            display_names = []
+            for it in available:
+                dn = get_display_name(it["product_name"], it["category"])
+                if dn not in display_names:
+                    display_names.append(dn)
+            product_list = ", ".join(display_names)
+            parts.append(f"\n{flavor}:{price_str}\n{product_list}")
+        else:
+            parts.append(f"\n{flavor}{price_str}")
+
+    parts.append("\nLet us know which ones you'd like! Thank you!")
+    return "\n".join(parts)
+
+
+def _lookup_flavor(flavor: str, warehouse: str | None) -> dict:
+    """Look up stock for a single flavor. Returns structured result."""
+    catalog_result = resolve_product_to_catalog(flavor)
+    display_name = catalog_result.display_name or get_base_display_name(flavor)
+
+    if catalog_result.product_ids:
+        stock_items = search_stock_by_ids(catalog_result.product_ids, warehouse=warehouse)
+    else:
+        stock_items = search_stock(flavor, warehouse=warehouse)
+    available = [it for it in stock_items if it["quantity"] > 0]
+
+    return {
+        "flavor": flavor,
+        "display_name": display_name,
+        "available": available,
+        "price": _price_for_items(available) if available else None,
+        "is_region": _is_region_query(flavor),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Handler
 # ---------------------------------------------------------------------------
@@ -167,13 +231,13 @@ def handle_stock_question(
 ) -> dict:
     """Handle product availability questions.
 
-    Returns deterministic reply (0 tokens) when product is in stock.
-    Falls back to LLM reply with alternatives when product is OOS.
+    Supports multiple products/regions in a single query.
+    Returns deterministic reply (0 tokens) when all products are in stock.
+    Falls back to LLM reply when any product is OOS.
     """
-    flavor = _extract_flavor(classification, result)
+    flavors = _extract_flavors(classification, result)
 
-    if not flavor:
-        # Can't determine what was asked — fall back to general handler
+    if not flavors:
         logger.warning(
             "Stock question: could not extract flavor for %s — general fallback",
             result["client_email"],
@@ -186,72 +250,98 @@ def handle_stock_question(
     if warehouse:
         logger.info("Stock question: warehouse filter=%s for %s", warehouse, result["client_email"])
 
-    # Resolve via catalog for exact lookup, fallback to substring search
-    catalog_result = resolve_product_to_catalog(flavor)
-    display_name = catalog_result.display_name or get_base_display_name(flavor)
-
-    if catalog_result.product_ids:
-        stock_items = search_stock_by_ids(catalog_result.product_ids, warehouse=warehouse)
-    else:
-        stock_items = search_stock(flavor, warehouse=warehouse)
-    available = [it for it in stock_items if it["quantity"] > 0]
-
     client_name = result.get("client_name") or (
         result.get("client_data") or {}
     ).get("name")
 
-    # -----------------------------------------------------------------------
-    # Case 1: Product is in stock → deterministic reply
-    # -----------------------------------------------------------------------
-    if available:
-        price = _price_for_items(available)
-        is_region = _is_region_query(flavor)
-        result["draft_reply"] = _build_in_stock_reply(
-            client_name, display_name, available, price,
-            is_region=is_region, warehouse=warehouse,
+    # Look up stock for each flavor
+    lookups = [_lookup_flavor(f, warehouse) for f in flavors]
+
+    in_stock_sections = [lk for lk in lookups if lk["available"]]
+    oos_sections = [lk for lk in lookups if not lk["available"]]
+
+    # -------------------------------------------------------------------
+    # Case 1: Single flavor (backward-compatible path)
+    # -------------------------------------------------------------------
+    if len(flavors) == 1:
+        lk = lookups[0]
+        if lk["available"]:
+            result["draft_reply"] = _build_in_stock_reply(
+                client_name, lk["display_name"], lk["available"], lk["price"],
+                is_region=lk["is_region"], warehouse=warehouse,
+            )
+            result["template_used"] = True
+            result["needs_routing"] = False
+            logger.info(
+                "Stock question: %s IN STOCK for %s, price=%s (0 tokens)",
+                lk["flavor"], result["client_email"], lk["price"],
+            )
+            return result
+        else:
+            # OOS — single item, use LLM with alternatives
+            return _handle_oos_reply(
+                classification, result, email_text,
+                oos_sections, client_name, warehouse,
+            )
+
+    # -------------------------------------------------------------------
+    # Case 2: Multiple flavors, all in stock → deterministic composite
+    # -------------------------------------------------------------------
+    if not oos_sections:
+        result["draft_reply"] = _build_multi_stock_reply(
+            client_name, in_stock_sections, warehouse=warehouse,
         )
         result["template_used"] = True
         result["needs_routing"] = False
-
         logger.info(
-            "Stock question: %s IN STOCK for %s, price=%s (0 tokens)",
-            flavor, result["client_email"], price,
+            "Stock question: %d items ALL IN STOCK for %s (0 tokens)",
+            len(flavors), result["client_email"],
         )
         return result
 
-    # -----------------------------------------------------------------------
-    # Case 2: Product not in stock → suggest alternatives via LLM
-    # -----------------------------------------------------------------------
-    logger.info(
-        "Stock question: %s OOS for %s — fetching alternatives",
-        flavor, result["client_email"],
+    # -------------------------------------------------------------------
+    # Case 3: Multiple flavors, mixed in-stock/OOS → LLM reply
+    # -------------------------------------------------------------------
+    return _handle_mixed_reply(
+        classification, result, email_text,
+        in_stock_sections, oos_sections,
+        client_name, warehouse,
     )
 
+
+def _handle_oos_reply(
+    classification, result: dict, email_text: str,
+    oos_sections: list[dict],
+    client_name: str | None,
+    warehouse: str | None,
+) -> dict:
+    """Handle reply when all queried products are OOS."""
     client_summary = (result.get("client_data") or {}).get("llm_summary", "")
-    alts_result = select_best_alternatives(
-        client_email=result["client_email"],
-        base_flavor=flavor,
-        client_summary=client_summary,
-        warehouse=warehouse,
-    )
-    alternatives = alts_result.get("alternatives", [])
 
-    # Format alternatives + prices for the LLM prompt
-    if alternatives:
-        alt_lines = []
-        for a in alternatives:
-            item = a["alternative"]
-            p = _price_for_items([item])
-            price_str = f" (${p:.0f}/box)" if p is not None else ""
-            alt_lines.append(f"- {item['product_name']}{price_str}")
-        alt_block = "\n".join(alt_lines)
-        stock_info = (
-            f"STOCK INFO:\n"
-            f"{flavor} is NOT available.\n\n"
-            f"Available alternatives:\n{alt_block}"
+    stock_info_parts = ["STOCK INFO:"]
+    for sec in oos_sections:
+        flavor = sec["flavor"]
+        alts_result = select_best_alternatives(
+            client_email=result["client_email"],
+            base_flavor=flavor,
+            client_summary=client_summary,
+            warehouse=warehouse,
         )
-    else:
-        stock_info = f"STOCK INFO:\n{flavor} is NOT available. No similar alternatives currently in stock."
+        alternatives = alts_result.get("alternatives", [])
+
+        stock_info_parts.append(f"\n{flavor} is NOT available.")
+        if alternatives:
+            alt_lines = []
+            for a in alternatives:
+                item = a["alternative"]
+                p = _price_for_items([item])
+                price_str = f" (${p:.0f}/box)" if p is not None else ""
+                alt_lines.append(f"- {item['product_name']}{price_str}")
+            stock_info_parts.append("Available alternatives:\n" + "\n".join(alt_lines))
+        else:
+            stock_info_parts.append("No similar alternatives currently in stock.")
+
+    stock_info = "\n".join(stock_info_parts)
 
     ctx = build_context(classification, result, email_text)
     prompt = (
@@ -266,7 +356,81 @@ def handle_stock_question(
     result["needs_routing"] = False
 
     logger.info(
-        "Stock question: OOS reply with %d alternatives for %s",
-        len(alternatives), result["client_email"],
+        "Stock question: OOS reply for %s",
+        result["client_email"],
+    )
+    return result
+
+
+def _handle_mixed_reply(
+    classification, result: dict, email_text: str,
+    in_stock_sections: list[dict],
+    oos_sections: list[dict],
+    client_name: str | None,
+    warehouse: str | None,
+) -> dict:
+    """Handle reply when some products are in stock and others are OOS."""
+    client_summary = (result.get("client_data") or {}).get("llm_summary", "")
+
+    stock_info_parts = ["STOCK INFO:"]
+
+    # In-stock sections
+    for sec in in_stock_sections:
+        flavor = sec["display_name"]
+        price = sec["price"]
+        available = sec["available"]
+        price_str = f" (${price:.0f}/box)" if price is not None else ""
+
+        distinct_names = sorted({it["product_name"] for it in available})
+        if sec["is_region"] and len(distinct_names) > 1:
+            display_names = []
+            for it in available:
+                dn = get_display_name(it["product_name"], it["category"])
+                if dn not in display_names:
+                    display_names.append(dn)
+            product_list = ", ".join(display_names)
+            stock_info_parts.append(f"\n{flavor} — AVAILABLE{price_str}: {product_list}")
+        else:
+            stock_info_parts.append(f"\n{flavor} — AVAILABLE{price_str}")
+
+    # OOS sections with alternatives
+    for sec in oos_sections:
+        flavor = sec["flavor"]
+        alts_result = select_best_alternatives(
+            client_email=result["client_email"],
+            base_flavor=flavor,
+            client_summary=client_summary,
+            warehouse=warehouse,
+        )
+        alternatives = alts_result.get("alternatives", [])
+
+        stock_info_parts.append(f"\n{flavor} — NOT available.")
+        if alternatives:
+            alt_lines = []
+            for a in alternatives:
+                item = a["alternative"]
+                p = _price_for_items([item])
+                price_str = f" (${p:.0f}/box)" if p is not None else ""
+                alt_lines.append(f"- {item['product_name']}{price_str}")
+            stock_info_parts.append("Alternatives:\n" + "\n".join(alt_lines))
+
+    stock_info = "\n".join(stock_info_parts)
+
+    ctx = build_context(classification, result, email_text)
+    prompt = (
+        format_context_for_prompt(ctx)
+        + f"\n\n=== {stock_info}\n\n"
+        + "Write a reply covering all products the customer asked about. "
+        + "List what's available with prices, mention what's not available, and suggest alternatives:"
+    )
+
+    response = _oos_agent.run(prompt)
+    result["draft_reply"] = response.content
+    result["template_used"] = False
+    result["needs_routing"] = False
+
+    logger.info(
+        "Stock question: mixed reply (%d in stock, %d OOS) for %s",
+        len(in_stock_sections), len(oos_sections), result["client_email"],
     )
     return result
