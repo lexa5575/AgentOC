@@ -298,6 +298,7 @@ def handle_oos_followup(
                 situation="oos_agrees",
             )
             if template_found:
+                _clear_pending_oos(result)
                 logger.info(
                     "OOS agrees → oos_agrees fallback for %s (0 tokens)",
                     classification.client_email,
