@@ -289,6 +289,7 @@ def _persist_results(
     gmail_thread_id: str | None,
     gmail_message_id: str | None,
     email_text: str,
+    gmail_account: str = "default",
 ) -> None:
     """Persist emails, order items, address and conversation state to the DB."""
     # Step 5: Extract subject from email text
@@ -579,7 +580,7 @@ def classify_and_process(
         formatted = format_result(result)
 
         # Step 5-7: Persist everything
-        _persist_results(classification, result, gmail_thread_id, gmail_message_id, email_text)
+        _persist_results(classification, result, gmail_thread_id, gmail_message_id, email_text, gmail_account=gmail_account)
 
         return formatted
 
