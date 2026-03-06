@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 # Order item backfill from Gmail history
 # ---------------------------------------------------------------------------
 
-def _backfill_order_items(client_email: str) -> int:
+def _backfill_order_items(client_email: str, gmail_account: str = "default") -> int:
     """Parse Gmail order notifications and populate ClientOrderItem.
 
     Searches Gmail for order notifications from shipmecarton.com senders
@@ -52,7 +52,7 @@ def _backfill_order_items(client_email: str) -> int:
         return 0
 
     try:
-        gmail = GmailClient()
+        gmail = GmailClient(account=gmail_account)
         notifications = gmail.search_order_notifications(client_email, max_results=30)
     except Exception as e:
         logger.warning("Gmail order search failed for %s: %s", client_email, e)
@@ -139,7 +139,7 @@ profiler_agent = Agent(
 # ---------------------------------------------------------------------------
 # Main Function
 # ---------------------------------------------------------------------------
-def generate_client_summary(client_email: str) -> str | None:
+def generate_client_summary(client_email: str, gmail_account: str = "default") -> str | None:
     """Generate/update LLM summary for a client.
 
     Reads email history, runs profiler agent, saves summary to DB.
@@ -151,7 +151,7 @@ def generate_client_summary(client_email: str) -> str | None:
         Generated summary text, or None on failure.
     """
     # Get email history
-    history = get_full_email_history(client_email, max_results=20)
+    history = get_full_email_history(client_email, max_results=20, gmail_account=gmail_account)
 
     if not history:
         logger.info("No email history for %s, skipping summary", client_email)
@@ -184,7 +184,7 @@ def generate_client_summary(client_email: str) -> str | None:
 
         # Backfill ClientOrderItem from Gmail order notifications
         # (covers clients who existed before the pipeline automation)
-        _backfill_order_items(client_email)
+        _backfill_order_items(client_email, gmail_account=gmail_account)
 
         return summary
 
@@ -199,7 +199,7 @@ def generate_client_summary(client_email: str) -> str | None:
 _REFRESH_INTERVAL = timedelta(hours=24)
 
 
-def maybe_refresh_summary(client_email: str) -> str | None:
+def maybe_refresh_summary(client_email: str, gmail_account: str = "default") -> str | None:
     """Refresh client summary if stale (>24h) or never generated.
 
     Cost when skipping: 1 SQL query, 0 LLM tokens.
@@ -226,4 +226,4 @@ def maybe_refresh_summary(client_email: str) -> str | None:
             return None
 
     logger.info("Auto-refreshing summary for %s", client_email)
-    return generate_client_summary(client_email)
+    return generate_client_summary(client_email, gmail_account=gmail_account)

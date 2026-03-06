@@ -283,16 +283,18 @@ def stock_by_category(category: str, warehouse: str = "") -> str:
     return "\n".join(lines)
 
 
-def email_history(client_email: str) -> str:
+def email_history(client_email: str, account: str = "default") -> str:
     """Show conversation history with a client (local DB + Gmail).
 
     Args:
         client_email: Client email address.
+        account: Gmail account to search in. Use "default" for getorderstick
+                 or "tilda" for iqostilda2. Default: "default".
 
     Returns:
         Formatted conversation history or 'no history' message.
     """
-    history = db_get_full_email_history(client_email, max_results=30)
+    history = db_get_full_email_history(client_email, max_results=30, gmail_account=account)
 
     if not history:
         return f"No conversation history found for {client_email}."
@@ -365,7 +367,7 @@ def set_operator_label(email: str, label: str) -> str:
     return f"Error: client {email} not found."
 
 
-def refresh_client_summary(email: str) -> str:
+def refresh_client_summary(email: str, account: str = "default") -> str:
     """Generate or refresh LLM summary for a client based on email history.
 
     Args:
@@ -376,7 +378,7 @@ def refresh_client_summary(email: str) -> str:
     """
     from agents.client_profiler import generate_client_summary
 
-    summary = generate_client_summary(email)
+    summary = generate_client_summary(email, gmail_account=account)
     if summary:
         return f"Summary updated for {email}:\n{summary}"
     return f"Could not generate summary for {email} (no email history or error)."
@@ -479,7 +481,8 @@ Client data:
 
 Client intelligence:
 - client_profile: full profile with order stats, favorite flavors, AI summary
-- email_history: conversation history (local DB + Gmail)
+- email_history: conversation history (local DB + Gmail). Accepts optional account param
+  ("default" or "tilda") — same as process_email. Use "tilda" when operator mentions тильда.
 - refresh_client_summary: regenerate AI summary from email history
 - set_operator_label: tag a client (e.g. "VIP", "проблемный клиент")
 

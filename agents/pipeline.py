@@ -423,7 +423,7 @@ def _persist_results(
     if result["client_found"]:
         try:
             from agents.client_profiler import maybe_refresh_summary
-            maybe_refresh_summary(classification.client_email)
+            maybe_refresh_summary(classification.client_email, gmail_account=gmail_account)
         except Exception as e:
             logger.error("Auto-refresh summary failed: %s", e)
 
@@ -453,7 +453,7 @@ def classify_and_process(
     """
     try:
         # Step 0.5: Get conversation state + thread history for classifier context
-        context_str, pre_state_record = build_classifier_context(gmail_thread_id, email_text)
+        context_str, pre_state_record = build_classifier_context(gmail_thread_id, email_text, gmail_account=gmail_account)
 
         # Step 0.9 + 1: Deterministic parser or LLM classification
         classification = run_classification(email_text, context_str)

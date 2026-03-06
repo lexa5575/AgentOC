@@ -270,6 +270,7 @@ def _format_other_threads(states: list[dict], exclude_thread_id: str | None) -> 
 def build_classifier_context(
     gmail_thread_id: str | None,
     email_text: str,
+    gmail_account: str = "default",
 ) -> tuple[str, dict | None]:
     """Build context string for the classifier from DB state and thread history.
 
@@ -300,7 +301,9 @@ def build_classifier_context(
 
         # Thread history (full messages — Classifier needs complete context)
         try:
-            thread_history = get_full_thread_history(gmail_thread_id, max_results=15)
+            thread_history = get_full_thread_history(
+                gmail_thread_id, max_results=15, gmail_account=gmail_account,
+            )
             if thread_history:
                 conversation_context += format_thread_for_classifier(thread_history) + "\n\n"
         except Exception as e:

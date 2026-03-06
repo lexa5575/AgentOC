@@ -174,7 +174,9 @@ def email_already_processed(gmail_message_id: str) -> bool:
 # Gmail thread history + merged full history
 # ---------------------------------------------------------------------------
 
-def get_full_email_history(client_email: str, max_results: int = 10) -> list[dict]:
+def get_full_email_history(
+    client_email: str, max_results: int = 10, gmail_account: str = "default",
+) -> list[dict]:
     """Get conversation history: local DB + Gmail, merged and deduplicated.
 
     Always supplements from Gmail when local DB has fewer than max_results.
@@ -184,7 +186,9 @@ def get_full_email_history(client_email: str, max_results: int = 10) -> list[dic
     history = get_email_history(client_email, max_total=max_results)
 
     if len(history) < max_results:
-        gmail_history = get_gmail_thread_history(client_email, max_results=max_results)
+        gmail_history = get_gmail_thread_history(
+            client_email, max_results=max_results, gmail_account=gmail_account,
+        )
         if gmail_history:
             local_subjects = {(h["subject"], h["direction"]) for h in history}
             for gh in gmail_history:
@@ -203,7 +207,9 @@ def get_full_email_history(client_email: str, max_results: int = 10) -> list[dic
     return history
 
 
-def get_full_thread_history(gmail_thread_id: str, max_results: int = 20) -> list[dict]:
+def get_full_thread_history(
+    gmail_thread_id: str, max_results: int = 20, gmail_account: str = "default",
+) -> list[dict]:
     """Get thread history: local DB first, supplement from Gmail if sparse.
 
     Mirrors get_full_email_history() pattern but for a specific Gmail thread.
@@ -211,7 +217,7 @@ def get_full_thread_history(gmail_thread_id: str, max_results: int = 20) -> list
     history = get_thread_history(gmail_thread_id, limit=max_results)
 
     if len(history) < 2:
-        gmail_history = _fetch_gmail_thread_by_id(gmail_thread_id)
+        gmail_history = _fetch_gmail_thread_by_id(gmail_thread_id, gmail_account=gmail_account)
         if gmail_history:
             local_keys = {(h["subject"], h["direction"]) for h in history}
             for gh in gmail_history:
@@ -230,12 +236,14 @@ def get_full_thread_history(gmail_thread_id: str, max_results: int = 20) -> list
     return history
 
 
-def _fetch_gmail_thread_by_id(gmail_thread_id: str) -> list[dict]:
+def _fetch_gmail_thread_by_id(
+    gmail_thread_id: str, gmail_account: str = "default",
+) -> list[dict]:
     """Fetch thread history from Gmail API by thread ID."""
     from tools.gmail import GmailClient
 
     try:
-        gmail = GmailClient()
+        gmail = GmailClient(account=gmail_account)
         history = gmail.fetch_thread(gmail_thread_id)
         logger.info(
             "Gmail thread fetch for %s: %d messages",
@@ -247,7 +255,9 @@ def _fetch_gmail_thread_by_id(gmail_thread_id: str) -> list[dict]:
         return []
 
 
-def get_gmail_thread_history(client_email: str, max_results: int = 10) -> list[dict]:
+def get_gmail_thread_history(
+    client_email: str, max_results: int = 10, gmail_account: str = "default",
+) -> list[dict]:
     """Fetch conversation history from Gmail API for a client.
 
     Used when local DB has little or no history (e.g., new automation
@@ -258,7 +268,7 @@ def get_gmail_thread_history(client_email: str, max_results: int = 10) -> list[d
     from tools.gmail import GmailClient
 
     try:
-        gmail = GmailClient()
+        gmail = GmailClient(account=gmail_account)
         history = gmail.search_thread_history(client_email, max_results=max_results)
         logger.info(
             "Gmail thread history for %s: %d messages found",
