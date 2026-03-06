@@ -28,6 +28,7 @@ from tools.stock_tools import search_stock_tool
 from agents.reply_templates import REPLY_TEMPLATES
 from db.memory import check_stock_for_order, calculate_order_price, resolve_order_items
 from tools.email_parser import _strip_quoted_text
+from db.catalog import get_display_name
 
 logger = logging.getLogger(__name__)
 
@@ -239,6 +240,20 @@ def _resolve_from_classifier(classification) -> list[dict] | None:
     return confirmed if confirmed else None
 
 
+def _build_order_summary(stock_items: list[dict]) -> str:
+    """Build order summary string like '2 x Terea Tropical Japan, 1 x Terea Black Japan'."""
+    parts = []
+    for item in stock_items:
+        cat = ""
+        entries = item.get("stock_entries") or []
+        if entries:
+            cat = entries[0].get("category", "")
+        name = item.get("product_name") or item.get("base_flavor", "")
+        display = get_display_name(name, cat)
+        parts.append(f"{item['ordered_qty']} x {display}")
+    return ", ".join(parts)
+
+
 def _clear_pending_oos(result: dict) -> None:
     """Remove pending_oos_resolution from state facts (persisted by email_agent outbound save)."""
     state = result.get("conversation_state") or {}
@@ -288,6 +303,7 @@ def handle_oos_followup(
                         calc_price = calculate_order_price(stock_result["items"])
                         if calc_price is not None:
                             result["calculated_price"] = calc_price
+                            result["order_summary"] = _build_order_summary(stock_result["items"])
                             result, template_found = fill_template_reply(
                                 classification=classification,
                                 result=result,
@@ -333,6 +349,7 @@ def handle_oos_followup(
                         calc_price = calculate_order_price(stock_result["items"])
                         if calc_price is not None:
                             result["calculated_price"] = calc_price
+                            result["order_summary"] = _build_order_summary(stock_result["items"])
                             result, template_found = fill_template_reply(
                                 classification=classification,
                                 result=result,
