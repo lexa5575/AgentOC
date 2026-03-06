@@ -105,7 +105,8 @@ async def trigger_process_email(body: dict):
     if not email:
         return {"error": "email is required"}
 
-    result = process_client_email(email)
+    account = body.get("account", "default")
+    result = process_client_email(email, account=account)
     return {"result": result}
 
 

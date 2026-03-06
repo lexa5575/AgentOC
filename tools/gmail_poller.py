@@ -28,16 +28,15 @@ from utils.telegram import send_telegram
 
 logger = logging.getLogger(__name__)
 
-_gmail_client: GmailClient | None = None
+_gmail_clients: dict[str, GmailClient] = {}
 _poll_lock = threading.Lock()
 
 
-def _get_client() -> GmailClient:
-    """Lazy singleton for GmailClient."""
-    global _gmail_client
-    if _gmail_client is None:
-        _gmail_client = GmailClient()
-    return _gmail_client
+def _get_client(account: str = "default") -> GmailClient:
+    """Lazy singleton for GmailClient per account."""
+    if account not in _gmail_clients:
+        _gmail_clients[account] = GmailClient(account=account)
+    return _gmail_clients[account]
 
 
 def _format_email_text(msg: dict) -> str:
@@ -82,15 +81,22 @@ def _send_telegram_result(msg: dict, result: str) -> None:
     send_telegram(text)
 
 
-def process_client_email(client_email: str) -> str:
+def process_client_email(client_email: str, account: str = "default") -> str:
     """Find the latest unread email from client_email and process it.
+
+    Args:
+        client_email: The client's email address.
+        account: Gmail account to use ("default" or "tilda").
 
     Returns the formatted result string (same as poll_gmail sends to Telegram).
     """
-    if not getenv("GMAIL_REFRESH_TOKEN", ""):
-        return "Gmail не настроен (нет GMAIL_REFRESH_TOKEN)."
+    from tools.gmail import GMAIL_ACCOUNTS
 
-    client = _get_client()
+    suffix = GMAIL_ACCOUNTS.get(account, "")
+    if not getenv(f"GMAIL_REFRESH_TOKEN{suffix}", ""):
+        return f"Gmail аккаунт '{account}' не настроен (нет GMAIL_REFRESH_TOKEN{suffix})."
+
+    client = _get_client(account=account)
 
     # Search for unread messages from this sender
     unread = client.search_unread_from(client_email, max_results=5)

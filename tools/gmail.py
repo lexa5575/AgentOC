@@ -39,26 +39,45 @@ _SKIP_LABELS = {
     "TRASH",
 }
 
+# Named accounts: account_name → env var suffix for refresh token
+# "default" → GMAIL_REFRESH_TOKEN, "tilda" → GMAIL_REFRESH_TOKEN_TILDA
+GMAIL_ACCOUNTS = {
+    "default": "",
+    "tilda": "_TILDA",
+}
+
 
 class GmailClient:
-    """Gmail API client using refresh_token from env."""
+    """Gmail API client using refresh_token from env.
 
-    def __init__(self):
+    Supports multiple accounts via the `account` parameter:
+    - "default" → uses GMAIL_REFRESH_TOKEN (getorderstick@gmail.com)
+    - "tilda"   → uses GMAIL_REFRESH_TOKEN_TILDA (iqostilda2@gmail.com)
+    """
+
+    def __init__(self, account: str = "default"):
         self._service = None
+        self._account = account
+
+    @property
+    def account(self) -> str:
+        return self._account
 
     def _get_service(self):
         """Lazy-init Gmail API service."""
         if self._service:
             return self._service
 
+        suffix = GMAIL_ACCOUNTS.get(self._account, "")
         client_id = getenv("GMAIL_CLIENT_ID", "")
         client_secret = getenv("GMAIL_CLIENT_SECRET", "")
-        refresh_token = getenv("GMAIL_REFRESH_TOKEN", "")
+        refresh_token = getenv(f"GMAIL_REFRESH_TOKEN{suffix}", "")
 
         if not all([client_id, client_secret, refresh_token]):
             raise RuntimeError(
-                "Gmail not configured. Set GMAIL_CLIENT_ID, "
-                "GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN in .env"
+                f"Gmail account '{self._account}' not configured. "
+                f"Set GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, "
+                f"GMAIL_REFRESH_TOKEN{suffix} in .env"
             )
 
         creds = Credentials(

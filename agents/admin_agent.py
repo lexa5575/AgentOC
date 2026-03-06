@@ -382,7 +382,7 @@ def refresh_client_summary(email: str) -> str:
     return f"Could not generate summary for {email} (no email history or error)."
 
 
-def process_email(client_email: str) -> str:
+def process_email(client_email: str, account: str = "default") -> str:
     """Process the latest unread email from a specific client through the full pipeline.
 
     Finds the newest unprocessed email from this sender in Gmail inbox,
@@ -390,13 +390,15 @@ def process_email(client_email: str) -> str:
 
     Args:
         client_email: Client email address to process.
+        account: Gmail account to search in. Use "default" for getorderstick
+                 or "tilda" for iqostilda2. Default: "default".
 
     Returns:
         Processing result or status message.
     """
     from tools.gmail_poller import process_client_email
 
-    return process_client_email(client_email)
+    return process_client_email(client_email, account=account)
 
 
 def stock_summary(warehouse: str = "") -> str:
@@ -496,6 +498,14 @@ Email processing:
   When the operator says "обработай письмо от X" or gives a client email to process,
   call this tool. It finds the newest unprocessed email from that sender, runs it
   through the full classification + reply pipeline, and sends the result to Telegram.
+
+  Gmail accounts (parameter "account"):
+  - "default" — getorderstick@gmail.com (used by default, no need to specify)
+  - "tilda" — iqostilda2@gmail.com (use when operator says "тильда" or "tilda")
+  Examples:
+  - "обработай заказ client@email.com" → account="default"
+  - "тильда обработай заказ client@email.com" → account="tilda"
+  - "tilda client@email.com" → account="tilda"
 
 Warehouses:
 - LA_MAKS — Los Angeles (Maks)
