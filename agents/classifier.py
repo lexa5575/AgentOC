@@ -109,6 +109,11 @@ IMPORTANT: When CONVERSATION STATE mentions out-of-stock or alternatives,
 and the customer responds with agreement/product choice/question about products,
 use situation="oos_followup" (NOT "other").
 
+EXCEPTION: If CONVERSATION STATE Status is "shipped" or "completed",
+the previous order cycle is FINISHED. A new product request with specific
+product + quantity (e.g. "can I have 2 terea sienna") is a NEW ORDER,
+not a followup to the old OOS discussion. Classify as "new_order".
+
 ## Rules for order_items
 
 Most website orders are parsed automatically before reaching you.
