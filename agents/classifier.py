@@ -70,10 +70,13 @@ Examples of needs_reply=true (even if starts with "thank you"):
 - "price_question" — asks HOW MUCH something costs WITHOUT specifying quantity, requests a price quote
   ("how much for Green?", "what's the price of Blue?", "can you give me a price?")
   Only use this when no specific quantity is mentioned. If quantity is present → use new_order instead.
-- "stock_question" — asks WHETHER a specific product is available/in stock, WITHOUT ordering intent
-  ("do you have Tropical?", "is Blue available?", "do you carry Silver?", "any Turquoise?")
+- "stock_question" — asks WHETHER a product or product region is available/in stock, WITHOUT ordering intent.
+  Specific product: "do you have Tropical?", "is Blue available?", "do you carry Silver?"
+  Region/category: "which Japan do you have?", "what terea japan ship from CA?",
+  "do you have EU?", "what's available from Armenia?", "any Japanese sticks?"
   KEY: no quantity, no price query — pure availability question. If quantity is present → new_order.
   If it's inside an oos_followup thread → use oos_followup instead.
+  For region queries, set order_items with base_flavor = region name (e.g. "Japan", "EU", "Armenia").
 - "payment_question" — asks WHERE or HOW to pay ("how do I pay?", "what's the Zelle?")
 - "payment_received" — confirms payment was sent ("I paid via Zelle", "sent CashApp")
 - "discount_request" — asks for discount or better price (NOT a price quote request)

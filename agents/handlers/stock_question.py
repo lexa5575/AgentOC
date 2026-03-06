@@ -102,6 +102,12 @@ def _price_for_items(stock_items: list[dict]) -> float | None:
     return None
 
 
+def _is_region_query(flavor: str) -> bool:
+    """Check if flavor is a region name (Japan, EU, Armenia, etc.)."""
+    from db.stock import _REGION_CATEGORY_MAP
+    return flavor.lower().strip() in _REGION_CATEGORY_MAP
+
+
 def _build_in_stock_reply(
     client_name: str | None,
     flavor: str,
@@ -110,6 +116,25 @@ def _build_in_stock_reply(
 ) -> str:
     """Deterministic reply when product IS in stock (0 LLM tokens)."""
     greeting = f"Hi {client_name}," if client_name else "Hi,"
+
+    # Region query (e.g. "Japan") → list all available products
+    distinct_names = sorted({it["product_name"] for it in stock_items})
+    if _is_region_query(flavor) and len(distinct_names) > 1:
+        from db.catalog import get_display_name
+        display_names = []
+        for it in stock_items:
+            dn = get_display_name(it["product_name"], it["category"])
+            if dn not in display_names:
+                display_names.append(dn)
+        product_list = ", ".join(display_names)
+        price_str = f" ${price:.0f} per box." if price is not None else ""
+        return (
+            f"{greeting} we have these {flavor} products in stock:{price_str}\n"
+            f"{product_list}\n"
+            f"Let us know which one you'd like! Thank you!"
+        )
+
+    # Single product query
     price_str = f" It's ${price:.0f} per box." if price is not None else ""
     return (
         f"{greeting} yes, we have {flavor} in stock!{price_str} "
