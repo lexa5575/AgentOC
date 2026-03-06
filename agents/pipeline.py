@@ -444,6 +444,20 @@ def classify_and_process(
         # Step 0.9 + 1: Deterministic parser or LLM classification
         classification = run_classification(email_text, context_str)
 
+        # Business rule: certain situations ALWAYS need a reply,
+        # regardless of LLM decision (e.g. "I sent it thanks" looks
+        # like an acknowledgment but payment_received needs tracking/Zelle).
+        _ALWAYS_REPLY_SITUATIONS = {"payment_received", "new_order"}
+        if (
+            not classification.needs_reply
+            and classification.situation in _ALWAYS_REPLY_SITUATIONS
+        ):
+            logger.info(
+                "Override needs_reply=True for %s (%s)",
+                classification.situation, classification.client_email,
+            )
+            classification.needs_reply = True
+
         logger.info(
             "Classified: email=%s, situation=%s, needs_reply=%s",
             classification.client_email, classification.situation, classification.needs_reply,
