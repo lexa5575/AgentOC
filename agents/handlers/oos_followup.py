@@ -26,7 +26,7 @@ from agents.context import build_context, format_context_for_prompt
 from agents.handlers.template_utils import fill_template_reply
 from tools.stock_tools import search_stock_tool
 from agents.reply_templates import REPLY_TEMPLATES
-from db.memory import check_stock_for_order, calculate_order_price
+from db.memory import check_stock_for_order, calculate_order_price, resolve_order_items
 from tools.email_parser import _strip_quoted_text
 
 logger = logging.getLogger(__name__)
@@ -325,7 +325,10 @@ def handle_oos_followup(
             confirmed_from_classifier = _resolve_from_classifier(classification)
             if confirmed_from_classifier:
                 try:
-                    stock_result = check_stock_for_order(confirmed_from_classifier)
+                    # Resolve product names → catalog product_ids
+                    # (same as pipeline does for new_order)
+                    resolved, _ = resolve_order_items(confirmed_from_classifier)
+                    stock_result = check_stock_for_order(resolved)
                     if stock_result["all_in_stock"]:
                         calc_price = calculate_order_price(stock_result["items"])
                         if calc_price is not None:
@@ -350,10 +353,18 @@ def handle_oos_followup(
                     )
 
             # --- Outcome D: Fall through to LLM ---
-            logger.info(
-                "OOS agrees: could not resolve items for %s — LLM fallback",
-                classification.client_email,
-            )
+            if confirmed_from_classifier:
+                logger.info(
+                    "OOS agrees: classifier items found but template failed for %s "
+                    "— LLM fallback (items=%s)",
+                    classification.client_email,
+                    [i.get("base_flavor") for i in confirmed_from_classifier],
+                )
+            else:
+                logger.info(
+                    "OOS agrees: no items resolved for %s — LLM fallback",
+                    classification.client_email,
+                )
 
     # === declines_alternative → decline template ===
     if intent == "declines_alternative":
