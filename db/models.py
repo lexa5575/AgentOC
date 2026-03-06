@@ -224,6 +224,32 @@ class SheetConfig(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class FulfillmentEvent(Base):
+    """Tracks maks_sales increments for idempotency."""
+
+    __tablename__ = "fulfillment_events"
+    __table_args__ = (
+        UniqueConstraint(
+            "gmail_message_id", "trigger_type",
+            name="uq_fulfillment_gmail_trigger",
+        ),
+        UniqueConstraint(
+            "client_email", "order_id", "trigger_type",
+            name="uq_fulfillment_email_order_trigger",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    client_email = Column(String, nullable=False, index=True)
+    order_id = Column(String, nullable=True)
+    gmail_message_id = Column(String, nullable=True)
+    trigger_type = Column(String, nullable=False)   # "new_order_postpay" / "payment_received_prepay"
+    status = Column(String, nullable=False)          # "updated" / "skipped_split" / etc.
+    warehouse = Column(String, nullable=True)
+    details_json = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 def get_session() -> Session:
     """Create a new database session."""
     return Session(engine)
