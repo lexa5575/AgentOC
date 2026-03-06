@@ -64,6 +64,11 @@ Examples of needs_reply=false:
 Examples of needs_reply=true (even if starts with "thank you"):
 - "Thank you! When will it be shipped?" (has a question)
 - "Got it. Can I also add 2 boxes of Green?" (has a request)
+- "Yes pls. Ty" in an oos_followup thread (agreeing to alternative → need to confirm order)
+
+IMPORTANT: When situation is oos_followup and customer AGREES to an alternative
+("yes", "yes pls", "sounds good", "that works"), needs_reply is ALWAYS true —
+we must confirm the order details. These are NOT simple acknowledgments.
 
 ## Rules for situation
 

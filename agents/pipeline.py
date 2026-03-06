@@ -462,7 +462,7 @@ def classify_and_process(
         # Business rule: certain situations ALWAYS need a reply,
         # regardless of LLM decision (e.g. "I sent it thanks" looks
         # like an acknowledgment but payment_received needs tracking/Zelle).
-        _ALWAYS_REPLY_SITUATIONS = {"payment_received", "new_order"}
+        _ALWAYS_REPLY_SITUATIONS = {"payment_received", "new_order", "oos_followup"}
         if (
             not classification.needs_reply
             and classification.situation in _ALWAYS_REPLY_SITUATIONS
