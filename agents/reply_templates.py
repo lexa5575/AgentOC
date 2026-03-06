@@ -24,13 +24,11 @@ REPLY_TEMPLATES = {
         "Thank you!"
     ),
     ("payment_received", "prepay"): (
-        "Hello {CUSTOMER_NAME}\n"
-        "How are you?\n"
-        "Thank you very much for a prompt payment!\n"
-        "Nice doing business with you!!!\n"
-        "\n"
-        "We will ship your order today!\n"
-        "Here is the USPS tracking number:\n"
+        "Thank you very much!\n"
+        "We received your payment.\n"
+        "We will ship your order TODAY!\n"
+        "Tracking with USPS will be updated on the USPS website "
+        "till midnight on the day of the shipping\n"
         "{TRACKING_URL}\n"
         "\n"
         "{CUSTOMER_NAME}\n"
