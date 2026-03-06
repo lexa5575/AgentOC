@@ -24,6 +24,27 @@ from db.models import ProductCatalog
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Spelling equivalents: variant spellings of the same flavor across regions.
+# Maps non-canonical name_norm → canonical name_norm.
+# ---------------------------------------------------------------------------
+_SPELLING_EQUIVALENTS: dict[str, str] = {
+    "siena": "sienna",  # Armenia "Siena" = EU "Sienna"
+}
+
+
+def get_equivalent_norms(name_norm: str) -> set[str]:
+    """Return all equivalent name_norms (including the input itself).
+
+    Example: get_equivalent_norms("sienna") → {"sienna", "siena"}
+    """
+    canonical = _SPELLING_EQUIVALENTS.get(name_norm, name_norm)
+    equivalents = {name_norm, canonical}
+    for k, v in _SPELLING_EQUIVALENTS.items():
+        if v == canonical:
+            equivalents.add(k)
+    return equivalents
+
 
 def normalize_product_name(name: str) -> str:
     """Normalize product name for deduplication: lower, trim, collapse spaces."""

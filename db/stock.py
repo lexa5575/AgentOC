@@ -157,13 +157,24 @@ def sync_stock(warehouse: str, items: list[dict]) -> int:
 def search_stock(query: str, warehouse: str | None = None) -> list[dict]:
     """Search stock by substring match (ILIKE %query%).
 
+    Also searches spelling equivalents (e.g. "Sienna" also finds "Siena").
     Used by LLM agents via search_stock_tool — intentionally broad.
     """
+    from sqlalchemy import or_
+
+    from db.catalog import get_equivalent_norms
+
     session = get_session()
     try:
-        q = session.query(StockItem).filter(
-            StockItem.product_name.ilike(f"%{query.strip()}%")
-        )
+        trimmed = query.strip()
+        # Build ILIKE filters for original + equivalent spellings
+        equivalent_norms = get_equivalent_norms(trimmed.lower())
+        filters = [StockItem.product_name.ilike(f"%{trimmed}%")]
+        for norm in equivalent_norms:
+            if norm != trimmed.lower():
+                filters.append(StockItem.product_name.ilike(f"%{norm}%"))
+
+        q = session.query(StockItem).filter(or_(*filters))
         if warehouse:
             q = q.filter_by(warehouse=warehouse)
         return [item.to_dict() for item in q.all()]
@@ -498,17 +509,20 @@ def select_best_alternatives(
     # another region is the best alternative. Even without a region suffix,
     # we still check — the same base_flavor may exist in other categories
     # that were excluded by the region filter during stock check.
+    from db.catalog import get_equivalent_norms
     from db.product_resolver import _normalize as _resolver_normalize, _extract_region_categories
     region_source = original_product_name or base_flavor
     oos_region_cats = _extract_region_categories(region_source)
     normalized_oos = _resolver_normalize(base_flavor)
+    oos_equivalents = get_equivalent_norms(normalized_oos.lower())
     same_flavor_items: list[dict] = []
     same_flavor_names: set[str] = set()
     # If region was detected, find the same flavor in OTHER regions
+    # Uses spelling equivalents (e.g. "sienna" matches "siena")
     if oos_region_cats:
         for item in available:
             if (
-                item["product_name"].lower() == normalized_oos.lower()
+                item["product_name"].lower() in oos_equivalents
                 and item["category"] not in oos_region_cats
             ):
                 same_flavor_items.append(item)
