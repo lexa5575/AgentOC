@@ -382,6 +382,23 @@ def refresh_client_summary(email: str) -> str:
     return f"Could not generate summary for {email} (no email history or error)."
 
 
+def process_email(client_email: str) -> str:
+    """Process the latest unread email from a specific client through the full pipeline.
+
+    Finds the newest unprocessed email from this sender in Gmail inbox,
+    classifies it, generates a draft reply, and sends the result to Telegram.
+
+    Args:
+        client_email: Client email address to process.
+
+    Returns:
+        Processing result or status message.
+    """
+    from tools.gmail_poller import process_client_email
+
+    return process_client_email(client_email)
+
+
 def stock_summary(warehouse: str = "") -> str:
     """Get overall stock summary: total items, available, last sync time.
 
@@ -474,6 +491,12 @@ Leave empty to query all warehouses at once.
 
 Stock categories: KZ_TEREA, TEREA_JAPAN, TEREA_EUROPE, ONE, STND, PRIME, УНИКАЛЬНАЯ_ТЕРЕА, ARMENIA, INDONESIA, KZ_HEETS
 
+Email processing:
+- process_email: Process the latest unread email from a specific client.
+  When the operator says "обработай письмо от X" or gives a client email to process,
+  call this tool. It finds the newest unprocessed email from that sender, runs it
+  through the full classification + reply pipeline, and sends the result to Telegram.
+
 Warehouses:
 - LA_MAKS — Los Angeles (Maks)
 - CHICAGO_MAX — Chicago (Max)
@@ -500,6 +523,7 @@ admin_agent = Agent(
         set_operator_label, refresh_client_summary,
         email_history,
         check_stock, stock_by_category, stock_summary,
+        process_email,
     ],
     markdown=False,
 )

@@ -307,6 +307,24 @@ class GmailClient:
         history.sort(key=lambda m: m["created_at"])
         return history
 
+    def search_unread_from(self, sender_email: str, max_results: int = 5) -> list[dict]:
+        """Search for unread PRIMARY inbox messages from a specific sender.
+
+        Returns list of dicts: [{msg_id}, ...] (newest first).
+        """
+        service = self._get_service()
+        try:
+            result = service.users().messages().list(
+                userId="me",
+                q=f"from:{sender_email} is:unread in:inbox category:primary",
+                maxResults=max_results,
+            ).execute()
+        except Exception as e:
+            logger.error("Gmail search failed for %s: %s", sender_email, e)
+            return []
+
+        return [{"msg_id": m["id"]} for m in result.get("messages", [])]
+
     def search_order_notifications(
         self,
         client_email: str,

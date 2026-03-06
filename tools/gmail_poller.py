@@ -82,6 +82,47 @@ def _send_telegram_result(msg: dict, result: str) -> None:
     send_telegram(text)
 
 
+def process_client_email(client_email: str) -> str:
+    """Find the latest unread email from client_email and process it.
+
+    Returns the formatted result string (same as poll_gmail sends to Telegram).
+    """
+    if not getenv("GMAIL_REFRESH_TOKEN", ""):
+        return "Gmail не настроен (нет GMAIL_REFRESH_TOKEN)."
+
+    client = _get_client()
+
+    # Search for unread messages from this sender
+    unread = client.search_unread_from(client_email, max_results=5)
+    if not unread:
+        return f"Нет непрочитанных писем от {client_email}."
+
+    # Find the first (newest) unprocessed message
+    for msg_info in unread:
+        msg_id = msg_info["msg_id"]
+        if email_already_processed(msg_id):
+            continue
+
+        try:
+            msg = client.get_message(msg_id)
+            email_text = _format_email_text(msg)
+
+            result = classify_and_process(
+                email_text,
+                gmail_message_id=msg_id,
+                gmail_thread_id=msg.get("gmail_thread_id"),
+            )
+
+            _send_telegram_result(msg, result)
+            return result
+
+        except Exception as e:
+            logger.error("Failed to process message %s: %s", msg_id, e, exc_info=True)
+            return f"Ошибка обработки письма {msg_id}: {e}"
+
+    return f"Все непрочитанные письма от {client_email} уже обработаны."
+
+
 def poll_gmail() -> int:
     """Poll Gmail for new messages, process each, send to Telegram.
 

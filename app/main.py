@@ -74,9 +74,12 @@ def _gmail_poll_thread():
 
 
 # Start Gmail poller as daemon thread (dies with main process)
-if getenv("GMAIL_REFRESH_TOKEN", ""):
+# AUTO_POLL=true enables automatic polling; default is off (manual mode via process_email)
+if getenv("GMAIL_REFRESH_TOKEN", "") and getenv("AUTO_POLL", "").lower() == "true":
     threading.Thread(target=_gmail_poll_thread, daemon=True).start()
     logger.info("Gmail poller thread launched (every %ds)", GMAIL_POLL_INTERVAL)
+elif getenv("GMAIL_REFRESH_TOKEN", ""):
+    logger.info("Gmail configured, auto-poll disabled (manual mode). Set AUTO_POLL=true to enable.")
 else:
     logger.info("Gmail not configured, poller disabled")
 
@@ -88,6 +91,22 @@ async def trigger_gmail_poll():
 
     count = poll_gmail()
     return {"processed": count}
+
+
+@app.post("/api/process-email")
+async def trigger_process_email(body: dict):
+    """Process the latest unread email from a specific client.
+
+    Body: {"email": "client@example.com"}
+    """
+    from tools.gmail_poller import process_client_email
+
+    email = body.get("email", "").strip()
+    if not email:
+        return {"error": "email is required"}
+
+    result = process_client_email(email)
+    return {"result": result}
 
 
 # ---------------------------------------------------------------------------
