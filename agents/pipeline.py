@@ -201,6 +201,17 @@ def process_classified_email(classification) -> dict:
                     ],
                 }
 
+            # Build order summary for Gmail draft display (e.g. "2 x Terea Green ME")
+            from db.catalog import get_display_name
+            summary_parts = []
+            for item in stock_result["items"]:
+                cat = ""
+                if item["stock_entries"]:
+                    cat = item["stock_entries"][0].get("category", "")
+                display = get_display_name(item["product_name"], cat)
+                summary_parts.append(f"{item['ordered_qty']} x {display}")
+            result["order_summary"] = ", ".join(summary_parts)
+
     # All reply generation is delegated to specialized handlers via router.
     result["needs_routing"] = True
     return result
@@ -545,11 +556,13 @@ def classify_and_process(
                         break
                 reply_subject = f"Re: {subject}" if subject else ""
 
+                draft_html = result.get("draft_reply_html")
                 draft_id = GmailClient().create_draft(
                     to=classification.client_email,
                     subject=reply_subject,
-                    body=draft_reply,
+                    body=draft_html or draft_reply,
                     thread_id=gmail_thread_id,
+                    html=bool(draft_html),
                 )
                 result["gmail_draft_id"] = draft_id
             except Exception as e:

@@ -378,21 +378,23 @@ class GmailClient:
         subject: str,
         body: str,
         thread_id: str | None = None,
+        html: bool = False,
     ) -> str:
         """Create a Gmail draft in the specified thread.
 
         Args:
             to: Recipient email address.
             subject: Email subject (typically "Re: ...").
-            body: Plain text body of the reply.
+            body: Plain text or HTML body of the reply.
             thread_id: Gmail thread ID to attach the draft to.
+            html: If True, body is treated as HTML.
 
         Returns:
             Gmail draft ID.
         """
         service = self._get_service()
 
-        message = MIMEText(body)
+        message = MIMEText(body, "html" if html else "plain")
         message["to"] = to
         message["subject"] = subject
 

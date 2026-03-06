@@ -1,11 +1,58 @@
 """Template helpers shared by template-based handlers."""
 
+import html as html_mod
 import logging
 
 from agents.reply_templates import REPLY_TEMPLATES
 from db.memory import decrement_discount
 
 logger = logging.getLogger(__name__)
+
+
+def to_gmail_html(plain_reply: str, order_summary: str = "") -> str:
+    """Convert a filled template reply to styled HTML for Gmail draft.
+
+    Applies formatting matching the business email style:
+    - Total line → bold, with order summary appended
+    - "In memo or comments" warning → red bold
+    - "If paid today" line → bold
+    - Empty lines → asterisk separators
+    """
+    lines = plain_reply.split("\n")
+    html_lines = []
+
+    for line in lines:
+        line_lower = line.lower()
+
+        if not line.strip():
+            html_lines.append("*")
+            continue
+
+        escaped = html_mod.escape(line)
+
+        if "total" in line_lower and ("shipping" in line_lower or "free" in line_lower):
+            text = escaped
+            if order_summary:
+                text += f" ({html_mod.escape(order_summary)})"
+            html_lines.append(f"<b>{text}</b>")
+        elif "in memo or comments" in line_lower:
+            warning = "( In memo or comments don't put anything please ! )"
+            warning_esc = html_mod.escape(warning)
+            styled = (
+                f'<span style="color:red;font-weight:bold">'
+                f"{warning_esc}</span>"
+            )
+            html_lines.append(escaped.replace(warning_esc, styled))
+        elif "if paid today" in line_lower:
+            html_lines.append(f"<b>{escaped}</b>")
+        else:
+            html_lines.append(escaped)
+
+    body = "<br>\n".join(html_lines)
+    return (
+        '<div style="font-family:Arial,sans-serif;font-size:14px;'
+        f'color:#000;">{body}</div>'
+    )
 
 
 def fill_template_reply(
@@ -94,5 +141,8 @@ def fill_template_reply(
 
     result["template_used"] = True
     result["draft_reply"] = reply
+    result["draft_reply_html"] = to_gmail_html(
+        reply, result.get("order_summary", "")
+    )
     result["needs_routing"] = False
     return result, True
