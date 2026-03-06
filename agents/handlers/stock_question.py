@@ -113,13 +113,15 @@ def _build_in_stock_reply(
     flavor: str,
     stock_items: list[dict],
     price: float | None,
+    *,
+    is_region: bool = False,
 ) -> str:
     """Deterministic reply when product IS in stock (0 LLM tokens)."""
     greeting = f"Hi {client_name}," if client_name else "Hi,"
 
     # Region query (e.g. "Japan") → list all available products
     distinct_names = sorted({it["product_name"] for it in stock_items})
-    if _is_region_query(flavor) and len(distinct_names) > 1:
+    if is_region and len(distinct_names) > 1:
         from db.catalog import get_display_name
         display_names = []
         for it in stock_items:
@@ -187,7 +189,10 @@ def handle_stock_question(
     # -----------------------------------------------------------------------
     if available:
         price = _price_for_items(available)
-        result["draft_reply"] = _build_in_stock_reply(client_name, display_name, available, price)
+        is_region = _is_region_query(flavor)
+        result["draft_reply"] = _build_in_stock_reply(
+            client_name, display_name, available, price, is_region=is_region,
+        )
         result["template_used"] = True
         result["needs_routing"] = False
 
