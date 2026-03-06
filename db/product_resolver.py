@@ -37,7 +37,7 @@ USE_CATALOG_RESOLVER = os.environ.get("USE_CATALOG_RESOLVER", "true").lower() ==
 USE_LLM_RESOLVER = os.environ.get("USE_LLM_RESOLVER", "true").lower() == "true"
 
 # Brand prefixes to strip before matching (mirrors email_parser logic)
-_BRAND_PREFIXES = ("Tera ", "Terea ", "Heets ")
+_BRAND_PREFIXES = ("Tera ", "Terea ", "Heets ", "T ")
 
 # Region and product-line suffixes to strip (case-insensitive)
 _REGION_SUFFIXES = (
@@ -118,8 +118,9 @@ class ResolveResult:
 def _normalize(name: str) -> str:
     """Normalize product name: strip brand prefixes and region suffixes."""
     name = name.strip()
+    name_lower_check = name.lower()
     for prefix in _BRAND_PREFIXES:
-        if name.startswith(prefix):
+        if name_lower_check.startswith(prefix.lower()):
             name = name[len(prefix):]
             break
     name_lower = name.lower()
@@ -137,8 +138,9 @@ def _has_origin_suffix(raw_name: str) -> bool:
     "Tera Purple made in Middle East" (Armenia Purple).
     """
     name = raw_name.strip()
+    name_lower_check = name.lower()
     for prefix in _BRAND_PREFIXES:
-        if name.startswith(prefix):
+        if name_lower_check.startswith(prefix.lower()):
             name = name[len(prefix):]
             break
     name_lower = name.lower()
@@ -167,8 +169,9 @@ def _extract_region_categories(name: str) -> frozenset[str] | None:
         "Silver" → None (no region)
     """
     name = name.strip()
+    name_lower_check = name.lower()
     for prefix in _BRAND_PREFIXES:
-        if name.startswith(prefix):
+        if name_lower_check.startswith(prefix.lower()):
             name = name[len(prefix):]
             break
     name_lower = name.lower()
@@ -214,9 +217,16 @@ def _resolve_via_llm(raw_name: str, known_names: list[str]) -> str | None:
         prompt = (
             f'Customer ordered: "{raw_name}"\n\n'
             f"Our product catalog:\n{catalog_list}\n\n"
-            f"Which product did the customer mean?\n"
+            f"NAMING CONVENTIONS (important!):\n"
+            f'- "Tera", "Terea", "TERA" brand prefix = "T" prefix in our catalog\n'
+            f'  Example: "TERA SMOOTH REGULAR" → "T Smooth", "Terea Purple" → "T Purple"\n'
+            f'- Website names often include extra trailing words like "Regular", "Flavor"\n'
+            f'  Example: "BALANCED REGULAR" → "T Balanced", "RICH REGULAR" → "T RICH"\n'
+            f"- Ignore case differences\n"
+            f"- Armenia/EU/KZ products have NO prefix (just the flavor name)\n\n"
+            f"Which product from our catalog did the customer mean?\n"
             f'Reply with ONLY the exact product name from the catalog above.\n'
-            f'If you cannot determine, reply with "NONE".'
+            f'If you truly cannot determine, reply with "NONE".'
         )
 
         client = openai.OpenAI()

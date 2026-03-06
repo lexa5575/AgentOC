@@ -97,8 +97,9 @@ def _extract_base_flavor(product_name: str) -> str:
     """
     name = product_name.strip()
 
+    name_lower_check = name.lower()
     for prefix in BRAND_PREFIXES:
-        if name.startswith(prefix):
+        if name_lower_check.startswith(prefix.lower()):
             name = name[len(prefix) :]
             break
 
