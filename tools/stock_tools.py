@@ -10,12 +10,13 @@ logger = logging.getLogger(__name__)
 def search_stock_tool(flavor: str) -> str:
     """Check current stock availability for a product flavor or name.
 
-    Use this whenever a customer asks if a specific product is available,
-    in stock, how much it costs, or whether you carry it.
+    Use this whenever a customer mentions a product, asks about availability,
+    or you need to verify a product name exists in our catalog.
 
     Args:
-        flavor: Product name or flavor to search for.
-                Examples: "Turquoise", "Green", "T Mint", "Tropical", "Silver"
+        flavor: Flavor or color name to search for. Use JUST the flavor,
+                not the full name. Examples: "Turquoise", "Green", "Mint",
+                "Silver", "Purple". NOT "Terea Green" or "Green Middle East".
 
     Returns:
         Stock availability info with quantities and prices.

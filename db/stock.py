@@ -167,6 +167,12 @@ def search_stock(query: str, warehouse: str | None = None) -> list[dict]:
     session = get_session()
     try:
         trimmed = query.strip()
+        # Strip common prefixes that aren't in stock names
+        # Stock items are "Green", "Turquoise" — not "Terea Green"
+        import re
+        trimmed = re.sub(r"(?i)^terea\s+", "", trimmed)
+        trimmed = re.sub(r"(?i)\s+(made\s+in\s+)?(middle\s+east|europe|japan|eu|me|jp)\s*$", "", trimmed)
+        trimmed = trimmed.strip()
         # Build ILIKE filters for original + equivalent spellings
         equivalent_norms = get_equivalent_norms(trimmed.lower())
         filters = [StockItem.product_name.ilike(f"%{trimmed}%")]
