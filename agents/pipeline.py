@@ -206,9 +206,11 @@ def process_classified_email(classification) -> dict:
             summary_parts = []
             for item in stock_result["items"]:
                 cat = ""
-                if item["stock_entries"]:
-                    cat = item["stock_entries"][0].get("category", "")
-                display = get_display_name(item["product_name"], cat)
+                entries = item.get("stock_entries") or []
+                if entries:
+                    cat = entries[0].get("category", "")
+                name = item.get("product_name") or item.get("base_flavor", "")
+                display = get_display_name(name, cat)
                 summary_parts.append(f"{item['ordered_qty']} x {display}")
             result["order_summary"] = ", ".join(summary_parts)
 
