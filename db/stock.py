@@ -37,6 +37,43 @@ CATEGORY_PRICES: dict[str, int] = {
 }
 
 
+def extract_variant_id(product_ids: list[int] | None) -> int | None:
+    """Extract variant_id from resolved product_ids.
+
+    Single-match → return the id.
+    Multi-match or empty → None + warning.
+    """
+    if not product_ids:
+        return None
+    if len(product_ids) == 1:
+        return product_ids[0]
+    logger.warning(
+        "variant_id ambiguous: %d product_ids %s — stored as NULL",
+        len(product_ids), product_ids,
+    )
+    return None
+
+
+# Backward compat alias
+_extract_variant_id = extract_variant_id
+
+
+def has_ambiguous_variants(items: list[dict]) -> list[str]:
+    """Return base_flavors of items with multi-match product_ids (len > 1).
+
+    Used as a runtime gate: any ambiguous item should block auto-fulfillment.
+    """
+    return [
+        item.get("base_flavor", "?")
+        for item in items
+        if len(item.get("product_ids") or []) > 1
+    ]
+
+
+# Backward compat alias
+_has_ambiguous_variants = has_ambiguous_variants
+
+
 def get_product_type(base_flavor: str) -> str:
     """Determine product type from base_flavor.
 
@@ -334,7 +371,7 @@ def check_stock_for_order(
             product_type = get_product_type(flavor)
             allowed_cats = _get_allowed_categories(product_type)
 
-            # Phase 2: product_id path (exact) vs legacy string path (ILIKE)
+            # Phase 8: product_id path only — no ILIKE fallback
             product_ids = item.get("product_ids")
             if product_ids:
                 stock_entries = (
@@ -345,14 +382,13 @@ def check_stock_for_order(
                     )
                 )
             else:
-                # Legacy fallback: exact case-insensitive match by name
-                stock_entries = (
-                    session.query(StockItem)
-                    .filter(
-                        StockItem.product_name.ilike(flavor),
-                        StockItem.category.in_(allowed_cats),
-                    )
+                # No product_ids → unresolved, return empty (no text matching)
+                logger.warning(
+                    "check_stock_for_order: no product_ids for '%s', "
+                    "treating as unresolved (total_available=0)",
+                    flavor,
                 )
+                stock_entries = session.query(StockItem).filter(False)  # empty
             if warehouse:
                 stock_entries = stock_entries.filter_by(warehouse=warehouse)
             stock_entries = stock_entries.all()
@@ -399,12 +435,23 @@ def save_order_items(
 ) -> int:
     """Save structured order items for preference tracking.
 
-    Each item dict: {product_name, base_flavor, quantity}.
+    Each item dict: {product_name, base_flavor, quantity,
+        variant_id (optional), display_name_snapshot (optional)}.
     product_type is auto-detected from base_flavor.
     Skips duplicates via UNIQUE constraint (using SAVEPOINT so
     a duplicate doesn't roll back previously inserted rows).
     Returns number of saved items.
+
+    Guards:
+    - order_id must be non-empty (NULL order_id is unsafe for dedup).
     """
+    if not order_id or not str(order_id).strip():
+        logger.warning(
+            "save_order_items: order_id is empty/None, skipping for %s",
+            client_email,
+        )
+        return 0
+
     client_email = client_email.lower().strip()
     session = get_session()
     saved = 0
@@ -418,6 +465,8 @@ def save_order_items(
                 base_flavor=base_flavor,
                 product_type=get_product_type(base_flavor),
                 quantity=item.get("quantity", 1),
+                variant_id=item.get("variant_id"),
+                display_name_snapshot=item.get("display_name_snapshot"),
             )
             try:
                 with session.begin_nested():  # SAVEPOINT
@@ -483,6 +532,8 @@ def replace_order_items(
                 base_flavor=base_flavor,
                 product_type=get_product_type(base_flavor),
                 quantity=item.get("quantity", 1),
+                variant_id=item.get("variant_id"),
+                display_name_snapshot=item.get("display_name_snapshot"),
             ))
 
         session.commit()
@@ -544,7 +595,6 @@ def get_client_flavor_history(
 def _get_available_items(
     allowed_cats: set[str],
     warehouse: str | None = None,
-    exclude_flavor: str = "",
     exclude_product_ids: list[int] | None = None,
 ) -> list[dict]:
     """Return available stock items filtered by category, warehouse, and exclusion.
@@ -552,8 +602,7 @@ def _get_available_items(
     Args:
         allowed_cats: Set of allowed stock categories.
         warehouse: Optional warehouse filter.
-        exclude_flavor: Legacy: exclude by substring ILIKE.
-        exclude_product_ids: Phase 2: exclude by product_id (exact, preferred).
+        exclude_product_ids: Exclude by product_id (exact match).
     """
     session = get_session()
     try:
@@ -563,8 +612,6 @@ def _get_available_items(
         )
         if exclude_product_ids:
             q = q.filter(~StockItem.product_id.in_(exclude_product_ids))
-        elif exclude_flavor:
-            q = q.filter(~StockItem.product_name.ilike(f"%{exclude_flavor}%"))
         if warehouse:
             q = q.filter_by(warehouse=warehouse)
         return [item.to_dict() for item in q.order_by(StockItem.quantity.desc()).all()]
@@ -621,7 +668,6 @@ def select_best_alternatives(
 
     available = _get_available_items(
         allowed_cats, warehouse,
-        exclude_flavor=base_flavor if not oos_product_ids else "",
         exclude_product_ids=oos_product_ids,
     )
     if not available:
@@ -643,6 +689,17 @@ def select_best_alternatives(
     oos_region_cats = _extract_region_categories(region_source)
     normalized_oos = _resolver_normalize(base_flavor)
     oos_equivalents = get_equivalent_norms(normalized_oos.lower())
+
+    # Phase 8.2: when resolver couldn't find product_ids, exclude OOS flavor
+    # in Python (no SQL ILIKE). Normalizes both sides for brand-prefix safety.
+    if not oos_product_ids:
+        available = [
+            item for item in available
+            if _resolver_normalize(item["product_name"]).lower() not in oos_equivalents
+        ]
+        if not available:
+            return {"alternatives": [], "reason": "none_available", "order_count": None}
+
     same_flavor_items: list[dict] = []
     same_flavor_names: set[str] = set()
     # If region was detected, find the same flavor in OTHER regions
@@ -650,7 +707,7 @@ def select_best_alternatives(
     if oos_region_cats:
         for item in available:
             if (
-                item["product_name"].lower() in oos_equivalents
+                _resolver_normalize(item["product_name"]).lower() in oos_equivalents
                 and item["category"] not in oos_region_cats
             ):
                 same_flavor_items.append(item)

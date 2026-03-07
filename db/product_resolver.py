@@ -47,8 +47,24 @@ _REGION_SUFFIXES = (
     " eu",
     " japan",
     " kz",
+    " me",
     " unique flavor",  # УНИКАЛЬНАЯ_ТЕРЕА line: "Black Purple Menthol Unique Flavor" → "Black Purple Menthol"
     " unique",         # shorter variant
+)
+
+# Region prefixes to strip (case-insensitive).
+# Order: longest first to avoid partial matches.
+_REGION_PREFIXES = (
+    "middle east ",
+    "european ",
+    "armenian ",
+    "japanese ",
+    "armenia ",
+    "europe ",
+    "japan ",
+    "eu ",
+    "me ",
+    "kz ",
 )
 
 # Origin suffixes that indicate a specific regional variant (Armenia/EU/KZ/Japan).
@@ -96,6 +112,20 @@ _REGION_TO_CATEGORIES: dict[str, frozenset[str]] = {
     " kz": frozenset({"KZ_TEREA"}),
 }
 
+# Region detection: prefix → allowed stock categories
+_REGION_PREFIX_TO_CATEGORIES: dict[str, frozenset[str]] = {
+    "eu ": frozenset({"TEREA_EUROPE"}),
+    "european ": frozenset({"TEREA_EUROPE"}),
+    "europe ": frozenset({"TEREA_EUROPE"}),
+    "japan ": frozenset({"TEREA_JAPAN", "УНИКАЛЬНАЯ_ТЕРЕА"}),
+    "japanese ": frozenset({"TEREA_JAPAN", "УНИКАЛЬНАЯ_ТЕРЕА"}),
+    "middle east ": frozenset({"ARMENIA", "KZ_TEREA"}),
+    "armenia ": frozenset({"ARMENIA"}),
+    "armenian ": frozenset({"ARMENIA"}),
+    "me ": frozenset({"ARMENIA", "KZ_TEREA"}),
+    "kz ": frozenset({"KZ_TEREA"}),
+}
+
 
 @dataclass
 class ResolveResult:
@@ -116,24 +146,33 @@ class ResolveResult:
 # ---------------------------------------------------------------------------
 
 def _normalize(name: str) -> str:
-    """Normalize product name: strip brand prefixes and region suffixes."""
+    """Normalize product name: strip brand prefixes, region prefixes/suffixes."""
     name = name.strip()
     name_lower_check = name.lower()
     for prefix in _BRAND_PREFIXES:
         if name_lower_check.startswith(prefix.lower()):
             name = name[len(prefix):]
             break
+    # Strip region suffixes
     name_lower = name.lower()
     for suffix in _REGION_SUFFIXES:
         if name_lower.endswith(suffix):
             name = name[: len(name) - len(suffix)]
             break
+    else:
+        # No suffix found — try region prefixes ("EU Bronze" → "Bronze")
+        name_lower = name.lower()
+        for prefix in _REGION_PREFIXES:
+            if name_lower.startswith(prefix):
+                name = name[len(prefix):]
+                break
     return name.strip()
 
 
 def _has_origin_suffix(raw_name: str) -> bool:
-    """Return True if raw_name contains an explicit regional origin suffix.
+    """Return True if raw_name contains an explicit regional origin indicator.
 
+    Checks both suffixes ("Silver EU") and prefixes ("EU Silver").
     Used to distinguish "Tera Purple" (Japan T Purple) from
     "Tera Purple made in Middle East" (Armenia Purple).
     """
@@ -144,7 +183,10 @@ def _has_origin_suffix(raw_name: str) -> bool:
             name = name[len(prefix):]
             break
     name_lower = name.lower()
-    return any(name_lower.endswith(s) for s in _ORIGIN_SUFFIXES)
+    if any(name_lower.endswith(s) for s in _ORIGIN_SUFFIXES):
+        return True
+    # Also check region prefixes
+    return any(name_lower.startswith(p) for p in _REGION_PREFIX_TO_CATEGORIES)
 
 
 def _resolve_via_alias(raw_name: str) -> str | None:
@@ -157,14 +199,17 @@ def _resolve_via_alias(raw_name: str) -> str | None:
 
 
 def _extract_region_categories(name: str) -> frozenset[str] | None:
-    """Extract target stock categories from a region suffix in the product name.
+    """Extract target stock categories from a region suffix or prefix in the product name.
 
-    Strips brand prefix first, then checks for region suffixes.
+    Strips brand prefix first, then checks for region suffixes and prefixes.
     Returns matching categories or None if no region detected.
 
     Examples:
         "Tera AMBER made in Europe" → {"TEREA_EUROPE"}
         "Silver EU" → {"TEREA_EUROPE"}
+        "EU Silver" → {"TEREA_EUROPE"}
+        "European Bronze" → {"TEREA_EUROPE"}
+        "Japan Smooth" → {"TEREA_JAPAN", "УНИКАЛЬНАЯ_ТЕРЕА"}
         "Green made in Middle East" → {"ARMENIA", "KZ_TEREA"}
         "Silver" → None (no region)
     """
@@ -175,8 +220,15 @@ def _extract_region_categories(name: str) -> frozenset[str] | None:
             name = name[len(prefix):]
             break
     name_lower = name.lower()
+    # Check suffixes first (more specific)
     for suffix, cats in _REGION_TO_CATEGORIES.items():
         if name_lower.endswith(suffix):
+            return cats
+    # Check prefixes ("EU Silver", "Japan Smooth", "European Bronze")
+    for prefix, cats in sorted(
+        _REGION_PREFIX_TO_CATEGORIES.items(), key=lambda x: -len(x[0])
+    ):
+        if name_lower.startswith(prefix):
             return cats
     return None
 
@@ -458,15 +510,19 @@ def resolve_product_to_catalog(
         ]
 
         # Region-aware filtering: if the product name contains a region
-        # suffix, narrow product_ids to only the matching category.
-        region_source = original_product_name or raw_name
-        region_cats = _extract_region_categories(region_source)
+        # indicator, narrow product_ids to only the matching category.
+        # Check both sources and take the most specific one.
+        region_cats = None
+        if original_product_name:
+            region_cats = _extract_region_categories(original_product_name)
+        if not region_cats:
+            region_cats = _extract_region_categories(raw_name)
         if region_cats and matching:
             region_matching = [e for e in matching if e["category"] in region_cats]
             if region_matching:
                 logger.info(
                     "Region filter: '%s' → categories %s (%d/%d catalog entries)",
-                    region_source, set(region_cats),
+                    original_product_name or raw_name, set(region_cats),
                     len(region_matching), len(matching),
                 )
                 matching = region_matching

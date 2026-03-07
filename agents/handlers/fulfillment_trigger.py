@@ -19,6 +19,7 @@ Claim lifecycle:
 import logging
 
 from db.fulfillment import (
+    STATUS_BLOCKED_AMBIGUOUS,
     STATUS_ERROR,
     STATUS_PROCESSING,
     STATUS_SKIPPED_DUPLICATE,
@@ -82,25 +83,105 @@ def try_fulfillment(
         else:
             return  # Not a fulfillment trigger
 
-        # Normalize IDs: empty string -> None
-        order_id = getattr(classification, "order_id", None) or None
+        # Normalize IDs: empty/whitespace-only -> None
+        raw_order_id = getattr(classification, "order_id", None) or ""
+        order_id = raw_order_id.strip() or None
         msg_id = gmail_message_id or None
         client_email = classification.client_email
 
+        # 0.5 Phase 4.1: missing order_id blocks new_order_postpay (rule §4.5)
+        if trigger_type == "new_order_postpay" and order_id is None:
+            blocked_details = {
+                "v": 2,
+                "reason": "missing_order_id_new_order_postpay",
+            }
+            result["fulfillment"] = {
+                "status": STATUS_BLOCKED_AMBIGUOUS,
+                "warehouse": None,
+                "trigger_type": trigger_type,
+                "reason": "missing_order_id_new_order_postpay",
+            }
+            claim_fulfillment_event(
+                client_email=client_email,
+                order_id=None,
+                trigger_type=trigger_type,
+                status=STATUS_BLOCKED_AMBIGUOUS,
+                gmail_message_id=msg_id,
+                details=blocked_details,
+            )
+            logger.warning(
+                "Fulfillment blocked (missing order_id) for %s: "
+                "new_order_postpay requires order_id",
+                client_email,
+            )
+            return
+
         # 1. Get order items (deterministic — no conversation_state)
+        skipped_items = []
         if trigger_type == "new_order_postpay":
             stock_items = result.get("_stock_check_items")
         else:
             # payment_received: deterministic from ClientOrderItem table
+            # Phase 4: unpack (ready_items, skipped_items) tuple
             # primary: classification.order_id
-            stock_items = get_order_items_for_fulfillment(
+            stock_items, skipped_items = get_order_items_for_fulfillment(
                 client_email, order_id,
             )
             # fallback: if order_id didn't match, try latest order
-            if not stock_items and order_id is not None:
-                stock_items = get_order_items_for_fulfillment(
+            if not stock_items and not skipped_items and order_id is not None:
+                stock_items, skipped_items = get_order_items_for_fulfillment(
                     client_email, None,
                 )
+
+        # 1.1 Phase 4 + 4.2: skipped_items gate (payment_received path)
+        # If get_order_items_for_fulfillment returned skipped items,
+        # the whole order is blocked.
+        # Phase 4.2: reason is dynamic based on skipped item source:
+        #   - product_ids_count field present and != 0 → legacy ambiguous
+        #   - otherwise → strict mode unresolved variant_id
+        if skipped_items:
+            blocked_flavors = [s["base_flavor"] for s in skipped_items]
+            # Determine reason: if any skipped item has product_ids_count
+            # (set by legacy re-resolve path), it's ambiguous_variant;
+            # otherwise it's unresolved_variant_strict (missing variant_id).
+            has_legacy_ambiguous = any(
+                s.get("product_ids_count") is not None for s in skipped_items
+            )
+            reason = (
+                "ambiguous_variant" if has_legacy_ambiguous
+                else "unresolved_variant_strict"
+            )
+            blocked_details = {
+                "v": 2,
+                "reason": reason,
+                "skipped_items": [
+                    {
+                        "base_flavor": s["base_flavor"],
+                        "product_ids_count": s.get("product_ids_count", 0),
+                    }
+                    for s in skipped_items
+                ],
+            }
+            result["fulfillment"] = {
+                "status": STATUS_BLOCKED_AMBIGUOUS,
+                "warehouse": None,
+                "trigger_type": trigger_type,
+                "ambiguous_flavors": blocked_flavors,
+                "reason": reason,
+            }
+            claim_fulfillment_event(
+                client_email=client_email,
+                order_id=order_id,
+                trigger_type=trigger_type,
+                status=STATUS_BLOCKED_AMBIGUOUS,
+                gmail_message_id=msg_id,
+                details=blocked_details,
+            )
+            logger.warning(
+                "Fulfillment blocked (%s) for %s: %s",
+                reason, client_email, blocked_flavors,
+            )
+            return
 
         if not stock_items:
             result["fulfillment"] = {
@@ -114,6 +195,39 @@ def try_fulfillment(
                 trigger_type=trigger_type,
                 status=STATUS_SKIPPED_UNRESOLVED,
                 gmail_message_id=msg_id,
+            )
+            return
+
+        # 1.5 Phase 3 ambiguity gate: block fulfillment if pipeline
+        # flagged ambiguous variants (plan §9.6, rule §4.3).
+        if result.get("fulfillment_blocked"):
+            ambiguous = result.get("ambiguous_flavors", [])
+            blocked_details = {
+                "v": 2,
+                "reason": "ambiguous_variant",
+                "skipped_items": [
+                    {"base_flavor": bf, "product_ids_count": "multi"}
+                    for bf in ambiguous
+                ],
+            }
+            result["fulfillment"] = {
+                "status": STATUS_BLOCKED_AMBIGUOUS,
+                "warehouse": None,
+                "trigger_type": trigger_type,
+                "ambiguous_flavors": ambiguous,
+                "reason": "ambiguous_variant",
+            }
+            claim_fulfillment_event(
+                client_email=client_email,
+                order_id=order_id,
+                trigger_type=trigger_type,
+                status=STATUS_BLOCKED_AMBIGUOUS,
+                gmail_message_id=msg_id,
+                details=blocked_details,
+            )
+            logger.warning(
+                "Fulfillment blocked (ambiguous variants) for %s: %s",
+                client_email, ambiguous,
             )
             return
 

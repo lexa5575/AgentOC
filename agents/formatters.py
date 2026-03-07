@@ -162,6 +162,18 @@ def format_result(result: dict) -> str:
                         else:
                             tag = "--"
                         lines.append(f"    {wh}: {available} [{tag}]")
+        elif ff["status"] == "blocked_ambiguous_variant":
+            reason = ff.get("reason", "ambiguous_variant")
+            reason_labels = {
+                "ambiguous_variant": "ambiguous variant mapping",
+                "unresolved_variant_strict": "unresolved variant (strict mode)",
+                "missing_order_id_new_order_postpay": "missing order_id for new_order_postpay",
+            }
+            lines.append(f"Reason: {reason_labels.get(reason, reason)}")
+            lines.append("maks_sales was NOT updated")
+            ambiguous = ff.get("ambiguous_flavors", [])
+            if ambiguous:
+                lines.append(f"Affected: {', '.join(ambiguous)}")
         elif ff["status"] == "skipped_duplicate":
             lines.append("Reason: already processed (duplicate)")
         elif ff["status"] == "skipped_unresolved_order":

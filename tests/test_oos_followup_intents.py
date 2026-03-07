@@ -760,5 +760,258 @@ class TestOOSFollowupIntents(unittest.TestCase):
         mock_extract.assert_called_once_with("thread_acct", "Ok thanks", "sales@example.com")
 
 
+    # ---------------------------------------------------------------
+    # Phase "Region Safety": region preservation + display_name
+    # ---------------------------------------------------------------
+
+    def test_extraction_region_preserved_in_resolve(self):
+        """[RS.1] Extraction with region suffix → resolve_order_items receives region-aware names."""
+        cls = _FakeClassification(dialog_intent="agrees_to_alternative", order_id="ORD-RS1")
+        result = self._make_result(payment_type="postpay", zelle_address="")
+        result["gmail_thread_id"] = "thread_region"
+        result["gmail_account"] = "default"
+
+        # LLM extraction returns items with region suffix
+        extracted_items = [
+            {"base_flavor": "Bronze", "product_name": "Bronze EU", "quantity": 2},
+            {"base_flavor": "Silver", "product_name": "Silver EU", "quantity": 3},
+        ]
+
+        resolved_call_args = []
+
+        def capture_resolve(items):
+            resolved_call_args.append(items)
+            # Add display_name like real resolver does
+            for item in items:
+                item["display_name"] = f"Terea {item['base_flavor']} EU"
+            return items, []
+
+        with patch.object(self.handler_mod, "_extract_agreed_items_from_thread", return_value=extracted_items):
+            with patch.object(self.handler_mod, "resolve_order_items", side_effect=capture_resolve):
+                with patch.object(self.handler_mod, "check_stock_for_order", return_value=self._mock_stock_all_ok()):
+                    with patch.object(self.handler_mod, "calculate_order_price", return_value=550.0):
+                        out = self.handler_mod.handle_oos_followup(cls, result, "Ok. Sounds good.")
+
+        self.assertTrue(out["template_used"])
+        # Verify resolve got items with region in product_name
+        self.assertEqual(len(resolved_call_args), 1)
+        pns = [i["product_name"] for i in resolved_call_args[0]]
+        self.assertIn("Bronze EU", pns)
+        self.assertIn("Silver EU", pns)
+
+    def test_pending_path_category_to_region(self):
+        """[RS.2] Pending path: alt category → region-aware product_name for resolver."""
+        cls = _FakeClassification(dialog_intent="agrees_to_alternative", order_id="ORD-RS2")
+        state = self._make_pending_oos(num_alternatives=1, alt_names=["Bronze"])
+        # Set category on the alternative
+        pending = state["facts"]["pending_oos_resolution"]
+        pending["alternatives"]["Green"]["alternatives"] = [
+            {"product_name": "Bronze", "category": "TEREA_EUROPE"},
+        ]
+        result = self._make_result(
+            payment_type="postpay", zelle_address="",
+            conversation_state=state,
+        )
+
+        resolved_call_args = []
+
+        def capture_resolve(items):
+            resolved_call_args.append(items)
+            return items, []
+
+        with patch.object(self.handler_mod, "resolve_order_items", side_effect=capture_resolve):
+            with patch.object(self.handler_mod, "check_stock_for_order", return_value=self._mock_stock_all_ok()):
+                with patch.object(self.handler_mod, "calculate_order_price", return_value=550.0):
+                    out = self.handler_mod.handle_oos_followup(cls, result, "Ok")
+
+        self.assertTrue(out["template_used"])
+        # Verify the alt item got region suffix from category
+        self.assertEqual(len(resolved_call_args), 1)
+        alt_item = [i for i in resolved_call_args[0] if "Bronze" in i.get("product_name", "")]
+        self.assertTrue(len(alt_item) > 0)
+        self.assertIn("EU", alt_item[0]["product_name"])
+
+    def test_order_summary_uses_display_name(self):
+        """[RS.3] _build_order_summary prefers display_name over entries[0].category."""
+        build_fn = self.handler_mod._build_order_summary
+        stock_items = [
+            {
+                "ordered_qty": 2,
+                "display_name": "Terea Bronze EU",  # resolver set this
+                "product_name": "Bronze",
+                "base_flavor": "Bronze",
+                "stock_entries": [
+                    {"category": "ARMENIA", "product_name": "Bronze", "quantity": 5},
+                ],
+            },
+        ]
+        summary = build_fn(stock_items)
+        # Must use display_name ("EU"), not entries[0].category ("ARMENIA" → "ME")
+        self.assertIn("Terea Bronze EU", summary)
+        self.assertNotIn("ME", summary)
+
+
+class TestApplyConfirmationFlagsAmbiguity(unittest.TestCase):
+    """Phase 3: _apply_confirmation_flags blocks fulfillment on ambiguous variants."""
+
+    @classmethod
+    def setUpClass(cls):
+        _install_stubs()
+        cls.handler_mod = importlib.import_module("agents.handlers.oos_followup")
+
+    def test_ambiguous_sets_blocked_no_effective_situation(self):
+        """[P3] Ambiguous resolved items → fulfillment_blocked, no effective_situation."""
+        result = {
+            "client_email": "test@example.com",
+            "needs_reply": True,
+        }
+        stock_result = {
+            "items": [
+                {"base_flavor": "Silver", "ordered_qty": 3, "is_sufficient": True},
+                {"base_flavor": "Bronze", "ordered_qty": 2, "is_sufficient": True},
+            ],
+        }
+        resolved_items = [
+            {"base_flavor": "Silver", "product_ids": [10, 30, 54], "quantity": 3},  # AMBIGUOUS
+            {"base_flavor": "Bronze", "product_ids": [52], "quantity": 2},  # single
+        ]
+        self.handler_mod._apply_confirmation_flags(
+            result, stock_result, resolved_items,
+            source="thread_extraction", order_id_norm="ORD-1",
+        )
+
+        # Ambiguity gate fired
+        self.assertTrue(result.get("fulfillment_blocked"))
+        self.assertIn("Silver", result.get("ambiguous_flavors", []))
+        # effective_situation must NOT be set
+        self.assertNotIn("effective_situation", result)
+        # canonical_confirmed_items and _stock_check_items still set for display
+        self.assertEqual(result["canonical_confirmed_items"], stock_result["items"])
+        self.assertEqual(result["_stock_check_items"], resolved_items)
+
+    def test_no_ambiguity_sets_effective_situation(self):
+        """[P3] All single-variant + trusted source → effective_situation set normally."""
+        result = {
+            "client_email": "test@example.com",
+            "needs_reply": True,
+        }
+        stock_result = {
+            "items": [
+                {"base_flavor": "Bronze", "ordered_qty": 2, "is_sufficient": True},
+            ],
+        }
+        resolved_items = [
+            {"base_flavor": "Bronze", "product_ids": [52], "quantity": 2},
+        ]
+        self.handler_mod._apply_confirmation_flags(
+            result, stock_result, resolved_items,
+            source="thread_extraction", order_id_norm="ORD-2",
+        )
+
+        self.assertNotIn("fulfillment_blocked", result)
+        self.assertEqual(result.get("effective_situation"), "new_order")
+
+
+class TestNormalizeExtractedRegion(unittest.TestCase):
+    """Test the deterministic post-normalization for extracted items."""
+
+    @classmethod
+    def setUpClass(cls):
+        _install_stubs()
+        cls.handler_mod = importlib.import_module("agents.handlers.oos_followup")
+
+    def test_eu_suffix_preserved(self):
+        items = [{"product_name": "Bronze EU", "base_flavor": "Bronze", "quantity": 2}]
+        result = self.handler_mod._normalize_extracted_region(items)
+        self.assertEqual(result[0]["product_name"], "Bronze EU")
+        self.assertEqual(result[0]["base_flavor"], "Bronze")
+
+    def test_eu_prefix_normalized_to_suffix(self):
+        items = [{"product_name": "EU Bronze", "base_flavor": "EU Bronze", "quantity": 2}]
+        result = self.handler_mod._normalize_extracted_region(items)
+        self.assertEqual(result[0]["product_name"], "Bronze EU")
+        self.assertEqual(result[0]["base_flavor"], "Bronze")
+
+    def test_japan_suffix(self):
+        items = [{"product_name": "Smooth Japan", "base_flavor": "Smooth", "quantity": 4}]
+        result = self.handler_mod._normalize_extracted_region(items)
+        self.assertEqual(result[0]["product_name"], "Smooth Japan")
+        self.assertEqual(result[0]["base_flavor"], "Smooth")
+
+    def test_japanese_prefix_normalized(self):
+        items = [{"product_name": "Japanese Smooth", "base_flavor": "Japanese Smooth", "quantity": 4}]
+        result = self.handler_mod._normalize_extracted_region(items)
+        self.assertEqual(result[0]["product_name"], "Smooth Japan")
+        self.assertEqual(result[0]["base_flavor"], "Smooth")
+
+    def test_european_prefix_normalized(self):
+        items = [{"product_name": "European Bronze", "base_flavor": "European Bronze", "quantity": 2}]
+        result = self.handler_mod._normalize_extracted_region(items)
+        self.assertEqual(result[0]["product_name"], "Bronze EU")
+        self.assertEqual(result[0]["base_flavor"], "Bronze")
+
+    def test_no_region_passthrough(self):
+        items = [{"product_name": "Purple", "base_flavor": "Purple", "quantity": 1}]
+        result = self.handler_mod._normalize_extracted_region(items)
+        self.assertEqual(result[0]["product_name"], "Purple")
+        self.assertEqual(result[0]["base_flavor"], "Purple")
+
+    def test_brand_prefix_stripped(self):
+        items = [{"product_name": "T Smooth Japan", "base_flavor": "Smooth", "quantity": 4}]
+        result = self.handler_mod._normalize_extracted_region(items)
+        self.assertEqual(result[0]["product_name"], "Smooth Japan")
+        self.assertEqual(result[0]["base_flavor"], "Smooth")
+
+    def test_terea_brand_prefix_stripped(self):
+        items = [{"product_name": "Terea Bronze EU", "base_flavor": "Bronze", "quantity": 2}]
+        result = self.handler_mod._normalize_extracted_region(items)
+        self.assertEqual(result[0]["product_name"], "Bronze EU")
+        self.assertEqual(result[0]["base_flavor"], "Bronze")
+
+    # --- Stabilization: dual-source region + case-insensitive brand ---
+
+    def test_region_from_base_flavor_when_product_name_bare(self):
+        """product_name='Bronze', base_flavor='Bronze EU' → region from bf."""
+        items = [{"product_name": "Bronze", "base_flavor": "Bronze EU", "quantity": 2}]
+        result = self.handler_mod._normalize_extracted_region(items)
+        self.assertEqual(result[0]["product_name"], "Bronze EU")
+        self.assertEqual(result[0]["base_flavor"], "Bronze")
+
+    def test_region_from_base_flavor_japan_prefix(self):
+        """product_name='Smooth', base_flavor='Japan Smooth' → region from bf."""
+        items = [{"product_name": "Smooth", "base_flavor": "Japan Smooth", "quantity": 3}]
+        result = self.handler_mod._normalize_extracted_region(items)
+        self.assertEqual(result[0]["product_name"], "Smooth Japan")
+        self.assertEqual(result[0]["base_flavor"], "Smooth")
+
+    def test_product_name_region_wins_over_base_flavor(self):
+        """product_name='Silver EU', base_flavor='Silver Japan' → EU wins."""
+        items = [{"product_name": "Silver EU", "base_flavor": "Silver Japan", "quantity": 1}]
+        result = self.handler_mod._normalize_extracted_region(items)
+        self.assertEqual(result[0]["product_name"], "Silver EU")
+        self.assertEqual(result[0]["base_flavor"], "Silver")
+
+    def test_lowercase_brand_prefix_stripped(self):
+        """Lowercase 'terea' brand prefix stripped correctly."""
+        items = [{"product_name": "terea Bronze EU", "base_flavor": "Bronze", "quantity": 2}]
+        result = self.handler_mod._normalize_extracted_region(items)
+        self.assertEqual(result[0]["product_name"], "Bronze EU")
+        self.assertEqual(result[0]["base_flavor"], "Bronze")
+
+    def test_mixed_case_brand_prefix_stripped(self):
+        """Mixed case 'TERA' brand prefix stripped correctly."""
+        items = [{"product_name": "TERA Silver Japan", "base_flavor": "Silver", "quantity": 1}]
+        result = self.handler_mod._normalize_extracted_region(items)
+        self.assertEqual(result[0]["product_name"], "Silver Japan")
+        self.assertEqual(result[0]["base_flavor"], "Silver")
+
+    def test_heets_brand_prefix_case_insensitive(self):
+        """'HEETS' brand prefix stripped case-insensitively."""
+        items = [{"product_name": "HEETS Bronze EU", "base_flavor": "Bronze", "quantity": 1}]
+        result = self.handler_mod._normalize_extracted_region(items)
+        self.assertEqual(result[0]["product_name"], "Bronze EU")
+        self.assertEqual(result[0]["base_flavor"], "Bronze")
+
+
 if __name__ == "__main__":
     unittest.main()

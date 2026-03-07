@@ -27,6 +27,7 @@ STATUS_UPDATED = "updated"
 STATUS_SKIPPED_SPLIT = "skipped_split"
 STATUS_SKIPPED_UNRESOLVED = "skipped_unresolved_order"
 STATUS_SKIPPED_DUPLICATE = "skipped_duplicate"
+STATUS_BLOCKED_AMBIGUOUS = "blocked_ambiguous_variant"
 STATUS_ERROR = "error"
 
 
@@ -127,14 +128,13 @@ def _query_stock_entries(
             )
             .all()
         )
-    return (
-        session.query(StockItem)
-        .filter(
-            StockItem.product_name.ilike(base_flavor),
-            StockItem.warehouse == warehouse,
-        )
-        .all()
+    # Phase 8: no ILIKE fallback — empty product_ids → no entries
+    logger.warning(
+        "_query_stock_entries: no product_ids for '%s' in warehouse '%s', "
+        "returning empty (no text matching)",
+        base_flavor, warehouse,
     )
+    return []
 
 
 def _try_warehouse(
@@ -326,20 +326,35 @@ def increment_maks_sales(warehouse: str, matched_items: list[dict]) -> dict:
 def get_order_items_for_fulfillment(
     client_email: str,
     order_id: str | None = None,
-) -> list[dict]:
+) -> tuple[list[dict], list[dict]]:
     """Get order items from ClientOrderItem table for payment_received flow.
 
-    Re-resolves product_ids via catalog resolver for accurate stock matching.
-    Does NOT depend on conversation_state.
+    Phase 4 variant_id-first read path:
+    - If row has variant_id → use directly (product_ids=[variant_id]), no re-resolve.
+    - If variant_id is NULL and REQUIRE_VARIANT_ID=false → legacy re-resolve.
+    - If variant_id is NULL and REQUIRE_VARIANT_ID=true → add to skipped list.
+
+    Blocking rules (Phase 4.1+):
+    - Strict mode (REQUIRE_VARIANT_ID=true): ANY skipped → ([], skipped).
+      Skipped items have no product_ids_count field.
+    - Non-strict mode: legacy re-resolve with len(product_ids)!=1 → skipped.
+      Skipped items carry product_ids_count for diagnostics.
+    - In BOTH modes, any skipped items block the whole order.
 
     Args:
         client_email: Client email.
         order_id: Optional order ID. If None, uses the most recent order.
 
     Returns:
-        List of dicts with base_flavor, product_name, quantity, product_ids.
-        Empty list if no matching order items found.
+        Tuple of (ready_items, skipped_items).
+        ready_items: dicts with base_flavor, product_name, quantity, product_ids.
+        skipped_items: dicts for items that could not be resolved.
+          Strict-mode skipped items: no product_ids_count field.
+          Legacy-ambiguous skipped items: product_ids_count field present.
+        Both empty if no matching order items found.
     """
+    strict = getenv("REQUIRE_VARIANT_ID", "").lower() in ("true", "1", "yes")
+
     session = get_session()
     try:
         email = client_email.lower().strip()
@@ -351,30 +366,88 @@ def get_order_items_for_fulfillment(
             # Find the most recent order
             latest = q.order_by(ClientOrderItem.created_at.desc()).first()
             if not latest or not latest.order_id:
-                return []
+                return [], []
             items = q.filter_by(order_id=latest.order_id).all()
 
         if not items:
-            return []
+            return [], []
 
-        from db.product_resolver import resolve_product_to_catalog
+        ready = []
+        skipped = []
 
-        result = []
         for item in items:
-            resolved = resolve_product_to_catalog(item.base_flavor)
-            product_ids = (
-                resolved.product_ids
-                if resolved.confidence in ("exact", "high")
-                else []
-            )
-            result.append({
-                "base_flavor": item.base_flavor,
-                "product_name": item.product_name,
-                "quantity": item.quantity,
-                "product_ids": product_ids,
-            })
+            if item.variant_id is not None:
+                # Phase 4: variant_id exists → direct lookup, no re-resolve
+                ready.append({
+                    "base_flavor": item.base_flavor,
+                    "product_name": item.product_name,
+                    "quantity": item.quantity,
+                    "product_ids": [item.variant_id],
+                })
+            elif strict:
+                # Strict mode: NULL variant_id → skip (do not re-resolve)
+                skipped.append({
+                    "base_flavor": item.base_flavor,
+                    "product_name": item.product_name,
+                    "quantity": item.quantity,
+                    "product_ids": [],
+                })
+                logger.warning(
+                    "Fulfillment read-path: variant_id NULL for %s/%s/%s "
+                    "(strict mode, skipped)",
+                    email, order_id, item.base_flavor,
+                )
+            else:
+                # Legacy path: re-resolve from text (temporary, REQUIRE_VARIANT_ID=false)
+                from db.product_resolver import resolve_product_to_catalog
 
-        return result
+                resolved = resolve_product_to_catalog(item.base_flavor)
+                product_ids = (
+                    resolved.product_ids
+                    if resolved.confidence in ("exact", "high")
+                    else []
+                )
+                # Phase 4.1: ambiguous re-resolve (len!=1) → skip, never auto-fulfill
+                if len(product_ids) == 1:
+                    ready.append({
+                        "base_flavor": item.base_flavor,
+                        "product_name": item.product_name,
+                        "quantity": item.quantity,
+                        "product_ids": product_ids,
+                    })
+                else:
+                    skipped.append({
+                        "base_flavor": item.base_flavor,
+                        "product_name": item.product_name,
+                        "quantity": item.quantity,
+                        "product_ids": product_ids,
+                        "product_ids_count": len(product_ids),
+                    })
+                    logger.warning(
+                        "Fulfillment read-path: legacy re-resolve for %s/%s/%s "
+                        "returned %d product_ids (skipped)",
+                        email, order_id, item.base_flavor, len(product_ids),
+                    )
+
+        # Hard block: if strict mode and any skipped → block whole order (rule §4.4)
+        if strict and skipped:
+            logger.warning(
+                "Fulfillment blocked: %d/%d items missing variant_id for %s "
+                "(strict mode, whole order blocked)",
+                len(skipped), len(ready) + len(skipped), email,
+            )
+            return [], skipped
+
+        # Phase 4.1: even in non-strict mode, ambiguous items block whole order (rule §4.3)
+        if skipped:
+            logger.warning(
+                "Fulfillment blocked: %d/%d items ambiguous after legacy re-resolve "
+                "for %s (whole order blocked)",
+                len(skipped), len(ready) + len(skipped), email,
+            )
+            return [], skipped
+
+        return ready, skipped
     finally:
         session.close()
 
@@ -428,6 +501,44 @@ def is_duplicate_fulfillment(
 STATUS_PROCESSING = "processing"
 
 
+# ── details_json v2 helpers ──────────────────────────────────────────
+
+def _ensure_v2(details: dict | None) -> dict | None:
+    """Stamp details payload with v=2 if not already versioned.
+
+    - None → None (no details to stamp)
+    - dict without "v" → adds "v": 2
+    - dict with "v" → left unchanged
+    """
+    if details is None:
+        return None
+    if "v" not in details:
+        details["v"] = 2
+    return details
+
+
+def parse_details_json(raw: str | None) -> dict:
+    """Parse details_json with backward-compatible version detection.
+
+    - None / empty → {"version": 1}
+    - JSON without "v" → parsed dict + version=1
+    - JSON with "v" → parsed dict + version=<v>
+
+    Returns:
+        Parsed dict with "version" key always set.
+    """
+    if not raw:
+        return {"version": 1}
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return {"version": 1, "_raw": raw}
+    if not isinstance(data, dict):
+        return {"version": 1, "_raw": raw}
+    data["version"] = data.pop("v", 1)
+    return data
+
+
 def claim_fulfillment_event(
     client_email: str,
     order_id: str | None,
@@ -452,6 +563,7 @@ def claim_fulfillment_event(
     """
     session = get_session()
     try:
+        stamped = _ensure_v2(details)
         event = FulfillmentEvent(
             client_email=client_email.lower().strip(),
             order_id=order_id,
@@ -459,7 +571,7 @@ def claim_fulfillment_event(
             trigger_type=trigger_type,
             status=status,
             warehouse=warehouse,
-            details_json=json.dumps(details) if details else None,
+            details_json=json.dumps(stamped) if stamped else None,
         )
         session.add(event)
         session.commit()
@@ -502,7 +614,7 @@ def finalize_fulfillment_event(
             return False
         event.status = status
         if details is not None:
-            event.details_json = json.dumps(details)
+            event.details_json = json.dumps(_ensure_v2(details))
         session.commit()
         logger.info(
             "Fulfillment event finalized: id=%s -> %s", event_id, status,

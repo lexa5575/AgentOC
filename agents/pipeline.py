@@ -41,6 +41,7 @@ from db.memory import (
     select_best_alternatives,
     update_client,
 )
+from db.stock import extract_variant_id, has_ambiguous_variants
 from utils.telegram import send_telegram
 
 logger = logging.getLogger(__name__)
@@ -202,19 +203,33 @@ def process_classified_email(classification) -> dict:
                     ],
                 }
 
-            # Build order summary for Gmail draft display (e.g. "2 x Terea Green ME")
+            # Build order summary for Gmail draft display (e.g. "2 x Terea Green EU")
+            # Prefer resolved display_name (region-aware) over entries[0].category
             from db.catalog import get_display_name
             summary_parts = []
             for item in stock_result["items"]:
-                cat = ""
-                entries = item.get("stock_entries") or []
-                if entries:
-                    cat = entries[0].get("category", "")
-                name = item.get("product_name") or item.get("base_flavor", "")
-                display = get_display_name(name, cat)
+                display = item.get("display_name")
+                if not display:
+                    cat = ""
+                    entries = item.get("stock_entries") or []
+                    if entries:
+                        cat = entries[0].get("category", "")
+                    name = item.get("product_name") or item.get("base_flavor", "")
+                    display = get_display_name(name, cat)
                 summary_parts.append(f"{item['ordered_qty']} x {display}")
             result["order_summary"] = ", ".join(summary_parts)
             result["_stock_check_items"] = items_for_check
+
+            # Phase 3 ambiguity gate: block auto-fulfillment if any item
+            # has multiple product_ids (plan §9.4, rule §4.3).
+            ambiguous = has_ambiguous_variants(items_for_check)
+            if ambiguous:
+                result["fulfillment_blocked"] = True
+                result["ambiguous_flavors"] = ambiguous
+                logger.warning(
+                    "Ambiguous variants for %s: %s — fulfillment blocked",
+                    classification.client_email, ambiguous,
+                )
 
     # All reply generation is delegated to specialized handlers via router.
     result["needs_routing"] = True
@@ -386,22 +401,38 @@ def _persist_results(
                 logger.error("Failed to update state for outbound: %s", e)
 
     # Step 6: Save structured order items for preference tracking
+    # Source-of-truth: resolved _stock_check_items when available (has
+    # product_ids, display_name, normalized product_name/base_flavor).
+    # Fallback: raw classification.order_items (no variant data).
     if (
         classification.situation == "new_order"
         and classification.order_items
         and result["client_found"]
     ):
-        save_order_items(
-            client_email=classification.client_email,
-            order_id=classification.order_id,
-            order_items=[
-                {
+        stock_check_items = result.get("_stock_check_items") or []
+        use_resolved = len(stock_check_items) == len(classification.order_items)
+        order_items_for_save = []
+        for i, oi in enumerate(classification.order_items):
+            if use_resolved:
+                sci = stock_check_items[i]
+                item = {
+                    "product_name": sci.get("product_name", oi.product_name),
+                    "base_flavor": sci.get("base_flavor", oi.base_flavor),
+                    "quantity": sci.get("quantity", oi.quantity),
+                    "variant_id": extract_variant_id(sci.get("product_ids")),
+                    "display_name_snapshot": sci.get("display_name"),
+                }
+            else:
+                item = {
                     "product_name": oi.product_name,
                     "base_flavor": oi.base_flavor,
                     "quantity": oi.quantity,
                 }
-                for oi in classification.order_items
-            ],
+            order_items_for_save.append(item)
+        save_order_items(
+            client_email=classification.client_email,
+            order_id=classification.order_id,
+            order_items=order_items_for_save,
         )
 
     # Step 6.1: OOS canonical replace — trusted source persistence gate (plan §7.3)
@@ -412,17 +443,25 @@ def _persist_results(
             order_id_norm = (getattr(classification, "order_id", None) or "").strip() or None
             canonical = result.get("canonical_confirmed_items")
             if order_id_norm and canonical:
+                oos_stock_check = result.get("_stock_check_items") or []
+                oos_items_for_replace = []
+                for i, item in enumerate(canonical):
+                    entry = {
+                        "product_name": item.get("product_name", item.get("base_flavor", "")),
+                        "base_flavor": item.get("base_flavor", ""),
+                        "quantity": item.get("ordered_qty", item.get("quantity", 1)),
+                    }
+                    if i < len(oos_stock_check):
+                        sci = oos_stock_check[i]
+                        entry["variant_id"] = extract_variant_id(sci.get("product_ids"))
+                        entry["display_name_snapshot"] = (
+                            sci.get("display_name") or item.get("display_name")
+                        )
+                    oos_items_for_replace.append(entry)
                 replace_order_items(
                     client_email=classification.client_email,
                     order_id=order_id_norm,
-                    order_items=[
-                        {
-                            "product_name": item.get("product_name", item.get("base_flavor", "")),
-                            "base_flavor": item.get("base_flavor", ""),
-                            "quantity": item.get("ordered_qty", item.get("quantity", 1)),
-                        }
-                        for item in canonical
-                    ],
+                    order_items=oos_items_for_replace,
                 )
                 logger.info(
                     "OOS canonical replace for %s order %s (%d items, source=%s)",

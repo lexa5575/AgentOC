@@ -91,8 +91,47 @@ def _install_import_stubs() -> None:
     db_conversation_state.save_state = lambda *args, **kwargs: None
     db_conversation_state.get_client_states = lambda *args, **kwargs: []
 
+    # Stub db.stock so pipeline + downstream can import extract_variant_id, CATEGORY_PRICES, etc.
+    db_stock = types.ModuleType("db.stock")
+
+    def _stub_extract_variant_id(product_ids):
+        if not product_ids:
+            return None
+        if len(product_ids) == 1:
+            return product_ids[0]
+        return None
+
+    db_stock.extract_variant_id = _stub_extract_variant_id
+    db_stock._extract_variant_id = _stub_extract_variant_id
+
+    def _stub_has_ambiguous_variants(items):
+        return [
+            item.get("base_flavor", "?")
+            for item in items
+            if len(item.get("product_ids") or []) > 1
+        ]
+
+    db_stock.has_ambiguous_variants = _stub_has_ambiguous_variants
+    db_stock._has_ambiguous_variants = _stub_has_ambiguous_variants
+    db_stock.CATEGORY_PRICES = {
+        "TEREA_EUROPE": 110, "KZ_TEREA": 110, "ARMENIA": 110,
+        "TEREA_JAPAN": 115, "УНИКАЛЬНАЯ_ТЕРЕА": 115,
+        "ONE": 99, "STND": 149, "PRIME": 245,
+    }
+    db_stock.STICK_CATEGORIES = {"KZ_TEREA", "TEREA_JAPAN", "TEREA_EUROPE", "ARMENIA", "УНИКАЛЬНАЯ_ТЕРЕА"}
+    db_stock.DEVICE_CATEGORIES = {"ONE", "STND", "PRIME"}
+    db_stock._REGION_CATEGORY_MAP = {}
+    db_stock.search_stock = lambda *args, **kwargs: []
+    db_stock.search_stock_by_ids = lambda *args, **kwargs: []
+    db_stock.select_best_alternatives = lambda *args, **kwargs: {"alternatives": []}
+    db_stock.get_product_type = lambda bf: "stick"
+    db_stock.resolve_warehouse = lambda text: None
+    db_stock.get_client_flavor_history = lambda *args, **kwargs: []
+    db_stock.save_order_items = lambda *args, **kwargs: 0
+
     sys.modules["db"] = db_mod
     sys.modules["db.memory"] = db_memory
+    sys.modules["db.stock"] = db_stock
     sys.modules["db.clients"] = db_clients
     sys.modules["db.conversation_state"] = db_conversation_state
 
@@ -128,6 +167,10 @@ def _install_import_stubs() -> None:
 class TestEmailPipelineSmoke(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        # Snapshot sys.modules so we can restore after the test class runs.
+        # This prevents stub modules (especially db.stock) from leaking into
+        # subsequent test files in the same pytest process.
+        cls._modules_snapshot = dict(sys.modules)
         _install_import_stubs()
         cls.email_agent = importlib.import_module("agents.email_agent")
         cls.agents_pipeline = importlib.import_module("agents.pipeline")
@@ -140,6 +183,16 @@ class TestEmailPipelineSmoke(unittest.TestCase):
         cls.h_discount = importlib.import_module("agents.handlers.discount")
         cls.h_shipping = importlib.import_module("agents.handlers.shipping")
         cls.h_oos_followup = importlib.import_module("agents.handlers.oos_followup")
+
+    @classmethod
+    def tearDownClass(cls):
+        # Restore sys.modules to pre-stub state so subsequent test files
+        # in the same pytest process get the real modules (especially db.stock).
+        stubs_added = set(sys.modules) - set(cls._modules_snapshot)
+        for name in stubs_added:
+            del sys.modules[name]
+        for name, mod in cls._modules_snapshot.items():
+            sys.modules[name] = mod
 
     def setUp(self):
         self.saved = []
@@ -803,6 +856,203 @@ class TestEmailPipelineSmoke(unittest.TestCase):
             )
 
         mock_replace.assert_not_called()
+
+    # ---------------------------------------------------------------
+    # Phase 2 patch: variant_id / resolved source-of-truth tests
+    # ---------------------------------------------------------------
+
+    def test_new_order_save_uses_resolved_fields_from_stock_check(self):
+        """[P2.a] save_order_items receives resolved product_name/base_flavor
+        from _stock_check_items, NOT raw classifier fields."""
+        cls = self._make_fake_classification(
+            situation="new_order",
+            order_id="ORD-RES1",
+            order_items=[
+                types.SimpleNamespace(
+                    product_name="Tera Green",  # raw classifier name
+                    base_flavor="Green",        # raw classifier flavor
+                    quantity=2,
+                ),
+            ],
+        )
+        result = self._make_persist_result(
+            _stock_check_items=[
+                {
+                    "product_name": "Green EU",        # resolved name
+                    "base_flavor": "Green",             # resolved flavor
+                    "quantity": 2,
+                    "product_ids": [42],
+                    "display_name": "Terea Green EU",
+                },
+            ],
+        )
+
+        with patch.object(self.agents_pipeline, "save_order_items", return_value=1) as mock_save:
+            self.agents_pipeline._persist_results(
+                cls, result, "thread_res", "msg_res", "email text",
+            )
+
+        mock_save.assert_called_once()
+        items_arg = mock_save.call_args.kwargs.get(
+            "order_items",
+            mock_save.call_args[0][2] if len(mock_save.call_args[0]) > 2 else None,
+        )
+        self.assertIsNotNone(items_arg)
+        saved_item = items_arg[0]
+        # Must use resolved values from _stock_check_items
+        self.assertEqual(saved_item["product_name"], "Green EU")
+        self.assertEqual(saved_item["base_flavor"], "Green")
+        self.assertEqual(saved_item["quantity"], 2)
+        self.assertEqual(saved_item["variant_id"], 42)
+        self.assertEqual(saved_item["display_name_snapshot"], "Terea Green EU")
+
+    def test_new_order_save_passes_variant_fields(self):
+        """[P2.b] variant_id and display_name_snapshot are passed to save_order_items
+        when _stock_check_items has product_ids."""
+        cls = self._make_fake_classification(
+            situation="new_order",
+            order_id="ORD-VF1",
+            order_items=[
+                types.SimpleNamespace(product_name="Silver EU", base_flavor="Silver", quantity=3),
+                types.SimpleNamespace(product_name="Bronze EU", base_flavor="Bronze", quantity=1),
+            ],
+        )
+        result = self._make_persist_result(
+            _stock_check_items=[
+                {
+                    "product_name": "Silver EU",
+                    "base_flavor": "Silver",
+                    "quantity": 3,
+                    "product_ids": [10],
+                    "display_name": "Terea Silver EU",
+                },
+                {
+                    "product_name": "Bronze EU",
+                    "base_flavor": "Bronze",
+                    "quantity": 1,
+                    "product_ids": [52, 53],  # ambiguous -> variant_id=None
+                    "display_name": "Terea Bronze",
+                },
+            ],
+        )
+
+        with patch.object(self.agents_pipeline, "save_order_items", return_value=2) as mock_save:
+            self.agents_pipeline._persist_results(
+                cls, result, "thread_vf", "msg_vf", "email text",
+            )
+
+        mock_save.assert_called_once()
+        items = mock_save.call_args.kwargs.get(
+            "order_items",
+            mock_save.call_args[0][2] if len(mock_save.call_args[0]) > 2 else None,
+        )
+        # First item: single product_id → variant_id=10
+        self.assertEqual(items[0]["variant_id"], 10)
+        self.assertEqual(items[0]["display_name_snapshot"], "Terea Silver EU")
+        # Second item: ambiguous → variant_id=None
+        self.assertIsNone(items[1]["variant_id"])
+        self.assertEqual(items[1]["display_name_snapshot"], "Terea Bronze")
+
+    def test_new_order_save_fallback_when_stock_check_missing(self):
+        """[P2.c] When _stock_check_items is absent, save uses raw classifier
+        fields with no variant_id."""
+        cls = self._make_fake_classification(
+            situation="new_order",
+            order_id="ORD-FB1",
+            order_items=[
+                types.SimpleNamespace(product_name="Tera Green Raw", base_flavor="Green", quantity=2),
+            ],
+        )
+        result = self._make_persist_result()
+        # No _stock_check_items in result
+
+        with patch.object(self.agents_pipeline, "save_order_items", return_value=1) as mock_save:
+            self.agents_pipeline._persist_results(
+                cls, result, "thread_fb", "msg_fb", "email text",
+            )
+
+        mock_save.assert_called_once()
+        items = mock_save.call_args.kwargs.get(
+            "order_items",
+            mock_save.call_args[0][2] if len(mock_save.call_args[0]) > 2 else None,
+        )
+        saved_item = items[0]
+        # Falls back to raw classifier values
+        self.assertEqual(saved_item["product_name"], "Tera Green Raw")
+        self.assertEqual(saved_item["base_flavor"], "Green")
+        self.assertEqual(saved_item["quantity"], 2)
+        # No variant data
+        self.assertNotIn("variant_id", saved_item)
+        self.assertNotIn("display_name_snapshot", saved_item)
+
+
+    def test_new_order_ambiguous_sets_fulfillment_blocked(self):
+        """[P3] Ambiguous items in _stock_check_items → fulfillment_blocked + ambiguous_flavors."""
+        email = (
+            "From: client1@example.com\n"
+            "Subject: New Order\n"
+            "Body: I want 3 Silver and 2 Bronze EU"
+        )
+
+        def fake_classify(text, ctx):
+            return types.SimpleNamespace(
+                client_email="client1@example.com",
+                client_name="Test Client One",
+                situation="new_order",
+                needs_reply=True,
+                order_id="ORD-AMB1",
+                price="$550",
+                order_items=[
+                    types.SimpleNamespace(product_name="Silver", base_flavor="Silver", quantity=3),
+                    types.SimpleNamespace(product_name="Bronze EU", base_flavor="Bronze", quantity=2),
+                ],
+                dialog_intent=None,
+                followup_to=None,
+                customer_street=None,
+                customer_city_state_zip=None,
+                parser_used=False,
+                is_followup=False,
+            )
+
+        with (
+            patch.object(self.agents_classifier, "run_classification", side_effect=fake_classify),
+            patch.object(self.agents_pipeline, "get_stock_summary", return_value={"total": 10}),
+            patch.object(
+                self.agents_pipeline,
+                "resolve_order_items",
+                return_value=(
+                    [
+                        {"product_name": "Silver", "base_flavor": "Silver", "quantity": 3,
+                         "product_ids": [10, 30, 54]},  # AMBIGUOUS
+                        {"product_name": "Bronze EU", "base_flavor": "Bronze", "quantity": 2,
+                         "product_ids": [52]},  # single
+                    ],
+                    [],
+                ),
+            ),
+            patch.object(
+                self.agents_pipeline,
+                "check_stock_for_order",
+                return_value={
+                    "all_in_stock": True,
+                    "items": [
+                        {"base_flavor": "Silver", "ordered_qty": 3, "total_available": 10,
+                         "is_sufficient": True, "stock_entries": []},
+                        {"base_flavor": "Bronze", "ordered_qty": 2, "total_available": 5,
+                         "is_sufficient": True, "stock_entries": [], "display_name": "Terea Bronze EU"},
+                    ],
+                    "insufficient_items": [],
+                },
+            ),
+            patch.object(self.agents_pipeline, "calculate_order_price", return_value=550.0),
+        ):
+            result = self.agents_pipeline.process_classified_email(fake_classify("", ""))
+
+        # Ambiguity gate must fire
+        self.assertTrue(result.get("fulfillment_blocked"))
+        self.assertIn("Silver", result.get("ambiguous_flavors", []))
+        # Bronze is NOT ambiguous
+        self.assertNotIn("Bronze", result.get("ambiguous_flavors", []))
 
 
 if __name__ == "__main__":

@@ -155,9 +155,10 @@ class ClientOrderItem(Base):
     """Structured order items for customer preference tracking."""
 
     __tablename__ = "client_order_items"
-    __table_args__ = (
-        UniqueConstraint("client_email", "order_id", "base_flavor", name="uq_client_order_item"),
-    )
+    # Phase 9: old UniqueConstraint("client_email", "order_id", "base_flavor",
+    # name="uq_client_order_item") removed. Superseded by partial unique index
+    # uq_client_order_variant (client_email, order_id, variant_id)
+    # WHERE variant_id IS NOT NULL AND order_id IS NOT NULL.
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     client_email = Column(String, nullable=False, index=True)
@@ -166,6 +167,8 @@ class ClientOrderItem(Base):
     base_flavor = Column(String, nullable=False)
     product_type = Column(String, nullable=False, default="stick")  # "stick" or "device"
     quantity = Column(Integer, default=1)
+    variant_id = Column(Integer, ForeignKey("product_catalog.id"), nullable=True, index=True)
+    display_name_snapshot = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

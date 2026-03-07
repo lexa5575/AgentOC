@@ -1,4 +1,4 @@
-"""Tests for the fulfillment engine (Phase 2 + Phase 3 integration).
+"""Tests for the fulfillment engine (Phase 2 + Phase 3 + Phase 4 integration).
 
 Tests warehouse selection, idempotency, payment_received item source,
 fulfillment trigger, and formatter output.
@@ -15,6 +15,7 @@ import pytest
 from agents.formatters import format_result
 from agents.handlers.fulfillment_trigger import try_fulfillment
 from db.fulfillment import (
+    STATUS_BLOCKED_AMBIGUOUS,
     STATUS_ERROR,
     STATUS_PROCESSING,
     STATUS_SKIPPED_DUPLICATE,
@@ -27,6 +28,7 @@ from db.fulfillment import (
     get_warehouse_spreadsheet_id,
     increment_maks_sales,
     is_duplicate_fulfillment,
+    parse_details_json,
     select_fulfillment_warehouse,
 )
 from db.models import ClientOrderItem, FulfillmentEvent, ProductCatalog, StockItem
@@ -65,7 +67,8 @@ def _add_catalog(session, category, name_norm, stock_name):
     return entry.id
 
 
-def _add_order_item(session, email, order_id, product_name, base_flavor, qty=1):
+def _add_order_item(session, email, order_id, product_name, base_flavor, qty=1,
+                    variant_id=None):
     """Insert a ClientOrderItem."""
     item = ClientOrderItem(
         client_email=email.lower().strip(),
@@ -74,6 +77,7 @@ def _add_order_item(session, email, order_id, product_name, base_flavor, qty=1):
         base_flavor=base_flavor,
         product_type="stick",
         quantity=qty,
+        variant_id=variant_id,
     )
     session.add(item)
     session.flush()
@@ -167,8 +171,8 @@ class TestSelectFulfillmentWarehouse:
         assert result["status"] == STATUS_UPDATED
         assert result["matched_items"][0]["total_available"] == 7  # 3 + 4
 
-    def test_ilike_fallback_no_product_ids(self, db_session):
-        """Without product_ids, falls back to ILIKE match."""
+    def test_no_product_ids_skips_item(self, db_session):
+        """Phase 8: without product_ids, item is skipped (no ILIKE fallback)."""
         session = db_session()
         _add_stock(session, "LA_MAKS", "TEREA_JAPAN", "T Silver", qty=10)
         session.commit()
@@ -178,8 +182,7 @@ class TestSelectFulfillmentWarehouse:
         ]
         result = select_fulfillment_warehouse(order_items, "Los Angeles, CA 90001")
 
-        assert result["status"] == STATUS_UPDATED
-        assert result["warehouse"] == "LA_MAKS"
+        assert result["status"] == STATUS_SKIPPED_SPLIT
 
     def test_geographic_priority(self, db_session):
         """FL address should try MIAMI_MAKS first."""
@@ -395,13 +398,17 @@ class TestGetOrderItemsForFulfillment:
     def test_finds_items_by_order_id(self, db_session):
         """Finds order items by client_email + order_id."""
         session = db_session()
-        _add_catalog(session, "TEREA_JAPAN", "t silver", "T Silver")
-        _add_order_item(session, "buyer@example.com", "#100", "T Silver", "T Silver", qty=2)
-        _add_order_item(session, "buyer@example.com", "#100", "Amber", "Amber", qty=1)
+        cat_s = _add_catalog(session, "TEREA_JAPAN", "t silver", "T Silver")
+        cat_a = _add_catalog(session, "TEREA_EUROPE", "amber", "Amber")
+        _add_order_item(session, "buyer@example.com", "#100", "T Silver", "T Silver",
+                        qty=2, variant_id=cat_s)
+        _add_order_item(session, "buyer@example.com", "#100", "Amber", "Amber",
+                        qty=1, variant_id=cat_a)
         session.commit()
 
-        items = get_order_items_for_fulfillment("buyer@example.com", "#100")
+        items, skipped = get_order_items_for_fulfillment("buyer@example.com", "#100")
         assert len(items) == 2
+        assert skipped == []
         flavors = {it["base_flavor"] for it in items}
         assert "T Silver" in flavors
         assert "Amber" in flavors
@@ -409,7 +416,7 @@ class TestGetOrderItemsForFulfillment:
     def test_finds_most_recent_order(self, db_session):
         """Without order_id, returns the most recent order's items."""
         session = db_session()
-        _add_catalog(session, "TEREA_JAPAN", "t silver", "T Silver")
+        cat_id = _add_catalog(session, "TEREA_JAPAN", "t silver", "T Silver")
         old = ClientOrderItem(
             client_email="buyer@example.com", order_id="#old",
             product_name="Green", base_flavor="Green",
@@ -420,23 +427,26 @@ class TestGetOrderItemsForFulfillment:
             client_email="buyer@example.com", order_id="#new",
             product_name="T Silver", base_flavor="T Silver",
             product_type="stick", quantity=3,
+            variant_id=cat_id,
             created_at=datetime.utcnow(),
         )
         session.add_all([old, new])
         session.commit()
 
-        items = get_order_items_for_fulfillment("buyer@example.com")
+        items, skipped = get_order_items_for_fulfillment("buyer@example.com")
         assert len(items) == 1
+        assert skipped == []
         assert items[0]["base_flavor"] == "T Silver"
         assert items[0]["quantity"] == 3
 
     def test_empty_when_no_items(self, db_session):
-        """Returns empty list when no ClientOrderItems found."""
-        items = get_order_items_for_fulfillment("nobody@example.com", "#999")
+        """Returns empty tuple when no ClientOrderItems found."""
+        items, skipped = get_order_items_for_fulfillment("nobody@example.com", "#999")
         assert items == []
+        assert skipped == []
 
     def test_empty_when_no_order_id_in_latest(self, db_session):
-        """Returns empty when latest item has no order_id."""
+        """Returns empty tuple when latest item has no order_id."""
         session = db_session()
         item = ClientOrderItem(
             client_email="buyer@example.com", order_id=None,
@@ -446,8 +456,166 @@ class TestGetOrderItemsForFulfillment:
         session.add(item)
         session.commit()
 
-        items = get_order_items_for_fulfillment("buyer@example.com")
+        items, skipped = get_order_items_for_fulfillment("buyer@example.com")
         assert items == []
+        assert skipped == []
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Phase 4: variant_id-first read path
+# ══════════════════════════════════════════════════════════════════════
+
+class TestReadPathVariantFirst:
+    """Phase 4: get_order_items_for_fulfillment variant_id-first logic."""
+
+    def test_variant_id_direct_lookup_no_resolver(self, db_session):
+        """[P4] Row with variant_id → product_ids=[variant_id], no resolver called."""
+        session = db_session()
+        cat_id = _add_catalog(session, "TEREA_EUROPE", "bronze", "Bronze")
+        _add_order_item(
+            session, "buyer@example.com", "#200", "Bronze EU", "Bronze",
+            qty=2, variant_id=cat_id,
+        )
+        session.commit()
+
+        with patch("db.product_resolver.resolve_product_to_catalog") as mock_resolve:
+            items, skipped = get_order_items_for_fulfillment("buyer@example.com", "#200")
+
+        assert len(items) == 1
+        assert skipped == []
+        assert items[0]["product_ids"] == [cat_id]
+        assert items[0]["base_flavor"] == "Bronze"
+        assert items[0]["quantity"] == 2
+        # Resolver must NOT be called when variant_id exists
+        mock_resolve.assert_not_called()
+
+    def test_null_variant_id_legacy_re_resolve(self, db_session, monkeypatch):
+        """[P4] NULL variant_id + strict=false → legacy re-resolve path used."""
+        monkeypatch.setenv("REQUIRE_VARIANT_ID", "false")
+        session = db_session()
+        cat_id = _add_catalog(session, "TEREA_JAPAN", "t silver", "T Silver")
+        _add_order_item(
+            session, "buyer@example.com", "#201", "T Silver", "T Silver",
+            qty=3,  # no variant_id
+        )
+        session.commit()
+
+        # Mock resolver to return single match (exact confidence)
+        from unittest.mock import patch, MagicMock
+        mock_result = MagicMock()
+        mock_result.product_ids = [cat_id]
+        mock_result.confidence = "exact"
+        with patch("db.product_resolver.resolve_product_to_catalog", return_value=mock_result):
+            items, skipped = get_order_items_for_fulfillment("buyer@example.com", "#201")
+
+        assert len(items) == 1
+        assert skipped == []
+        assert items[0]["base_flavor"] == "T Silver"
+        # Legacy path resolves product_ids via resolver
+        assert items[0]["product_ids"] == [cat_id]
+
+    def test_null_variant_id_strict_blocks_order(self, db_session, monkeypatch):
+        """[P4] NULL variant_id + strict=true → whole order blocked."""
+        monkeypatch.setenv("REQUIRE_VARIANT_ID", "true")
+        session = db_session()
+        _add_order_item(
+            session, "buyer@example.com", "#202", "Silver", "Silver",
+            qty=3,  # no variant_id
+        )
+        session.commit()
+
+        items, skipped = get_order_items_for_fulfillment("buyer@example.com", "#202")
+        assert items == []
+        assert len(skipped) == 1
+        assert skipped[0]["base_flavor"] == "Silver"
+
+    def test_mixed_strict_blocks_whole_order(self, db_session, monkeypatch):
+        """[P4] Mixed: one resolved + one unresolved in strict → whole order blocked."""
+        monkeypatch.setenv("REQUIRE_VARIANT_ID", "true")
+        session = db_session()
+        cat_id = _add_catalog(session, "TEREA_EUROPE", "bronze", "Bronze")
+        _add_order_item(
+            session, "buyer@example.com", "#203", "Bronze EU", "Bronze",
+            qty=2, variant_id=cat_id,
+        )
+        _add_order_item(
+            session, "buyer@example.com", "#203", "Silver", "Silver",
+            qty=1,  # no variant_id
+        )
+        session.commit()
+
+        items, skipped = get_order_items_for_fulfillment("buyer@example.com", "#203")
+        # Hard block: whole order blocked even though Bronze has variant_id
+        assert items == []
+        assert len(skipped) == 1
+        assert skipped[0]["base_flavor"] == "Silver"
+
+
+class TestTriggerSkippedItemsBlocking:
+    """Phase 4: fulfillment_trigger handles skipped_items from read path."""
+
+    def test_payment_received_skipped_items_blocks(self, db_session, monkeypatch):
+        """[P4] payment_received with strict skipped_items → STATUS_BLOCKED_AMBIGUOUS."""
+        monkeypatch.setenv("REQUIRE_VARIANT_ID", "true")
+        session = db_session()
+        # Order item without variant_id
+        _add_order_item(
+            session, "buyer@example.com", "#300", "Silver", "Silver",
+            qty=3,  # no variant_id → will be skipped in strict mode
+        )
+        session.commit()
+
+        classification = _mock_classification(
+            client_email="buyer@example.com",
+            situation="payment_received",
+            order_id="#300",
+        )
+        result = {
+            "situation": "payment_received",
+            "client_data": {"payment_type": "prepay"},
+        }
+
+        try_fulfillment(classification, result, gmail_message_id="msg_strict_block")
+
+        ff = result["fulfillment"]
+        assert ff["status"] == STATUS_BLOCKED_AMBIGUOUS
+        assert ff["warehouse"] is None
+        assert "Silver" in ff.get("ambiguous_flavors", [])
+
+    def test_payment_received_variant_id_passes(self, db_session, monkeypatch):
+        """[P4] payment_received with variant_id → proceeds past skipped gate.
+
+        May end as STATUS_ERROR due to missing googleapiclient (pre-existing),
+        but must NOT be blocked by skipped_items gate.
+        """
+        monkeypatch.setenv("REQUIRE_VARIANT_ID", "true")
+        session = db_session()
+        cat_id = _add_catalog(session, "TEREA_JAPAN", "t silver", "T Silver")
+        _add_stock(session, "LA_MAKS", "TEREA_JAPAN", "T Silver", qty=10, product_id=cat_id)
+        _add_order_item(
+            session, "buyer@example.com", "#301", "T Silver", "T Silver",
+            qty=2, variant_id=cat_id,
+        )
+        session.commit()
+
+        classification = _mock_classification(
+            client_email="buyer@example.com",
+            situation="payment_received",
+            order_id="#301",
+        )
+        result = {
+            "situation": "payment_received",
+            "client_data": {"payment_type": "prepay"},
+        }
+
+        try_fulfillment(classification, result, gmail_message_id="msg_variant_ok")
+
+        ff = result["fulfillment"]
+        # NOT blocked by skipped gate — proceeds to warehouse selection
+        assert ff["status"] != STATUS_BLOCKED_AMBIGUOUS or \
+            ff.get("ambiguous_flavors") != ["T Silver"]
+        # Warehouse was attempted (may error on Sheets, but that's pre-existing)
+        assert ff["status"] in (STATUS_UPDATED, STATUS_ERROR, STATUS_SKIPPED_SPLIT)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -851,7 +1019,11 @@ class TestTryFulfillment:
         assert "fulfillment" not in result
 
     def test_empty_string_ids_normalized(self, db_session):
-        """Empty string order_id/gmail_message_id are normalized to None."""
+        """Empty string order_id/gmail_message_id are normalized to None.
+
+        Phase 4.1: empty order_id now hits missing_order_id gate
+        (new_order_postpay requires order_id).
+        """
         classification = _mock_classification(
             situation="new_order",
             order_id="",
@@ -859,12 +1031,14 @@ class TestTryFulfillment:
         result = {
             "situation": "new_order",
             "client_data": {"payment_type": "postpay"},
-            # No items -> unresolved, but IDs should be None
+            # No items -> but IDs normalized to None first
         }
 
         try_fulfillment(classification, result, gmail_message_id="")
 
-        assert result["fulfillment"]["status"] == STATUS_SKIPPED_UNRESOLVED
+        # Phase 4.1: empty order_id → blocked (not unresolved)
+        assert result["fulfillment"]["status"] == STATUS_BLOCKED_AMBIGUOUS
+        assert result["fulfillment"]["reason"] == "missing_order_id_new_order_postpay"
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1003,7 +1177,7 @@ class TestOOSFulfillmentSourceGating:
         session = db_session()
         cat_id = _add_catalog(session, "TEREA_JAPAN", "t silver", "T Silver")
         _add_stock(session, "LA_MAKS", "TEREA_JAPAN", "T Silver", qty=10, product_id=cat_id)
-        _add_order_item(session, "test@example.com", "#PAY-1", "T Silver", "T Silver", qty=1)
+        _add_order_item(session, "test@example.com", "#PAY-1", "T Silver", "T Silver", qty=1, variant_id=cat_id)
         session.commit()
 
         classification = _mock_classification(
@@ -1238,10 +1412,13 @@ class TestClaimLifecycle:
         )
         assert ok is True
 
-        # Verify it's now "error"
+        # Verify it's now "error" with v2 schema
         session2 = db_session()
         event2 = session2.query(FulfillmentEvent).filter_by(id=event_id).first()
         assert event2.status == STATUS_ERROR
+        stored = json.loads(event2.details_json)
+        assert stored["v"] == 2
+        assert stored["exception"] == "something crashed"
 
     def test_duplicate_still_skipped_after_lifecycle(self, db_session):
         """After a lifecycle claim, duplicate is still properly detected."""
@@ -1529,3 +1706,441 @@ class TestSplitBreakdown:
         assert "skipped_split" in output
         assert "NOT updated" in output
         assert "Split breakdown:" not in output
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Phase 3: Ambiguity gate in try_fulfillment
+# ══════════════════════════════════════════════════════════════════════
+
+class TestFulfillmentBlockedAmbiguous:
+    """Phase 3: fulfillment_blocked flag blocks fulfillment with blocked status."""
+
+    def test_blocked_flag_skips_fulfillment(self, db_session):
+        """[P3] fulfillment_blocked=True → status=blocked_ambiguous_variant, no increment."""
+        session = db_session()
+        cat_id = _add_catalog(session, "TEREA_JAPAN", "t silver", "T Silver")
+        _add_stock(session, "LA_MAKS", "TEREA_JAPAN", "T Silver", qty=10, product_id=cat_id)
+        session.commit()
+
+        classification = _mock_classification(
+            situation="new_order",
+            order_id="#200",
+        )
+        result = {
+            "situation": "new_order",
+            "client_data": {"payment_type": "postpay", "city_state_zip": "Los Angeles, CA 90001"},
+            "_stock_check_items": [
+                {"base_flavor": "Silver", "quantity": 3, "product_ids": [10, 30, 54]},
+            ],
+            "fulfillment_blocked": True,
+            "ambiguous_flavors": ["Silver"],
+        }
+
+        try_fulfillment(classification, result, gmail_message_id="msg_blocked")
+
+        ff = result["fulfillment"]
+        assert ff["status"] == STATUS_BLOCKED_AMBIGUOUS
+        assert ff["warehouse"] is None
+        assert ff["trigger_type"] == "new_order_postpay"
+        assert "Silver" in ff.get("ambiguous_flavors", [])
+        # No increment happened — no update_result key
+        assert "update_result" not in ff
+
+        # Verify DB event was claimed with blocked status
+        events = session.query(FulfillmentEvent).filter_by(
+            client_email="test@example.com",
+            order_id="#200",
+        ).all()
+        assert len(events) == 1
+        assert events[0].status == STATUS_BLOCKED_AMBIGUOUS
+
+    def test_non_blocked_path_unchanged(self, db_session):
+        """[P3] Without fulfillment_blocked, normal path proceeds to warehouse selection.
+
+        Note: may end as STATUS_ERROR due to missing googleapiclient (pre-existing),
+        but the key assertion is it did NOT hit the ambiguity gate.
+        """
+        session = db_session()
+        cat_id = _add_catalog(session, "TEREA_JAPAN", "t silver", "T Silver")
+        _add_stock(session, "LA_MAKS", "TEREA_JAPAN", "T Silver", qty=10, product_id=cat_id)
+        session.commit()
+
+        classification = _mock_classification(
+            situation="new_order",
+            order_id="#201",
+        )
+        result = {
+            "situation": "new_order",
+            "client_data": {"payment_type": "postpay", "city_state_zip": "Los Angeles, CA 90001"},
+            "_stock_check_items": [
+                {"base_flavor": "T Silver", "quantity": 2, "product_ids": [cat_id]},
+            ],
+            # NO fulfillment_blocked flag
+        }
+
+        try_fulfillment(classification, result, gmail_message_id="msg_ok")
+
+        ff = result["fulfillment"]
+        # Key assertion: NOT blocked by ambiguity gate
+        assert ff["status"] != STATUS_BLOCKED_AMBIGUOUS
+        # Warehouse was selected (proves we passed the gate)
+        assert ff.get("warehouse") is not None or ff["status"] == STATUS_ERROR
+
+
+class TestFormatBlockedAmbiguous:
+    """Phase 3 + 4.1: formatter renders blocked_ambiguous_variant with reason."""
+
+    def test_format_blocked_ambiguous(self):
+        """[P3] Formatter shows default reason when no reason field."""
+        result = _base_result()
+        result["fulfillment"] = {
+            "status": "blocked_ambiguous_variant",
+            "warehouse": None,
+            "trigger_type": "new_order_postpay",
+            "ambiguous_flavors": ["Silver", "Bronze"],
+        }
+        output = format_result(result)
+        assert "blocked_ambiguous_variant" in output
+        assert "ambiguous variant mapping" in output
+        assert "NOT updated" in output
+        assert "Silver, Bronze" in output
+
+    def test_format_reason_unresolved_variant_strict(self):
+        """[P4.1-D4] Formatter shows correct reason for unresolved_variant_strict."""
+        result = _base_result()
+        result["fulfillment"] = {
+            "status": "blocked_ambiguous_variant",
+            "warehouse": None,
+            "trigger_type": "payment_received_prepay",
+            "reason": "unresolved_variant_strict",
+            "ambiguous_flavors": ["Silver"],
+        }
+        output = format_result(result)
+        assert "unresolved variant (strict mode)" in output
+        assert "NOT updated" in output
+        assert "Silver" in output
+
+    def test_format_reason_missing_order_id(self):
+        """[P4.1-D5] Formatter shows correct reason for missing_order_id_new_order_postpay."""
+        result = _base_result()
+        result["fulfillment"] = {
+            "status": "blocked_ambiguous_variant",
+            "warehouse": None,
+            "trigger_type": "new_order_postpay",
+            "reason": "missing_order_id_new_order_postpay",
+        }
+        output = format_result(result)
+        assert "missing order_id for new_order_postpay" in output
+        assert "NOT updated" in output
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Phase 4.1: Hotfix tests
+# ══════════════════════════════════════════════════════════════════════
+
+class TestMissingOrderIdBlocked:
+    """Phase 4.1: new_order_postpay + missing order_id → blocked."""
+
+    def test_order_id_none_blocks(self, db_session):
+        """[P4.1-D1] new_order_postpay + order_id=None → blocked_ambiguous_variant."""
+        session = db_session()
+        cat_id = _add_catalog(session, "TEREA_JAPAN", "t silver", "T Silver")
+        _add_stock(session, "LA_MAKS", "TEREA_JAPAN", "T Silver", qty=10, product_id=cat_id)
+        session.commit()
+
+        classification = _mock_classification(
+            situation="new_order",
+            order_id=None,
+        )
+        result = {
+            "situation": "new_order",
+            "client_data": {"payment_type": "postpay"},
+            "_stock_check_items": [
+                {"base_flavor": "T Silver", "quantity": 2, "product_ids": [cat_id]},
+            ],
+        }
+
+        try_fulfillment(classification, result, gmail_message_id="msg_no_oid")
+
+        ff = result["fulfillment"]
+        assert ff["status"] == STATUS_BLOCKED_AMBIGUOUS
+        assert ff["reason"] == "missing_order_id_new_order_postpay"
+        assert ff["warehouse"] is None
+
+    def test_order_id_whitespace_blocks(self, db_session):
+        """[P4.1-D2] new_order_postpay + order_id='   ' → blocked_ambiguous_variant."""
+        session = db_session()
+        cat_id = _add_catalog(session, "TEREA_JAPAN", "t silver", "T Silver")
+        _add_stock(session, "LA_MAKS", "TEREA_JAPAN", "T Silver", qty=10, product_id=cat_id)
+        session.commit()
+
+        classification = _mock_classification(
+            situation="new_order",
+            order_id="   ",
+        )
+        result = {
+            "situation": "new_order",
+            "client_data": {"payment_type": "postpay"},
+            "_stock_check_items": [
+                {"base_flavor": "T Silver", "quantity": 1, "product_ids": [cat_id]},
+            ],
+        }
+
+        try_fulfillment(classification, result, gmail_message_id="msg_ws_oid")
+
+        ff = result["fulfillment"]
+        assert ff["status"] == STATUS_BLOCKED_AMBIGUOUS
+        assert ff["reason"] == "missing_order_id_new_order_postpay"
+
+
+class TestLegacyReResolveAmbiguousBlocked:
+    """Phase 4.1: legacy re-resolve with ambiguous product_ids → blocked."""
+
+    def test_legacy_multi_product_ids_blocks(self, db_session, monkeypatch):
+        """[P4.1-D3] payment_received strict=false + multi product_ids → blocked."""
+        monkeypatch.setenv("REQUIRE_VARIANT_ID", "false")
+        session = db_session()
+        _add_order_item(
+            session, "buyer@example.com", "#400", "Silver", "Silver",
+            qty=3,  # no variant_id → legacy re-resolve
+        )
+        session.commit()
+
+        # Mock resolver to return 3 product_ids (ambiguous)
+        mock_result = MagicMock()
+        mock_result.product_ids = [10, 30, 54]
+        mock_result.confidence = "exact"
+        with patch("db.product_resolver.resolve_product_to_catalog", return_value=mock_result):
+            items, skipped = get_order_items_for_fulfillment("buyer@example.com", "#400")
+
+        # Ambiguous re-resolve → items blocked even in non-strict mode
+        assert items == []
+        assert len(skipped) == 1
+        assert skipped[0]["base_flavor"] == "Silver"
+        assert skipped[0]["product_ids_count"] == 3
+
+    def test_legacy_ambiguous_reason_in_try_fulfillment(self, db_session, monkeypatch):
+        """[P4.2-D] payment_received + legacy ambiguous → reason=ambiguous_variant,
+        details_json has product_ids_count=3 (not 0).
+        """
+        monkeypatch.setenv("REQUIRE_VARIANT_ID", "false")
+        session = db_session()
+        _add_order_item(
+            session, "test@example.com", "#500", "Silver", "Silver",
+            qty=2,  # no variant_id → legacy re-resolve
+        )
+        session.commit()
+
+        classification = _mock_classification(
+            situation="payment_received",
+            order_id="#500",
+        )
+        result = {
+            "situation": "payment_received",
+            "client_data": {"payment_type": "prepay"},
+        }
+
+        # Mock resolver to return 3 product_ids (ambiguous)
+        mock_resolved = MagicMock()
+        mock_resolved.product_ids = [10, 30, 54]
+        mock_resolved.confidence = "exact"
+        with patch("db.product_resolver.resolve_product_to_catalog", return_value=mock_resolved):
+            try_fulfillment(classification, result, gmail_message_id="msg_ambig_reason")
+
+        ff = result["fulfillment"]
+        assert ff["status"] == STATUS_BLOCKED_AMBIGUOUS
+        assert ff["reason"] == "ambiguous_variant"
+        assert "Silver" in ff["ambiguous_flavors"]
+
+        # Verify details_json in DB event has product_ids_count=3
+        session2 = db_session()
+        event = session2.query(FulfillmentEvent).filter_by(
+            gmail_message_id="msg_ambig_reason",
+        ).first()
+        assert event is not None
+        details = json.loads(event.details_json) if event.details_json else {}
+        assert details.get("reason") == "ambiguous_variant"
+        skipped_in_details = details.get("skipped_items", [])
+        assert len(skipped_in_details) == 1
+        assert skipped_in_details[0]["product_ids_count"] == 3
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Phase 5: details_json v2 schema
+# ══════════════════════════════════════════════════════════════════════
+
+class TestDetailsJsonV2:
+    """Phase 5: all new fulfillment events use details_json v2 schema."""
+
+    def test_claim_auto_stamps_v2(self, db_session):
+        """[P5-C1] claim_fulfillment_event with details missing 'v' → stored with v=2."""
+        claim = claim_fulfillment_event(
+            client_email="test@example.com",
+            order_id="#V2-1",
+            trigger_type="new_order_postpay",
+            status=STATUS_PROCESSING,
+            gmail_message_id="msg_v2_claim",
+            details={"matched_count": 3},
+        )
+        assert claim["created"] is True
+
+        session = db_session()
+        event = session.query(FulfillmentEvent).filter_by(id=claim["event_id"]).first()
+        stored = json.loads(event.details_json)
+        assert stored["v"] == 2
+        assert stored["matched_count"] == 3
+
+    def test_claim_preserves_existing_v(self, db_session):
+        """[P5] claim with details already having v=2 → not double-stamped."""
+        claim = claim_fulfillment_event(
+            client_email="test@example.com",
+            order_id="#V2-1b",
+            trigger_type="new_order_postpay",
+            status=STATUS_BLOCKED_AMBIGUOUS,
+            gmail_message_id="msg_v2_existing",
+            details={"v": 2, "reason": "ambiguous_variant"},
+        )
+        assert claim["created"] is True
+
+        session = db_session()
+        event = session.query(FulfillmentEvent).filter_by(id=claim["event_id"]).first()
+        stored = json.loads(event.details_json)
+        assert stored["v"] == 2
+        assert stored["reason"] == "ambiguous_variant"
+
+    def test_claim_none_details_stays_none(self, db_session):
+        """[P5] claim with details=None → details_json is NULL (no stamping)."""
+        claim = claim_fulfillment_event(
+            client_email="test@example.com",
+            order_id="#V2-1c",
+            trigger_type="new_order_postpay",
+            status=STATUS_SKIPPED_SPLIT,
+            gmail_message_id="msg_v2_none",
+            details=None,
+        )
+        assert claim["created"] is True
+
+        session = db_session()
+        event = session.query(FulfillmentEvent).filter_by(id=claim["event_id"]).first()
+        assert event.details_json is None
+
+    def test_finalize_auto_stamps_v2(self, db_session):
+        """[P5-C2] finalize_fulfillment_event with details missing 'v' → stored with v=2."""
+        # First claim
+        claim = claim_fulfillment_event(
+            client_email="test@example.com",
+            order_id="#V2-2",
+            trigger_type="new_order_postpay",
+            status=STATUS_PROCESSING,
+            gmail_message_id="msg_v2_finalize",
+        )
+        event_id = claim["event_id"]
+
+        # Finalize with details that lack "v"
+        ok = finalize_fulfillment_event(
+            event_id,
+            status=STATUS_ERROR,
+            details={"exception": "test crash", "updated": 0, "errors": ["boom"]},
+        )
+        assert ok is True
+
+        session = db_session()
+        event = session.query(FulfillmentEvent).filter_by(id=event_id).first()
+        stored = json.loads(event.details_json)
+        assert stored["v"] == 2
+        assert stored["exception"] == "test crash"
+        assert stored["errors"] == ["boom"]
+
+    def test_blocked_event_has_v2_and_reason(self, db_session, monkeypatch):
+        """[P5-C3] blocked event (legacy ambiguous) → details_json has v=2, reason, skipped_items."""
+        monkeypatch.setenv("REQUIRE_VARIANT_ID", "false")
+        session = db_session()
+        _add_order_item(
+            session, "test@example.com", "#V2-3", "Silver", "Silver",
+            qty=1,
+        )
+        session.commit()
+
+        classification = _mock_classification(
+            situation="payment_received",
+            order_id="#V2-3",
+        )
+        result = {
+            "situation": "payment_received",
+            "client_data": {"payment_type": "prepay"},
+        }
+
+        mock_resolved = MagicMock()
+        mock_resolved.product_ids = [10, 30]
+        mock_resolved.confidence = "exact"
+        with patch("db.product_resolver.resolve_product_to_catalog", return_value=mock_resolved):
+            try_fulfillment(classification, result, gmail_message_id="msg_v2_blocked")
+
+        assert result["fulfillment"]["status"] == STATUS_BLOCKED_AMBIGUOUS
+
+        session2 = db_session()
+        event = session2.query(FulfillmentEvent).filter_by(
+            gmail_message_id="msg_v2_blocked",
+        ).first()
+        assert event is not None
+        stored = json.loads(event.details_json)
+        assert stored["v"] == 2
+        assert stored["reason"] == "ambiguous_variant"
+        assert len(stored["skipped_items"]) == 1
+        assert stored["skipped_items"][0]["product_ids_count"] == 2
+
+    def test_parse_details_json_v1_backward_compat(self):
+        """[P5-C4] Old-style details_json without 'v' → parsed as version=1."""
+        old_json = json.dumps({"matched_count": 5, "updated": 2})
+        parsed = parse_details_json(old_json)
+        assert parsed["version"] == 1
+        assert parsed["matched_count"] == 5
+        assert parsed["updated"] == 2
+
+    def test_parse_details_json_v2(self):
+        """[P5-C4] New-style details_json with v=2 → parsed as version=2."""
+        new_json = json.dumps({"v": 2, "reason": "ambiguous_variant"})
+        parsed = parse_details_json(new_json)
+        assert parsed["version"] == 2
+        assert parsed["reason"] == "ambiguous_variant"
+        # "v" key replaced by "version"
+        assert "v" not in parsed
+
+    def test_parse_details_json_none(self):
+        """[P5-C4] None details_json → version=1 default."""
+        parsed = parse_details_json(None)
+        assert parsed["version"] == 1
+
+    def test_parse_details_json_empty_string(self):
+        """[P5-C4] Empty string details_json → version=1 default."""
+        parsed = parse_details_json("")
+        assert parsed["version"] == 1
+
+    def test_parse_details_json_non_dict(self):
+        """[P6-D] Non-dict JSON (e.g. list) → version=1 with _raw."""
+        raw = json.dumps([1, 2, 3])
+        parsed = parse_details_json(raw)
+        assert parsed["version"] == 1
+        assert parsed["_raw"] == raw
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Phase 8: ILIKE removal — _query_stock_entries negative test
+# ══════════════════════════════════════════════════════════════════════
+
+class TestQueryStockEntriesNoIlike:
+
+    def test_no_product_ids_returns_empty(self, db_session):
+        """[P8-T2] _query_stock_entries with empty product_ids → [] (no ILIKE fallback)."""
+        session = db_session()
+        cat_id = _add_catalog(session, "TEREA_EUROPE", "silver", "Silver")
+        _add_stock(session, "LA_MAKS", "TEREA_EUROPE", "Silver", qty=10, product_id=cat_id)
+        session.commit()
+
+        # Despite stock existing with matching name, empty product_ids → empty result
+        order_items = [
+            {"base_flavor": "Silver", "quantity": 2, "product_ids": []},
+        ]
+        result = select_fulfillment_warehouse(order_items, "Los Angeles, CA 90001")
+        # No warehouse can fulfill because _query_stock_entries returns []
+        assert result["status"] == STATUS_SKIPPED_SPLIT

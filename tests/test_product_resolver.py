@@ -76,6 +76,40 @@ class TestNormalize(unittest.TestCase):
     def test_strips_whitespace(self):
         self.assertEqual(_normalize("  Green  "), "Green")
 
+    # --- Region prefix stripping (Region Safety hotfix) ---
+
+    def test_strips_region_prefix_eu(self):
+        self.assertEqual(_normalize("EU Silver"), "Silver")
+
+    def test_strips_region_prefix_european(self):
+        self.assertEqual(_normalize("European Bronze"), "Bronze")
+
+    def test_strips_region_prefix_japan(self):
+        self.assertEqual(_normalize("Japan Smooth"), "Smooth")
+
+    def test_strips_region_prefix_japanese(self):
+        self.assertEqual(_normalize("Japanese Smooth"), "Smooth")
+
+    def test_strips_region_prefix_me(self):
+        self.assertEqual(_normalize("ME Amber"), "Amber")
+
+    def test_strips_region_prefix_kz(self):
+        self.assertEqual(_normalize("KZ Silver"), "Silver")
+
+    # --- Stabilization: additional prefix stripping ---
+
+    def test_strips_region_prefix_middle_east(self):
+        self.assertEqual(_normalize("Middle East Amber"), "Amber")
+
+    def test_strips_region_prefix_armenia(self):
+        self.assertEqual(_normalize("Armenia Silver"), "Silver")
+
+    def test_strips_region_prefix_armenian(self):
+        self.assertEqual(_normalize("Armenian Bronze"), "Bronze")
+
+    def test_strips_region_prefix_europe(self):
+        self.assertEqual(_normalize("Europe Bronze"), "Bronze")
+
 
 class TestResolveProductName(unittest.TestCase):
     """Test single product name resolution."""
@@ -280,6 +314,107 @@ class TestExtractRegionCategories(unittest.TestCase):
     def test_no_region_with_brand(self):
         cats = _extract_region_categories("Tera Silver")
         self.assertIsNone(cats)
+
+    # --- Prefix formats (Region Safety hotfix) ---
+
+    def test_eu_prefix(self):
+        cats = _extract_region_categories("EU Silver")
+        self.assertEqual(cats, frozenset({"TEREA_EUROPE"}))
+
+    def test_european_prefix(self):
+        cats = _extract_region_categories("European Bronze")
+        self.assertEqual(cats, frozenset({"TEREA_EUROPE"}))
+
+    def test_japan_prefix(self):
+        cats = _extract_region_categories("Japan Smooth")
+        self.assertEqual(cats, frozenset({"TEREA_JAPAN", "УНИКАЛЬНАЯ_ТЕРЕА"}))
+
+    def test_japanese_prefix(self):
+        cats = _extract_region_categories("Japanese Smooth")
+        self.assertEqual(cats, frozenset({"TEREA_JAPAN", "УНИКАЛЬНАЯ_ТЕРЕА"}))
+
+    def test_me_prefix(self):
+        cats = _extract_region_categories("ME Amber")
+        self.assertEqual(cats, frozenset({"ARMENIA", "KZ_TEREA"}))
+
+    def test_kz_prefix(self):
+        cats = _extract_region_categories("KZ Silver")
+        self.assertEqual(cats, frozenset({"KZ_TEREA"}))
+
+    def test_eu_prefix_with_brand(self):
+        cats = _extract_region_categories("Tera EU Bronze")
+        self.assertEqual(cats, frozenset({"TEREA_EUROPE"}))
+
+    # --- Stabilization: additional prefix formats ---
+
+    def test_middle_east_prefix(self):
+        cats = _extract_region_categories("Middle East Amber")
+        self.assertEqual(cats, frozenset({"ARMENIA", "KZ_TEREA"}))
+
+    def test_armenian_prefix(self):
+        cats = _extract_region_categories("Armenian Bronze")
+        self.assertEqual(cats, frozenset({"ARMENIA"}))
+
+    def test_armenia_prefix(self):
+        cats = _extract_region_categories("Armenia Silver")
+        self.assertEqual(cats, frozenset({"ARMENIA"}))
+
+    def test_europe_prefix(self):
+        cats = _extract_region_categories("Europe Bronze")
+        self.assertEqual(cats, frozenset({"TEREA_EUROPE"}))
+
+
+class TestCatalogRegionFiltering(unittest.TestCase):
+    """Test region-aware product_id filtering in resolve_product_to_catalog."""
+
+    def _make_catalog(self):
+        """Build a catalog with same flavor in multiple categories."""
+        return [
+            {"id": 10, "category": "TEREA_EUROPE", "name_norm": "silver", "stock_name": "Silver"},
+            {"id": 20, "category": "ARMENIA", "name_norm": "silver", "stock_name": "Silver"},
+            {"id": 30, "category": "KZ_TEREA", "name_norm": "silver", "stock_name": "Silver"},
+            {"id": 40, "category": "TEREA_EUROPE", "name_norm": "bronze", "stock_name": "Bronze"},
+            {"id": 50, "category": "ARMENIA", "name_norm": "bronze", "stock_name": "Bronze"},
+            {"id": 60, "category": "TEREA_JAPAN", "name_norm": "smooth", "stock_name": "T Smooth"},
+        ]
+
+    @patch("db.product_resolver.USE_CATALOG_RESOLVER", True)
+    def test_silver_eu_filters_to_europe_only(self):
+        """'Silver EU' should only return TEREA_EUROPE product_ids."""
+        from db.product_resolver import resolve_product_to_catalog
+        catalog = self._make_catalog()
+        result = resolve_product_to_catalog("Silver EU", catalog)
+        self.assertIn(result.confidence, ("exact", "high"))
+        self.assertEqual(result.product_ids, [10])  # Only TEREA_EUROPE
+
+    @patch("db.product_resolver.USE_CATALOG_RESOLVER", True)
+    def test_raw_name_has_region_original_without(self):
+        """raw_name='Bronze EU', original_product_name='Bronze' → region from raw_name."""
+        from db.product_resolver import resolve_product_to_catalog
+        catalog = self._make_catalog()
+        result = resolve_product_to_catalog(
+            "Bronze EU", catalog, original_product_name="Bronze",
+        )
+        self.assertIn(result.confidence, ("exact", "high"))
+        self.assertEqual(result.product_ids, [40])  # Only TEREA_EUROPE
+
+    @patch("db.product_resolver.USE_CATALOG_RESOLVER", True)
+    def test_prefix_eu_silver_filters_correctly(self):
+        """'EU Silver' (prefix format) should filter to TEREA_EUROPE."""
+        from db.product_resolver import resolve_product_to_catalog
+        catalog = self._make_catalog()
+        result = resolve_product_to_catalog("EU Silver", catalog)
+        self.assertIn(result.confidence, ("exact", "high"))
+        self.assertEqual(result.product_ids, [10])  # Only TEREA_EUROPE
+
+    @patch("db.product_resolver.USE_CATALOG_RESOLVER", True)
+    def test_no_region_returns_all_categories(self):
+        """'Silver' (no region) returns product_ids from all categories."""
+        from db.product_resolver import resolve_product_to_catalog
+        catalog = self._make_catalog()
+        result = resolve_product_to_catalog("Silver", catalog)
+        self.assertIn(result.confidence, ("exact", "high"))
+        self.assertEqual(sorted(result.product_ids), [10, 20, 30])
 
 
 class TestLLMFallback(unittest.TestCase):

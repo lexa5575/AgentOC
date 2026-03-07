@@ -179,19 +179,30 @@ def _resolve_oos_agreement(
                 return None, "no_alternatives"
 
             if len(alts) == 1:
-                # Only one alternative — auto-pick
+                # Only one alternative — auto-pick with region from category
+                alt = alts[0]
+                alt_pn = alt["product_name"]
+                alt_cat = alt.get("category", "")
+                region_suffix = _CATEGORY_TO_REGION_SUFFIX.get(alt_cat)
+                if region_suffix:
+                    alt_pn = f"{alt_pn} {region_suffix}"
                 confirmed.append({
-                    "base_flavor": alts[0]["product_name"],
-                    "product_name": alts[0]["product_name"],
+                    "base_flavor": alt["product_name"],
+                    "product_name": alt_pn,
                     "quantity": item["requested_qty"],
                 })
             else:
                 # Multiple alternatives — try to match from email text
                 matched = _match_alternative_from_text(email_text, alts)
                 if matched:
+                    m_pn = matched["product_name"]
+                    m_cat = matched.get("category", "")
+                    region_suffix = _CATEGORY_TO_REGION_SUFFIX.get(m_cat)
+                    if region_suffix:
+                        m_pn = f"{m_pn} {region_suffix}"
                     confirmed.append({
                         "base_flavor": matched["product_name"],
-                        "product_name": matched["product_name"],
+                        "product_name": m_pn,
                         "quantity": item["requested_qty"],
                     })
                 else:
@@ -250,15 +261,21 @@ def _resolve_from_classifier(classification) -> list[dict] | None:
 
 
 def _build_order_summary(stock_items: list[dict]) -> str:
-    """Build order summary string like '2 x Terea Tropical Japan, 1 x Terea Black Japan'."""
+    """Build order summary string like '2 x Terea Tropical Japan, 1 x Terea Black Japan'.
+
+    Prefers resolved display_name (region-aware from resolver) over
+    entries[0].category fallback to avoid wrong region display.
+    """
     parts = []
     for item in stock_items:
-        cat = ""
-        entries = item.get("stock_entries") or []
-        if entries:
-            cat = entries[0].get("category", "")
-        name = item.get("product_name") or item.get("base_flavor", "")
-        display = get_display_name(name, cat)
+        display = item.get("display_name")
+        if not display:
+            cat = ""
+            entries = item.get("stock_entries") or []
+            if entries:
+                cat = entries[0].get("category", "")
+            name = item.get("product_name") or item.get("base_flavor", "")
+            display = get_display_name(name, cat)
         parts.append(f"{item['ordered_qty']} x {display}")
     return ", ".join(parts)
 
@@ -289,11 +306,27 @@ def _apply_confirmation_flags(
 ) -> None:
     """Set confirmation source and eligibility flags on result dict (plan §6).
 
-    Sets effective_situation="new_order" ONLY when source is trusted AND order_id exists.
+    Sets effective_situation="new_order" ONLY when source is trusted AND order_id exists
+    AND no ambiguous variants detected.
     """
+    from db.stock import has_ambiguous_variants
+
     result["confirmation_source"] = source
     result["canonical_confirmed_items"] = stock_result["items"]
     result["_stock_check_items"] = resolved_items
+
+    # Phase 3 ambiguity gate: block fulfillment if any item has
+    # multiple product_ids (plan §9.5, rule §4.3).
+    ambiguous = has_ambiguous_variants(resolved_items)
+    if ambiguous:
+        result["fulfillment_blocked"] = True
+        result["ambiguous_flavors"] = ambiguous
+        logger.warning(
+            "OOS agrees (%s): ambiguous variants %s — fulfillment blocked",
+            result.get("client_email", "?"), ambiguous,
+        )
+        # Do NOT set effective_situation — blocks persistence + fulfillment
+        return
 
     if source in TRUSTED_SOURCES and order_id_norm:
         result["effective_situation"] = "new_order"
@@ -303,6 +336,107 @@ def _apply_confirmation_flags(
                 "OOS agrees (%s): order_id=None → persistence/fulfillment skipped",
                 result.get("client_email", "?"),
             )
+
+
+# Category → region suffix mapping (used by pending path + normalization)
+_CATEGORY_TO_REGION_SUFFIX: dict[str, str] = {
+    "TEREA_EUROPE": "EU",
+    "TEREA_JAPAN": "Japan",
+    "УНИКАЛЬНАЯ_ТЕРЕА": "Japan",
+    "ARMENIA": "ME",
+    "KZ_TEREA": "KZ",
+}
+
+# Known region tokens (lowered) → normalized suffix
+_REGION_TOKEN_MAP: dict[str, str] = {
+    "eu": "EU",
+    "europe": "EU",
+    "european": "EU",
+    "japan": "Japan",
+    "japanese": "Japan",
+    "jp": "Japan",
+    "me": "ME",
+    "middle east": "ME",
+    "armenia": "ME",
+    "armenian": "ME",
+    "kz": "KZ",
+    "kazakhstan": "KZ",
+}
+
+
+def _detect_region_and_core(text: str) -> tuple[str | None, str]:
+    """Detect region suffix and extract core flavor from a single text field.
+
+    Returns (region_suffix, core) where core has brand prefixes stripped.
+    """
+    if not text:
+        return None, ""
+
+    region_suffix = None
+    core = text
+
+    # Strip brand prefixes first (case-insensitive)
+    core_lower_check = core.lower()
+    for prefix in ("terea ", "tera ", "heets ", "t "):
+        if core_lower_check.startswith(prefix):
+            core = core[len(prefix):]
+            break
+
+    # Try suffix/prefix region detection on brand-stripped core
+    core_lower = core.lower()
+    for token, suffix in sorted(_REGION_TOKEN_MAP.items(), key=lambda x: -len(x[0])):
+        if core_lower.endswith(" " + token):
+            region_suffix = suffix
+            core = core[:len(core) - len(token) - 1].strip()
+            break
+        elif core_lower.startswith(token + " "):
+            region_suffix = suffix
+            core = core[len(token) + 1:].strip()
+            break
+
+    return region_suffix, core.strip()
+
+
+def _normalize_extracted_region(items: list[dict]) -> list[dict]:
+    """Deterministic post-normalization of extracted items.
+
+    Ensures:
+    - base_flavor is core flavor WITHOUT region suffix
+    - product_name has normalized region suffix if present
+
+    Region detection priority:
+    1. region from product_name
+    2. if not found — region from base_flavor
+    """
+    result = []
+    for item in items:
+        pn = (item.get("product_name") or "").strip()
+        bf = (item.get("base_flavor") or "").strip()
+        qty = item.get("quantity", 1)
+
+        # Detect region from product_name (primary)
+        pn_region, pn_core = _detect_region_and_core(pn)
+
+        # Detect region from base_flavor (fallback)
+        bf_region, bf_core = _detect_region_and_core(bf)
+
+        # Priority: product_name region > base_flavor region
+        region_suffix = pn_region or bf_region
+
+        # Use product_name core if available, else base_flavor core
+        core = pn_core or bf_core
+
+        # Build normalized names
+        clean_bf = core
+        clean_pn = f"{core} {region_suffix}" if region_suffix else core
+
+        result.append({
+            "base_flavor": clean_bf,
+            "product_name": clean_pn,
+            "quantity": max(1, int(qty)) if qty else 1,
+        })
+
+    return result
 
 
 def _extract_agreed_items_from_thread(
@@ -343,7 +477,15 @@ def _extract_agreed_items_from_thread(
             "- Apply any customer modifications to quantities or flavors\n"
             "- If customer says 'Ok', 'Sounds good', etc. → accept the latest proposal as-is\n"
             "- Return ONLY items the customer agreed to receive\n"
-            "- Each item must have: product_name, base_flavor, quantity\n\n"
+            "- Each item must have: product_name, base_flavor, quantity\n"
+            "- IMPORTANT: preserve the region/origin in product_name as a SUFFIX:\n"
+            '  "EU Bronze" or "Bronze EU" → product_name: "Bronze EU"\n'
+            '  "Japan Smooth" or "Japanese Smooth" → product_name: "Smooth Japan"\n'
+            '  "ME Amber" or "Middle East Amber" → product_name: "Amber ME"\n'
+            '  "KZ Silver" or "Kazakhstan Silver" → product_name: "Silver KZ"\n'
+            '  "European Bronze" → product_name: "Bronze EU"\n'
+            "  If no region is mentioned, omit the suffix.\n"
+            "- base_flavor is the core flavor WITHOUT region (e.g. 'Bronze', 'Smooth')\n\n"
             f"=== OUTBOUND PROPOSALS ===\n{outbound_text}\n\n"
             f"=== INBOUND REPLY ===\n{inbound_text}\n\n"
             'Return JSON: {"items": [{"product_name": "...", "base_flavor": "...", '
@@ -368,19 +510,24 @@ def _extract_agreed_items_from_thread(
             logger.info("Thread extraction: no items extracted for thread %s", gmail_thread_id)
             return None
 
-        normalized: list[dict] = []
+        raw_items: list[dict] = []
         for item in items:
             bf = item.get("base_flavor", "").strip()
             pn = item.get("product_name", "").strip()
             qty = item.get("quantity", 1)
             if bf or pn:
-                normalized.append({
+                raw_items.append({
                     "base_flavor": bf or pn,
                     "product_name": pn or bf,
                     "quantity": max(1, int(qty)) if qty else 1,
                 })
 
-        return normalized if normalized else None
+        if not raw_items:
+            return None
+
+        # Deterministic post-normalization: region suffix in product_name,
+        # core flavor in base_flavor (plan §Region Safety)
+        return _normalize_extracted_region(raw_items)
 
     except Exception as e:
         logger.warning("Thread extraction failed for %s: %s", gmail_thread_id, e)

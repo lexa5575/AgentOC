@@ -2,8 +2,11 @@
 
 from unittest.mock import patch
 
+from db.stock import has_ambiguous_variants, _has_ambiguous_variants
 from db.stock import (
     CATEGORY_PRICES,
+    _extract_variant_id,
+    extract_variant_id,
     calculate_order_price,
     check_stock_for_order,
     get_available_by_category,
@@ -16,6 +19,17 @@ from db.stock import (
     select_best_alternatives,
     sync_stock,
 )
+
+
+def _get_product_ids(flavor: str, warehouse: str = "main") -> list[int]:
+    """Look up product_ids from seeded stock by flavor name (for tests).
+
+    Returns list of product_ids matching the flavor across all categories.
+    Uses search_stock (which keeps ILIKE) to find entries.
+    """
+    entries = search_stock(flavor, warehouse=warehouse)
+    ids = list({e["product_id"] for e in entries if e["product_id"] is not None})
+    return ids
 
 
 # ---------------------------------------------------------------------------
@@ -244,7 +258,8 @@ def test_get_stock_summary_warehouse():
 def test_check_stock_sufficient():
     _seed_stock()
     result = check_stock_for_order([
-        {"base_flavor": "Green", "quantity": 3, "product_name": "Tera Green"},
+        {"base_flavor": "Green", "quantity": 3, "product_name": "Tera Green",
+         "product_ids": _get_product_ids("Green")},
     ])
     assert result["all_in_stock"] is True
     assert result["items"][0]["is_sufficient"] is True
@@ -254,7 +269,8 @@ def test_check_stock_sufficient():
 def test_check_stock_insufficient():
     _seed_stock()
     result = check_stock_for_order([
-        {"base_flavor": "Silver", "quantity": 5, "product_name": "Tera Silver"},
+        {"base_flavor": "Silver", "quantity": 5, "product_name": "Tera Silver",
+         "product_ids": _get_product_ids("Silver")},
     ])
     assert result["all_in_stock"] is False
     assert len(result["insufficient_items"]) == 1
@@ -266,7 +282,8 @@ def test_check_stock_device_vs_stick():
     _seed_stock()
     # "ONE Green" should only search device categories, finding qty=2
     result = check_stock_for_order([
-        {"base_flavor": "ONE Green", "quantity": 1, "product_name": "ONE Green device"},
+        {"base_flavor": "ONE Green", "quantity": 1, "product_name": "ONE Green device",
+         "product_ids": _get_product_ids("ONE Green")},
     ])
     assert result["all_in_stock"] is True
     assert result["items"][0]["total_available"] == 2
@@ -320,12 +337,26 @@ def test_order_history_filter_by_product_type():
     assert devices[0]["base_flavor"] == "ONE Green"
 
 
-def test_save_order_items_skip_duplicates():
+def test_save_order_items_skip_duplicates(db_session):
+    """Duplicate (email, order_id, variant_id) → skipped via uq_client_order_variant."""
+    from sqlalchemy import text
+    session = db_session()
+    conn = session.get_bind().connect()
+    conn.execute(text(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_client_order_variant "
+        "ON client_order_items (client_email, order_id, variant_id) "
+        "WHERE variant_id IS NOT NULL AND order_id IS NOT NULL"
+    ))
+    conn.commit()
+    conn.close()
+
     save_order_items("dup@example.com", "O1", [
-        {"product_name": "Tera Green", "base_flavor": "Green", "quantity": 1},
+        {"product_name": "Tera Green", "base_flavor": "Green", "quantity": 1,
+         "variant_id": 10},
     ])
     saved = save_order_items("dup@example.com", "O1", [
-        {"product_name": "Tera Green", "base_flavor": "Green", "quantity": 1},
+        {"product_name": "Tera Green", "base_flavor": "Green", "quantity": 1,
+         "variant_id": 10},
     ])
     assert saved == 0
 
@@ -438,7 +469,8 @@ def test_calculate_price_sticks():
     """Standard sticks: $110 each."""
     _seed_stock()
     stock = check_stock_for_order([
-        {"base_flavor": "Green", "quantity": 2, "product_name": "Tera Green"},
+        {"base_flavor": "Green", "quantity": 2, "product_name": "Tera Green",
+         "product_ids": _get_product_ids("Green")},
     ])
     price = calculate_order_price(stock["items"])
     assert price == 220.0
@@ -448,7 +480,8 @@ def test_calculate_price_device():
     """ONE device: $99."""
     _seed_stock()
     stock = check_stock_for_order([
-        {"base_flavor": "ONE Green", "quantity": 1, "product_name": "ONE Green"},
+        {"base_flavor": "ONE Green", "quantity": 1, "product_name": "ONE Green",
+         "product_ids": _get_product_ids("ONE Green")},
     ])
     price = calculate_order_price(stock["items"])
     assert price == 99.0
@@ -458,8 +491,10 @@ def test_calculate_price_mixed():
     """Sticks + device in one order."""
     _seed_stock()
     stock = check_stock_for_order([
-        {"base_flavor": "Green", "quantity": 2, "product_name": "Tera Green"},
-        {"base_flavor": "ONE Green", "quantity": 1, "product_name": "ONE Green"},
+        {"base_flavor": "Green", "quantity": 2, "product_name": "Tera Green",
+         "product_ids": _get_product_ids("Green")},
+        {"base_flavor": "ONE Green", "quantity": 1, "product_name": "ONE Green",
+         "product_ids": _get_product_ids("ONE Green")},
     ])
     price = calculate_order_price(stock["items"])
     assert price == 319.0  # $110x2 + $99x1
@@ -469,14 +504,15 @@ def test_calculate_price_japan():
     """Japan sticks: $115 each."""
     _seed_stock()
     stock = check_stock_for_order([
-        {"base_flavor": "T Mint", "quantity": 3, "product_name": "T Mint"},
+        {"base_flavor": "T Mint", "quantity": 3, "product_name": "T Mint",
+         "product_ids": _get_product_ids("T Mint")},
     ])
     price = calculate_order_price(stock["items"])
     assert price == 345.0  # $115 x 3
 
 
 def test_calculate_price_unmatched_returns_none():
-    """Unmatched item → strict None."""
+    """Unmatched item → strict None (no product_ids)."""
     _seed_stock()
     stock = check_stock_for_order([
         {"base_flavor": "NonExistent", "quantity": 1, "product_name": "???"},
@@ -622,20 +658,260 @@ def test_replace_guard_empty_order_id():
 # save_order_items savepoint fix (Plan 8C.5)
 # ---------------------------------------------------------------------------
 
-def test_savepoint_preserves_previous_inserts_despite_duplicate():
-    """[8C.5] Insert A, dup A, insert B → both A and B saved (not just B)."""
+def test_savepoint_preserves_previous_inserts_despite_duplicate(db_session):
+    """[8C.5] Insert A, dup A, insert B → both A and B saved (not just B).
+
+    Phase 9.1: dedup now via uq_client_order_variant (variant_id), not base_flavor.
+    """
+    from sqlalchemy import text
+    session = db_session()
+    conn = session.get_bind().connect()
+    conn.execute(text(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_client_order_variant "
+        "ON client_order_items (client_email, order_id, variant_id) "
+        "WHERE variant_id IS NOT NULL AND order_id IS NOT NULL"
+    ))
+    conn.commit()
+    conn.close()
+
     # Insert A first time
     save_order_items("sp@example.com", "SP1", [
-        {"product_name": "Tera Green", "base_flavor": "Green", "quantity": 1},
+        {"product_name": "Tera Green", "base_flavor": "Green", "quantity": 1,
+         "variant_id": 10},
     ])
-    # Now save [Green (dup), Silver (new)] — Green should be skipped,
-    # Silver should be saved, and Green should NOT be rolled back
+    # Now save [Green (dup variant_id=10), Silver (new variant_id=20)]
+    # Green should be skipped, Silver saved, Green NOT rolled back
     saved = save_order_items("sp@example.com", "SP1", [
-        {"product_name": "Tera Green", "base_flavor": "Green", "quantity": 1},
-        {"product_name": "Tera Silver", "base_flavor": "Silver", "quantity": 1},
+        {"product_name": "Tera Green", "base_flavor": "Green", "quantity": 1,
+         "variant_id": 10},
+        {"product_name": "Tera Silver", "base_flavor": "Silver", "quantity": 1,
+         "variant_id": 20},
     ])
     assert saved == 1  # only Silver is new
 
     history = get_client_flavor_history("sp@example.com")
     flavors = {h["base_flavor"] for h in history}
     assert flavors == {"Green", "Silver"}  # both must exist
+
+
+# ---------------------------------------------------------------------------
+# Cross-region substitution prevention (Region Safety hotfix)
+# ---------------------------------------------------------------------------
+
+def test_eu_requested_kz_available_not_in_stock():
+    """[RS] EU qty=0, KZ qty>0 — when product_ids filter to EU only, all_in_stock=False.
+
+    This prevents silent cross-region substitution: if a customer agreed to
+    EU Silver but only KZ Silver is available, the system must NOT confirm
+    the order as "in stock".
+    """
+    # Seed: Silver in TEREA_EUROPE (qty=0) + KZ_TEREA (qty=50)
+    sync_stock("wh_region", [
+        {"category": "TEREA_EUROPE", "product_name": "Silver", "quantity": 0},
+        {"category": "KZ_TEREA", "product_name": "Silver", "quantity": 50},
+    ])
+
+    # Get EU product_id from the stock entries themselves
+    eu_entries = search_stock("Silver", warehouse="wh_region")
+    eu_stock = [e for e in eu_entries if e["category"] == "TEREA_EUROPE"]
+    assert len(eu_stock) == 1, "EU Silver stock entry should exist"
+    eu_product_id = eu_stock[0]["product_id"]
+    assert eu_product_id is not None, "EU Silver should have product_id"
+
+    # Check stock with EU-only product_ids (simulating region-filtered resolver)
+    result = check_stock_for_order([
+        {"base_flavor": "Silver", "quantity": 3, "product_name": "Silver",
+         "product_ids": [eu_product_id]},
+    ])
+    assert result["all_in_stock"] is False, (
+        "EU Silver qty=0 must NOT be satisfied by KZ Silver qty=50"
+    )
+    assert result["items"][0]["total_available"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: _extract_variant_id + variant_id persistence
+# ---------------------------------------------------------------------------
+
+def test_extract_variant_id_single():
+    """[T1] Single product_id → return it."""
+    assert extract_variant_id([42]) == 42
+
+
+def test_extract_variant_id_multi_returns_none():
+    """[T2] Multiple product_ids → None (ambiguous)."""
+    assert extract_variant_id([10, 20, 30]) is None
+
+
+def test_extract_variant_id_empty():
+    """[T3] Empty or None → None."""
+    assert extract_variant_id([]) is None
+    assert extract_variant_id(None) is None
+
+
+def test_extract_variant_id_backward_compat_alias():
+    """[T3b] _extract_variant_id alias works identically."""
+    assert _extract_variant_id([42]) == 42
+    assert _extract_variant_id([1, 2]) is None
+    assert _extract_variant_id is extract_variant_id
+
+
+def test_save_order_items_persists_variant_id(db_session):
+    """[T6] variant_id + display_name_snapshot written to DB."""
+    saved = save_order_items("vid@example.com", "V1", [
+        {
+            "product_name": "Tera Green EU",
+            "base_flavor": "Green",
+            "quantity": 2,
+            "variant_id": 42,
+            "display_name_snapshot": "Terea Green EU",
+        },
+    ])
+    assert saved == 1
+
+    from db.models import ClientOrderItem
+    session = db_session()
+    try:
+        row = session.query(ClientOrderItem).filter_by(
+            client_email="vid@example.com", order_id="V1",
+        ).one()
+        assert row.variant_id == 42
+        assert row.display_name_snapshot == "Terea Green EU"
+    finally:
+        session.close()
+
+
+def test_save_order_items_null_variant_when_missing(db_session):
+    """[T7] No variant_id in item dict → NULL in DB (backward compat)."""
+    save_order_items("novid@example.com", "V2", [
+        {"product_name": "Tera Silver", "base_flavor": "Silver", "quantity": 1},
+    ])
+
+    from db.models import ClientOrderItem
+    session = db_session()
+    try:
+        row = session.query(ClientOrderItem).filter_by(
+            client_email="novid@example.com", order_id="V2",
+        ).one()
+        assert row.variant_id is None
+        assert row.display_name_snapshot is None
+    finally:
+        session.close()
+
+
+def test_save_order_items_skips_when_order_id_missing():
+    """[T8] order_id=None → skip save, return 0."""
+    saved = save_order_items("noid@example.com", None, [
+        {"product_name": "X", "base_flavor": "X", "quantity": 1},
+    ])
+    assert saved == 0
+
+    history = get_client_flavor_history("noid@example.com")
+    assert len(history) == 0
+
+
+def test_save_order_items_skips_empty_order_id():
+    """[T8b] Empty/whitespace order_id → skip save."""
+    assert save_order_items("noid@example.com", "", [
+        {"product_name": "X", "base_flavor": "X", "quantity": 1},
+    ]) == 0
+    assert save_order_items("noid@example.com", "   ", [
+        {"product_name": "X", "base_flavor": "X", "quantity": 1},
+    ]) == 0
+
+
+def test_replace_order_items_persists_variant_fields(db_session):
+    """[T9] replace_order_items stores variant_id + display_name_snapshot."""
+    save_order_items("rvid@example.com", "RV1", [
+        {"product_name": "Old", "base_flavor": "Old", "quantity": 1},
+    ])
+    replace_order_items("rvid@example.com", "RV1", [
+        {
+            "product_name": "Tera Bronze EU",
+            "base_flavor": "Bronze",
+            "quantity": 3,
+            "variant_id": 55,
+            "display_name_snapshot": "Terea Bronze EU",
+        },
+    ])
+
+    from db.models import ClientOrderItem
+    session = db_session()
+    try:
+        row = session.query(ClientOrderItem).filter_by(
+            client_email="rvid@example.com", order_id="RV1",
+        ).one()
+        assert row.variant_id == 55
+        assert row.display_name_snapshot == "Terea Bronze EU"
+        assert row.base_flavor == "Bronze"
+        assert row.quantity == 3
+    finally:
+        session.close()
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: has_ambiguous_variants
+# ---------------------------------------------------------------------------
+
+def test_has_ambiguous_variants_detects_multi_match():
+    """[P3-T4] Items with len(product_ids) > 1 are returned."""
+    items = [
+        {"base_flavor": "Bronze", "product_ids": [52]},
+        {"base_flavor": "Silver", "product_ids": [10, 30, 54]},
+        {"base_flavor": "Green", "product_ids": [7]},
+    ]
+    result = has_ambiguous_variants(items)
+    assert result == ["Silver"]
+
+
+def test_has_ambiguous_variants_no_ambiguous():
+    """[P3-T5] All single-match items → empty list."""
+    items = [
+        {"base_flavor": "Bronze", "product_ids": [52]},
+        {"base_flavor": "Green", "product_ids": [7]},
+    ]
+    result = has_ambiguous_variants(items)
+    assert result == []
+
+
+def test_has_ambiguous_variants_empty_and_none():
+    """Edge cases: empty product_ids, None, missing key → not ambiguous."""
+    items = [
+        {"base_flavor": "A", "product_ids": []},
+        {"base_flavor": "B", "product_ids": None},
+        {"base_flavor": "C"},
+    ]
+    result = has_ambiguous_variants(items)
+    assert result == []
+
+
+def test_has_ambiguous_variants_backward_compat_alias():
+    """Backward compat alias _has_ambiguous_variants works."""
+    items = [{"base_flavor": "Silver", "product_ids": [1, 2]}]
+    assert _has_ambiguous_variants(items) == ["Silver"]
+
+
+# ---------------------------------------------------------------------------
+# Phase 8: ILIKE removal — negative tests
+# ---------------------------------------------------------------------------
+
+def test_check_stock_no_product_ids_returns_not_in_stock():
+    """[P8-T1] Item without product_ids → total_available=0, is_sufficient=False."""
+    _seed_stock()
+    result = check_stock_for_order([
+        {"base_flavor": "Green", "quantity": 1, "product_name": "Green"},
+        # No product_ids → unresolved
+    ])
+    assert result["all_in_stock"] is False
+    assert result["items"][0]["total_available"] == 0
+    assert result["items"][0]["is_sufficient"] is False
+
+
+def test_search_stock_still_uses_ilike():
+    """[P8-T3] search_stock() still works with broad text queries (ILIKE preserved)."""
+    _seed_stock()
+    results = search_stock("Green")
+    # Should find stock entries via ILIKE substring match
+    assert len(results) >= 1
+    names = [r["product_name"] for r in results]
+    assert any("Green" in n for n in names)
