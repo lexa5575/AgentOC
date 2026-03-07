@@ -128,13 +128,18 @@ def process_client_email(client_email: str, account: str = "default") -> str:
         return f"Не удалось прочитать непрочитанные письма от {client_email}."
 
     # Only process messages from a recent window anchored at the newest unread.
-    newest_ts = max(c["created_at"] for c in candidates if c["created_at"] is not None)
-    cutoff = newest_ts - timedelta(days=_RECENT_UNREAD_WINDOW_DAYS)
-    recent = [c for c in candidates if c["created_at"] and c["created_at"] >= cutoff]
+    timestamps = [c["created_at"] for c in candidates if c["created_at"] is not None]
+    if timestamps:
+        newest_ts = max(timestamps)
+        cutoff = newest_ts - timedelta(days=_RECENT_UNREAD_WINDOW_DAYS)
+        recent = [c for c in candidates if c["created_at"] and c["created_at"] >= cutoff]
+    else:
+        # No timestamps available — treat all candidates as recent.
+        recent = list(candidates)
 
     # Process newest-first: the latest message is the primary intent.
     # Older messages in the thread serve as context (loaded by classifier).
-    for candidate in sorted(recent, key=lambda c: c["created_at"], reverse=True):
+    for candidate in sorted(recent, key=lambda c: c["created_at"] or datetime.min.replace(tzinfo=timezone.utc), reverse=True):
         if candidate["processed"]:
             continue
 
