@@ -298,7 +298,9 @@ def handle_oos_followup(
 
             if status == "ok" and confirmed_items:
                 try:
-                    stock_result = check_stock_for_order(confirmed_items)
+                    # Resolve product_ids for fulfillment accuracy
+                    resolved_items, _ = resolve_order_items(confirmed_items)
+                    stock_result = check_stock_for_order(resolved_items)
                     if stock_result["all_in_stock"]:
                         calc_price = calculate_order_price(stock_result["items"])
                         if calc_price is not None:
@@ -311,6 +313,8 @@ def handle_oos_followup(
                             )
                             if template_found:
                                 _clear_pending_oos(result)
+                                result["situation"] = "new_order"
+                                result["_stock_check_items"] = resolved_items
                                 logger.info(
                                     "OOS agrees → new_order template for %s ($%.2f, 0 tokens)",
                                     classification.client_email, calc_price,
@@ -357,6 +361,8 @@ def handle_oos_followup(
                             )
                             if template_found:
                                 _clear_pending_oos(result)
+                                result["situation"] = "new_order"
+                                result["_stock_check_items"] = resolved
                                 logger.info(
                                     "OOS agrees → new_order template via classifier items "
                                     "for %s ($%.2f, 0 tokens)",
