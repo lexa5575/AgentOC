@@ -559,6 +559,21 @@ def classify_and_process(
             classification.client_email, classification.situation, classification.needs_reply,
         )
 
+        # Auto-generate order_id from gmail_thread_id for new_order when missing.
+        # Tilda orders, direct emails, etc. often have no order_id.
+        # Same thread → same auto-id → dedup works via unique constraint.
+        if (
+            classification.situation == "new_order"
+            and not (classification.order_id or "").strip()
+            and gmail_thread_id
+        ):
+            auto_id = f"AUTO-{gmail_thread_id[-8:]}"
+            classification.order_id = auto_id
+            logger.info(
+                "Auto-generated order_id=%s from thread_id for %s",
+                auto_id, classification.client_email,
+            )
+
         # Step 2: Python processes (0 tokens — pure logic)
         result = process_classified_email(classification)
 
