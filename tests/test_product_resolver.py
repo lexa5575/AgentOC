@@ -416,6 +416,30 @@ class TestCatalogRegionFiltering(unittest.TestCase):
         self.assertIn(result.confidence, ("exact", "high"))
         self.assertEqual(sorted(result.product_ids), [10, 20, 30])
 
+    @patch("db.product_resolver.USE_CATALOG_RESOLVER", True)
+    def test_silver_me_display_name_shows_region(self):
+        """'Silver ME' matches ARMENIA+KZ_TEREA — both map to 'ME' display suffix.
+
+        display_name should be 'Terea Silver ME', not generic 'Terea Silver'.
+        """
+        from db.product_resolver import resolve_product_to_catalog
+        catalog = self._make_catalog()
+        result = resolve_product_to_catalog("Silver ME", catalog)
+        self.assertIn(result.confidence, ("exact", "high"))
+        self.assertEqual(sorted(result.product_ids), [20, 30])
+        self.assertEqual(result.display_name, "Terea Silver ME")
+
+    @patch("db.product_resolver.USE_CATALOG_RESOLVER", True)
+    def test_no_region_display_name_generic(self):
+        """'Silver' (no region) matches 3 categories with different suffixes.
+
+        display_name should be generic 'Terea Silver' (no region).
+        """
+        from db.product_resolver import resolve_product_to_catalog
+        catalog = self._make_catalog()
+        result = resolve_product_to_catalog("Silver", catalog)
+        self.assertEqual(result.display_name, "Terea Silver")
+
 
 class TestLLMFallback(unittest.TestCase):
     """Test LLM fallback for medium confidence cases."""

@@ -530,7 +530,8 @@ def resolve_product_to_catalog(
         result.product_ids = [e["id"] for e in matching]
         result.name_norm = matching[0]["name_norm"] if matching else None
 
-        # Display name: region-specific if one category, generic otherwise
+        # Display name: region-specific if one category (or all categories
+        # map to the same display name), generic otherwise.
         if matching:
             from db.catalog import get_base_display_name, get_display_name
             categories = {e["category"] for e in matching}
@@ -539,7 +540,16 @@ def resolve_product_to_catalog(
                     matching[0]["stock_name"], matching[0]["category"]
                 )
             else:
-                result.display_name = get_base_display_name(matching[0]["stock_name"])
+                # Check if all categories produce the same display name
+                # (e.g. ARMENIA + KZ_TEREA both → "Terea Silver ME")
+                display_names = {
+                    get_display_name(matching[0]["stock_name"], cat)
+                    for cat in categories
+                }
+                if len(display_names) == 1:
+                    result.display_name = display_names.pop()
+                else:
+                    result.display_name = get_base_display_name(matching[0]["stock_name"])
 
     return result
 
