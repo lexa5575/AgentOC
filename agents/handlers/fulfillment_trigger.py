@@ -64,6 +64,21 @@ def try_fulfillment(
             trigger_type = "new_order_postpay"
         elif situation == "payment_received" and payment_type == "prepay":
             trigger_type = "payment_received_prepay"
+        elif (
+            result.get("effective_situation") == "new_order"
+            and payment_type == "postpay"
+        ):
+            # OOS-derived effective new_order — source gate (plan §7.4)
+            _TRUSTED_FULFILLMENT_SOURCES = {"thread_extraction", "pending_oos"}
+            source = result.get("confirmation_source")
+            if source not in _TRUSTED_FULFILLMENT_SOURCES:
+                logger.info(
+                    "Fulfillment skipped for %s: effective_situation=new_order "
+                    "but source=%s not trusted",
+                    classification.client_email, source,
+                )
+                return
+            trigger_type = "new_order_postpay"
         else:
             return  # Not a fulfillment trigger
 

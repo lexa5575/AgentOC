@@ -17,6 +17,7 @@ Uses ConversationState to understand:
 - Customer's dialog_intent from classifier
 """
 
+import json
 import logging
 
 from agno.agent import Agent
@@ -26,11 +27,19 @@ from agents.context import build_context, format_context_for_prompt
 from agents.handlers.template_utils import fill_template_reply
 from tools.stock_tools import search_stock_tool
 from agents.reply_templates import REPLY_TEMPLATES
-from db.memory import check_stock_for_order, calculate_order_price, resolve_order_items
+from db.memory import (
+    check_stock_for_order,
+    calculate_order_price,
+    get_full_thread_history,
+    resolve_order_items,
+)
 from tools.email_parser import _strip_quoted_text
 from db.catalog import get_display_name
 
 logger = logging.getLogger(__name__)
+
+# Sources trusted for persistence and fulfillment (plan §3)
+TRUSTED_SOURCES = {"thread_extraction", "pending_oos"}
 
 # ---------------------------------------------------------------------------
 # OOS Followup Agent Instructions
@@ -262,6 +271,123 @@ def _clear_pending_oos(result: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
+# v3 helpers: order_id normalization, confirmation flags, thread extraction
+# ---------------------------------------------------------------------------
+
+def _normalize_order_id(classification) -> str | None:
+    """Normalize order_id: strip whitespace, empty → None (plan §4)."""
+    raw = getattr(classification, "order_id", None)
+    return (raw or "").strip() or None
+
+
+def _apply_confirmation_flags(
+    result: dict,
+    stock_result: dict,
+    resolved_items: list[dict],
+    source: str,
+    order_id_norm: str | None,
+) -> None:
+    """Set confirmation source and eligibility flags on result dict (plan §6).
+
+    Sets effective_situation="new_order" ONLY when source is trusted AND order_id exists.
+    """
+    result["confirmation_source"] = source
+    result["canonical_confirmed_items"] = stock_result["items"]
+    result["_stock_check_items"] = resolved_items
+
+    if source in TRUSTED_SOURCES and order_id_norm:
+        result["effective_situation"] = "new_order"
+    else:
+        if not order_id_norm:
+            logger.warning(
+                "OOS agrees (%s): order_id=None → persistence/fulfillment skipped",
+                result.get("client_email", "?"),
+            )
+
+
+def _extract_agreed_items_from_thread(
+    gmail_thread_id: str,
+    inbound_text: str,
+    gmail_account: str = "default",
+) -> list[dict] | None:
+    """Extract agreed items from thread history using structured LLM extraction (plan §7.2A).
+
+    Reads outbound proposals from thread + current inbound reply,
+    uses gpt-4.1 to extract the FINAL agreed order.
+    Returns normalized list[dict] or None on failure/empty.
+    """
+    import openai as _openai
+
+    try:
+        history = get_full_thread_history(gmail_thread_id, gmail_account=gmail_account)
+
+        # Get last 2-3 outbound messages (proposals)
+        outbound = [h for h in history if h.get("direction") == "outbound"]
+        outbound = outbound[-3:]
+
+        if not outbound:
+            logger.info("Thread extraction: no outbound messages in thread %s", gmail_thread_id)
+            return None
+
+        outbound_text = "\n---\n".join([
+            f"[OUTBOUND {i+1}]\n{h.get('body', '')}"
+            for i, h in enumerate(outbound)
+        ])
+
+        prompt = (
+            "You are an order extraction assistant.\n\n"
+            "Below are our recent OUTBOUND proposals to a customer, "
+            "followed by their INBOUND reply.\n"
+            "Extract the FINAL agreed order items with quantities.\n\n"
+            "Rules:\n"
+            "- Apply any customer modifications to quantities or flavors\n"
+            "- If customer says 'Ok', 'Sounds good', etc. → accept the latest proposal as-is\n"
+            "- Return ONLY items the customer agreed to receive\n"
+            "- Each item must have: product_name, base_flavor, quantity\n\n"
+            f"=== OUTBOUND PROPOSALS ===\n{outbound_text}\n\n"
+            f"=== INBOUND REPLY ===\n{inbound_text}\n\n"
+            'Return JSON: {"items": [{"product_name": "...", "base_flavor": "...", '
+            '"quantity": N}]}\n'
+            'If you cannot determine the agreed items, return {"items": []}.'
+        )
+
+        client = _openai.OpenAI()
+        response = client.chat.completions.create(
+            model="gpt-4.1",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+            response_format={"type": "json_object"},
+            max_tokens=500,
+        )
+
+        raw = response.choices[0].message.content.strip()
+        data = json.loads(raw)
+        items = data.get("items", [])
+
+        if not items:
+            logger.info("Thread extraction: no items extracted for thread %s", gmail_thread_id)
+            return None
+
+        normalized: list[dict] = []
+        for item in items:
+            bf = item.get("base_flavor", "").strip()
+            pn = item.get("product_name", "").strip()
+            qty = item.get("quantity", 1)
+            if bf or pn:
+                normalized.append({
+                    "base_flavor": bf or pn,
+                    "product_name": pn or bf,
+                    "quantity": max(1, int(qty)) if qty else 1,
+                })
+
+        return normalized if normalized else None
+
+    except Exception as e:
+        logger.warning("Thread extraction failed for %s: %s", gmail_thread_id, e)
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Handler Function
 # ---------------------------------------------------------------------------
 def handle_oos_followup(
@@ -285,6 +411,7 @@ def handle_oos_followup(
     if intent == "agrees_to_alternative" and result["client_found"]:
         client = result["client_data"]
         payment_type = client.get("payment_type", "unknown")
+        order_id_norm = _normalize_order_id(classification)
 
         # Guard: prepay without zelle_address → don't send template with blank address
         if payment_type == "prepay" and not client.get("zelle_address"):
@@ -293,12 +420,52 @@ def handle_oos_followup(
                 classification.client_email,
             )
         else:
-            # --- Outcome A: Resolve OOS → new_order template with price ---
+            gmail_thread_id = result.get("gmail_thread_id")
+            gmail_account = result.get("gmail_account", "default")
+
+            # --- PRIMARY: Thread extraction (plan §5 / §7.2A) ---
+            if gmail_thread_id:
+                extracted = _extract_agreed_items_from_thread(
+                    gmail_thread_id, clean_text, gmail_account,
+                )
+                if extracted:
+                    try:
+                        resolved, _ = resolve_order_items(extracted)
+                        stock_result = check_stock_for_order(resolved)
+                        if stock_result["all_in_stock"]:
+                            calc_price = calculate_order_price(stock_result["items"])
+                            if calc_price is not None:
+                                result["calculated_price"] = calc_price
+                                result["order_summary"] = _build_order_summary(stock_result["items"])
+                                result, template_found = fill_template_reply(
+                                    classification=classification,
+                                    result=result,
+                                    situation="new_order",
+                                )
+                                if template_found:
+                                    _apply_confirmation_flags(
+                                        result, stock_result, resolved,
+                                        "thread_extraction", order_id_norm,
+                                    )
+                                    _clear_pending_oos(result)
+                                    logger.info(
+                                        "OOS agrees → extraction template for %s ($%.2f)",
+                                        classification.client_email, calc_price,
+                                    )
+                                    return result
+                    except Exception as e:
+                        logger.warning(
+                            "OOS extraction resolution failed for %s: %s",
+                            classification.client_email, e,
+                        )
+
+            # --- FALLBACK A: Pending OOS with mandatory resolve (plan §7.2D) ---
             confirmed_items, status = _resolve_oos_agreement(result, clean_text)
 
             if status == "ok" and confirmed_items:
                 try:
-                    stock_result = check_stock_for_order(confirmed_items)
+                    resolved, _ = resolve_order_items(confirmed_items)
+                    stock_result = check_stock_for_order(resolved)
                     if stock_result["all_in_stock"]:
                         calc_price = calculate_order_price(stock_result["items"])
                         if calc_price is not None:
@@ -310,19 +477,23 @@ def handle_oos_followup(
                                 situation="new_order",
                             )
                             if template_found:
+                                _apply_confirmation_flags(
+                                    result, stock_result, resolved,
+                                    "pending_oos", order_id_norm,
+                                )
                                 _clear_pending_oos(result)
                                 logger.info(
-                                    "OOS agrees → new_order template for %s ($%.2f, 0 tokens)",
+                                    "OOS agrees → pending template for %s ($%.2f)",
                                     classification.client_email, calc_price,
                                 )
                                 return result
                 except Exception as e:
                     logger.warning(
-                        "OOS agrees resolution failed for %s: %s — fallback",
+                        "OOS pending resolution failed for %s: %s",
                         classification.client_email, e,
                     )
 
-            # --- Outcome B: Ambiguous → clarification reply ---
+            # --- FALLBACK B: Ambiguous → clarification reply ---
             if status == "clarify":
                 state = result.get("conversation_state") or {}
                 pending = (state.get("facts") or {}).get("pending_oos_resolution", {})
@@ -335,14 +506,10 @@ def handle_oos_followup(
                 )
                 return result
 
-            # --- Outcome C: Try classifier-extracted items → new_order template ---
-            # When pending_oos_resolution is missing (imported history) or resolution
-            # failed, the classifier may have extracted items from conversation context.
+            # --- FALLBACK C: Classifier (NOT trusted for persistence/fulfillment) ---
             confirmed_from_classifier = _resolve_from_classifier(classification)
             if confirmed_from_classifier:
                 try:
-                    # Resolve product names → catalog product_ids
-                    # (same as pipeline does for new_order)
                     resolved, _ = resolve_order_items(confirmed_from_classifier)
                     stock_result = check_stock_for_order(resolved)
                     if stock_result["all_in_stock"]:
@@ -356,32 +523,27 @@ def handle_oos_followup(
                                 situation="new_order",
                             )
                             if template_found:
+                                _apply_confirmation_flags(
+                                    result, stock_result, resolved,
+                                    "classifier", order_id_norm,
+                                )
                                 _clear_pending_oos(result)
                                 logger.info(
-                                    "OOS agrees → new_order template via classifier items "
-                                    "for %s ($%.2f, 0 tokens)",
+                                    "OOS agrees → classifier template for %s ($%.2f)",
                                     classification.client_email, calc_price,
                                 )
                                 return result
                 except Exception as e:
                     logger.warning(
-                        "OOS agrees classifier-items resolution failed for %s: %s",
+                        "OOS classifier resolution failed for %s: %s",
                         classification.client_email, e,
                     )
 
-            # --- Outcome D: Fall through to LLM ---
-            if confirmed_from_classifier:
-                logger.info(
-                    "OOS agrees: classifier items found but template failed for %s "
-                    "— LLM fallback (items=%s)",
-                    classification.client_email,
-                    [i.get("base_flavor") for i in confirmed_from_classifier],
-                )
-            else:
-                logger.info(
-                    "OOS agrees: no items resolved for %s — LLM fallback",
-                    classification.client_email,
-                )
+            # --- FALLBACK D: LLM ---
+            logger.info(
+                "OOS agrees: no template path succeeded for %s — LLM fallback",
+                classification.client_email,
+            )
 
     # === declines_alternative → decline template ===
     if intent == "declines_alternative":

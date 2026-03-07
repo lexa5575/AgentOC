@@ -401,7 +401,8 @@ def save_order_items(
 
     Each item dict: {product_name, base_flavor, quantity}.
     product_type is auto-detected from base_flavor.
-    Skips duplicates via UNIQUE constraint.
+    Skips duplicates via UNIQUE constraint (using SAVEPOINT so
+    a duplicate doesn't roll back previously inserted rows).
     Returns number of saved items.
     """
     client_email = client_email.lower().strip()
@@ -419,11 +420,12 @@ def save_order_items(
                 quantity=item.get("quantity", 1),
             )
             try:
-                session.add(record)
-                session.flush()
+                with session.begin_nested():  # SAVEPOINT
+                    session.add(record)
+                    session.flush()
                 saved += 1
             except IntegrityError:
-                session.rollback()
+                # Savepoint rolled back, outer transaction intact
                 logger.debug("Order item already exists: %s / %s / %s", client_email, order_id, base_flavor)
         session.commit()
         if saved:
@@ -432,6 +434,66 @@ def save_order_items(
     except Exception as e:
         logger.error("Failed to save order items: %s", e)
         session.rollback()
+        return 0
+    finally:
+        session.close()
+
+
+def replace_order_items(
+    client_email: str,
+    order_id: str,
+    order_items: list[dict],
+) -> int:
+    """Atomically replace all order items for (client_email, order_id).
+
+    DELETE old rows + INSERT new canonical rows in a single transaction.
+    Used by OOS agrees_to_alternative when the confirmed item set may
+    differ from what was originally saved.
+
+    Guards:
+    - order_id must be a non-empty string (NULL is unsafe for DELETE scope).
+    - order_items must be non-empty (empty list = no-op, no deletion).
+
+    Returns number of inserted items, or 0 on error / guard failure.
+    """
+    client_email = client_email.lower().strip()
+
+    if not order_id or not order_id.strip():
+        logger.warning("replace_order_items: order_id is empty, skipping for %s", client_email)
+        return 0
+
+    if not order_items:
+        logger.warning("replace_order_items: empty order_items, skipping for %s order %s", client_email, order_id)
+        return 0
+
+    order_id = order_id.strip()
+    session = get_session()
+    try:
+        deleted = session.query(ClientOrderItem).filter(
+            ClientOrderItem.client_email == client_email,
+            ClientOrderItem.order_id == order_id,
+        ).delete()
+
+        for item in order_items:
+            base_flavor = item["base_flavor"].strip()
+            session.add(ClientOrderItem(
+                client_email=client_email,
+                order_id=order_id,
+                product_name=item.get("product_name", base_flavor),
+                base_flavor=base_flavor,
+                product_type=get_product_type(base_flavor),
+                quantity=item.get("quantity", 1),
+            ))
+
+        session.commit()
+        logger.info(
+            "Replaced order items for %s order %s: %d deleted, %d inserted",
+            client_email, order_id, deleted, len(order_items),
+        )
+        return len(order_items)
+    except Exception as e:
+        session.rollback()
+        logger.error("Failed to replace order items for %s order %s: %s", client_email, order_id, e)
         return 0
     finally:
         session.close()

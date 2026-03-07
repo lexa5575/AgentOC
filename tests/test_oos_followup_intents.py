@@ -535,5 +535,230 @@ class TestOOSFollowupIntents(unittest.TestCase):
         self.assertEqual(alt_item[0]["quantity"], 5)
 
 
+    # ---------------------------------------------------------------
+    # Phase 2 (v3): extraction, source flags, resolve, order_id
+    # ---------------------------------------------------------------
+
+    def test_extraction_primary_success(self):
+        """[8A.1] extraction PRIMARY: gmail_thread_id present + extraction returns items → template."""
+        cls = _FakeClassification(dialog_intent="agrees_to_alternative", order_id="ORD-100")
+        state = self._make_pending_oos(num_alternatives=1)
+        result = self._make_result(
+            payment_type="postpay", zelle_address="",
+            conversation_state=state,
+        )
+        result["gmail_thread_id"] = "thread_abc"
+        result["gmail_account"] = "default"
+
+        extracted_items = [
+            {"base_flavor": "Smooth", "product_name": "T Smooth", "quantity": 4},
+            {"base_flavor": "Bronze", "product_name": "Bronze", "quantity": 2},
+        ]
+
+        with patch.object(self.handler_mod, "_extract_agreed_items_from_thread", return_value=extracted_items):
+            with patch.object(self.handler_mod, "check_stock_for_order", return_value=self._mock_stock_all_ok()):
+                with patch.object(self.handler_mod, "calculate_order_price", return_value=660.0):
+                    out = self.handler_mod.handle_oos_followup(cls, result, "Ok. Sounds good.")
+
+        self.assertTrue(out["template_used"])
+        self.assertIn("$660.00", out["draft_reply"])
+        self.assertEqual(out.get("confirmation_source"), "thread_extraction")
+        self.assertEqual(out.get("effective_situation"), "new_order")
+        self.assertIsNotNone(out.get("canonical_confirmed_items"))
+        self.assertIsNotNone(out.get("_stock_check_items"))
+
+    def test_extraction_overrides_stale_pending(self):
+        """[8A.2] extraction returns items → pending path never reached."""
+        cls = _FakeClassification(dialog_intent="agrees_to_alternative", order_id="ORD-200")
+        # Pending has DIFFERENT items (stale)
+        state = self._make_pending_oos(num_alternatives=1, alt_names=["Stale Product"])
+        result = self._make_result(
+            payment_type="postpay", zelle_address="",
+            conversation_state=state,
+        )
+        result["gmail_thread_id"] = "thread_xyz"
+
+        fresh_items = [
+            {"base_flavor": "Silver", "product_name": "Silver", "quantity": 3},
+        ]
+
+        with patch.object(self.handler_mod, "_extract_agreed_items_from_thread", return_value=fresh_items):
+            with patch.object(self.handler_mod, "check_stock_for_order", return_value=self._mock_stock_all_ok()) as mock_stock:
+                with patch.object(self.handler_mod, "calculate_order_price", return_value=330.0):
+                    out = self.handler_mod.handle_oos_followup(cls, result, "Yes please")
+
+        self.assertTrue(out["template_used"])
+        self.assertEqual(out.get("confirmation_source"), "thread_extraction")
+        # check_stock was called with extraction items, NOT pending items
+        called_items = mock_stock.call_args.args[0]
+        flavors = [i["base_flavor"] for i in called_items]
+        self.assertIn("Silver", flavors)
+        self.assertNotIn("Stale Product", flavors)
+
+    def test_extraction_fails_falls_to_pending(self):
+        """[8A.3] extraction returns None → falls to pending (Outcome A)."""
+        cls = _FakeClassification(dialog_intent="agrees_to_alternative", order_id="ORD-300")
+        state = self._make_pending_oos(num_alternatives=1)
+        result = self._make_result(
+            payment_type="postpay", zelle_address="",
+            conversation_state=state,
+        )
+        result["gmail_thread_id"] = "thread_fail"
+
+        with patch.object(self.handler_mod, "_extract_agreed_items_from_thread", return_value=None):
+            with patch.object(self.handler_mod, "check_stock_for_order", return_value=self._mock_stock_all_ok()):
+                with patch.object(self.handler_mod, "calculate_order_price", return_value=550.0):
+                    out = self.handler_mod.handle_oos_followup(cls, result, "Sounds good")
+
+        self.assertTrue(out["template_used"])
+        self.assertEqual(out.get("confirmation_source"), "pending_oos")
+        self.assertEqual(out.get("effective_situation"), "new_order")
+
+    def test_extraction_applies_inbound_qty_modification(self):
+        """[8A.4] extraction with modified qty from inbound → template uses extraction qty."""
+        cls = _FakeClassification(dialog_intent="agrees_to_alternative", order_id="ORD-400")
+        result = self._make_result(payment_type="postpay", zelle_address="")
+        result["gmail_thread_id"] = "thread_mod"
+
+        # Customer modified qty in reply
+        extracted = [
+            {"base_flavor": "Green", "product_name": "Green", "quantity": 2},  # was 5
+        ]
+
+        with patch.object(self.handler_mod, "_extract_agreed_items_from_thread", return_value=extracted):
+            with patch.object(self.handler_mod, "resolve_order_items", return_value=(extracted, [])) as mock_resolve:
+                with patch.object(self.handler_mod, "check_stock_for_order", return_value=self._mock_stock_all_ok()):
+                    with patch.object(self.handler_mod, "calculate_order_price", return_value=220.0):
+                        out = self.handler_mod.handle_oos_followup(cls, result, "Just 2 please")
+
+        self.assertTrue(out["template_used"])
+        # resolve_order_items was called with extraction items
+        mock_resolve.assert_called_once()
+        called = mock_resolve.call_args.args[0]
+        self.assertEqual(called[0]["quantity"], 2)
+
+    def test_no_thread_id_uses_pending(self):
+        """[8A.5] no gmail_thread_id → extraction skipped → pending path."""
+        cls = _FakeClassification(dialog_intent="agrees_to_alternative", order_id="ORD-500")
+        state = self._make_pending_oos(num_alternatives=1)
+        result = self._make_result(
+            payment_type="postpay", zelle_address="",
+            conversation_state=state,
+        )
+        # No gmail_thread_id in result
+
+        with patch.object(self.handler_mod, "check_stock_for_order", return_value=self._mock_stock_all_ok()):
+            with patch.object(self.handler_mod, "calculate_order_price", return_value=550.0):
+                out = self.handler_mod.handle_oos_followup(cls, result, "Ok thanks")
+
+        self.assertTrue(out["template_used"])
+        self.assertEqual(out.get("confirmation_source"), "pending_oos")
+
+    def test_outcome_a_calls_resolve_order_items(self):
+        """[8A.6] pending path (A) calls resolve_order_items before check_stock."""
+        cls = _FakeClassification(dialog_intent="agrees_to_alternative", order_id="ORD-600")
+        state = self._make_pending_oos(num_alternatives=1)
+        result = self._make_result(
+            payment_type="postpay", zelle_address="",
+            conversation_state=state,
+        )
+
+        with patch.object(self.handler_mod, "resolve_order_items", return_value=(
+            [{"base_flavor": "Silver", "quantity": 3, "product_ids": [10]},
+             {"base_flavor": "Alt Product 1", "quantity": 5, "product_ids": [20]}], []
+        )) as mock_resolve:
+            with patch.object(self.handler_mod, "check_stock_for_order", return_value=self._mock_stock_all_ok()):
+                with patch.object(self.handler_mod, "calculate_order_price", return_value=550.0):
+                    out = self.handler_mod.handle_oos_followup(cls, result, "email text")
+
+        mock_resolve.assert_called_once()
+        self.assertTrue(out["template_used"])
+
+    def test_stock_check_items_have_product_ids(self):
+        """[8A.7] _stock_check_items in result contain product_ids from resolve."""
+        cls = _FakeClassification(dialog_intent="agrees_to_alternative", order_id="ORD-700")
+        state = self._make_pending_oos(num_alternatives=1)
+        result = self._make_result(
+            payment_type="postpay", zelle_address="",
+            conversation_state=state,
+        )
+
+        resolved_with_ids = [
+            {"base_flavor": "Silver", "quantity": 3, "product_ids": [10]},
+            {"base_flavor": "Alt Product 1", "quantity": 5, "product_ids": [20]},
+        ]
+        with patch.object(self.handler_mod, "resolve_order_items", return_value=(resolved_with_ids, [])):
+            with patch.object(self.handler_mod, "check_stock_for_order", return_value=self._mock_stock_all_ok()):
+                with patch.object(self.handler_mod, "calculate_order_price", return_value=550.0):
+                    out = self.handler_mod.handle_oos_followup(cls, result, "email text")
+
+        self.assertTrue(out["template_used"])
+        stock_items = out.get("_stock_check_items")
+        self.assertIsNotNone(stock_items)
+        ids = [i.get("product_ids") for i in stock_items]
+        self.assertIn([10], ids)
+        self.assertIn([20], ids)
+
+    def test_no_effective_situation_without_order_id(self):
+        """[8A.8] order_id missing → effective_situation NOT set."""
+        cls = _FakeClassification(
+            dialog_intent="agrees_to_alternative",
+            order_id=None,  # missing
+        )
+        state = self._make_pending_oos(num_alternatives=1)
+        result = self._make_result(
+            payment_type="postpay", zelle_address="",
+            conversation_state=state,
+        )
+
+        with patch.object(self.handler_mod, "check_stock_for_order", return_value=self._mock_stock_all_ok()):
+            with patch.object(self.handler_mod, "calculate_order_price", return_value=550.0):
+                out = self.handler_mod.handle_oos_followup(cls, result, "Ok")
+
+        self.assertTrue(out["template_used"])
+        self.assertEqual(out.get("confirmation_source"), "pending_oos")
+        # effective_situation NOT set when order_id is None
+        self.assertNotIn("effective_situation", out)
+
+    def test_classifier_source_tagged_not_trusted(self):
+        """[8A.9] classifier path sets source='classifier' but NOT effective_situation."""
+        cls = _FakeClassification(
+            dialog_intent="agrees_to_alternative",
+            order_id="ORD-900",
+            order_items=[
+                types.SimpleNamespace(base_flavor="Tropical", product_name="T Tropical", quantity=2),
+            ],
+        )
+        result = self._make_result(payment_type="postpay", zelle_address="")
+
+        with patch.object(self.handler_mod, "check_stock_for_order", return_value=self._mock_stock_all_ok()):
+            with patch.object(self.handler_mod, "calculate_order_price", return_value=230.0):
+                out = self.handler_mod.handle_oos_followup(cls, result, "Yes pls")
+
+        self.assertTrue(out["template_used"])
+        self.assertEqual(out.get("confirmation_source"), "classifier")
+        # classifier is NOT trusted → no effective_situation
+        self.assertNotIn("effective_situation", out)
+
+    def test_gmail_account_passed_to_extraction(self):
+        """[8A.10] gmail_account from result is passed to extraction function."""
+        cls = _FakeClassification(dialog_intent="agrees_to_alternative", order_id="ORD-1000")
+        result = self._make_result(payment_type="postpay", zelle_address="")
+        result["gmail_thread_id"] = "thread_acct"
+        result["gmail_account"] = "sales@example.com"
+
+        with patch.object(
+            self.handler_mod, "_extract_agreed_items_from_thread", return_value=None
+        ) as mock_extract:
+            with patch.object(
+                self.handler_mod.oos_followup_agent,
+                "run",
+                return_value=types.SimpleNamespace(content="LLM fallback"),
+            ):
+                self.handler_mod.handle_oos_followup(cls, result, "Ok thanks")
+
+        mock_extract.assert_called_once_with("thread_acct", "Ok thanks", "sales@example.com")
+
+
 if __name__ == "__main__":
     unittest.main()

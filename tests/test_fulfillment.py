@@ -868,6 +868,182 @@ class TestTryFulfillment:
 
 
 # ══════════════════════════════════════════════════════════════════════
+# OOS Fulfillment Source Gating (Plan §7.4 / §8B)
+# ══════════════════════════════════════════════════════════════════════
+
+class TestOOSFulfillmentSourceGating:
+    """Tests for OOS-derived effective_situation fulfillment gating (plan §8B)."""
+
+    def test_trusted_source_effective_new_order_runs(self, db_session):
+        """[8B.1] trusted source + effective_situation=new_order + postpay → fulfillment runs."""
+        session = db_session()
+        cat_id = _add_catalog(session, "TEREA_JAPAN", "t silver", "T Silver")
+        _add_stock(session, "LA_MAKS", "TEREA_JAPAN", "T Silver", qty=10, product_id=cat_id)
+        session.commit()
+
+        classification = _mock_classification(
+            situation="oos_followup",
+            order_id="#OOS-1",
+            customer_city_state_zip="Los Angeles, CA 90001",
+        )
+        result = {
+            "situation": "oos_followup",
+            "effective_situation": "new_order",
+            "confirmation_source": "thread_extraction",
+            "client_data": {"payment_type": "postpay", "city_state_zip": "Los Angeles, CA 90001"},
+            "_stock_check_items": [
+                {"base_flavor": "T Silver", "quantity": 2, "product_ids": [cat_id]},
+            ],
+        }
+
+        try_fulfillment(classification, result, gmail_message_id="msg_oos_trusted")
+
+        ff = result["fulfillment"]
+        assert ff["trigger_type"] == "new_order_postpay"
+        assert ff["warehouse"] == "LA_MAKS"
+        # Without sheet config, increment fails -> status=error, but fulfillment WAS attempted
+        assert ff["status"] in (STATUS_UPDATED, STATUS_ERROR)
+
+    def test_pending_oos_source_also_trusted(self, db_session):
+        """[8B.1b] pending_oos source is also trusted for fulfillment."""
+        session = db_session()
+        cat_id = _add_catalog(session, "TEREA_JAPAN", "t silver", "T Silver")
+        _add_stock(session, "LA_MAKS", "TEREA_JAPAN", "T Silver", qty=10, product_id=cat_id)
+        session.commit()
+
+        classification = _mock_classification(
+            situation="oos_followup",
+            order_id="#OOS-1b",
+            customer_city_state_zip="Los Angeles, CA 90001",
+        )
+        result = {
+            "situation": "oos_followup",
+            "effective_situation": "new_order",
+            "confirmation_source": "pending_oos",
+            "client_data": {"payment_type": "postpay", "city_state_zip": "Los Angeles, CA 90001"},
+            "_stock_check_items": [
+                {"base_flavor": "T Silver", "quantity": 1, "product_ids": [cat_id]},
+            ],
+        }
+
+        try_fulfillment(classification, result, gmail_message_id="msg_oos_pending")
+
+        ff = result["fulfillment"]
+        assert ff["trigger_type"] == "new_order_postpay"
+        assert ff["warehouse"] == "LA_MAKS"
+
+    def test_classifier_source_skipped(self, db_session):
+        """[8B.2] classifier source + effective_situation=new_order → fulfillment NOT run."""
+        classification = _mock_classification(
+            situation="oos_followup",
+            order_id="#OOS-2",
+        )
+        result = {
+            "situation": "oos_followup",
+            "effective_situation": "new_order",
+            "confirmation_source": "classifier",
+            "client_data": {"payment_type": "postpay"},
+            "_stock_check_items": [
+                {"base_flavor": "T Silver", "quantity": 1, "product_ids": [99]},
+            ],
+        }
+
+        try_fulfillment(classification, result, gmail_message_id="msg_oos_classifier")
+
+        assert "fulfillment" not in result
+
+    def test_no_effective_situation_skipped(self, db_session):
+        """[8B.3] no effective_situation → fulfillment NOT run for oos_followup."""
+        classification = _mock_classification(
+            situation="oos_followup",
+            order_id="#OOS-3",
+        )
+        result = {
+            "situation": "oos_followup",
+            "client_data": {"payment_type": "postpay"},
+            "_stock_check_items": [
+                {"base_flavor": "T Silver", "quantity": 1, "product_ids": [99]},
+            ],
+        }
+
+        try_fulfillment(classification, result, gmail_message_id="msg_oos_none")
+
+        assert "fulfillment" not in result
+
+    def test_native_new_order_unaffected(self, db_session):
+        """[8B.4] native situation=new_order + postpay → fulfillment still works (no source check)."""
+        session = db_session()
+        cat_id = _add_catalog(session, "TEREA_JAPAN", "t silver", "T Silver")
+        _add_stock(session, "LA_MAKS", "TEREA_JAPAN", "T Silver", qty=10, product_id=cat_id)
+        session.commit()
+
+        classification = _mock_classification(
+            situation="new_order",
+            order_id="#NATIVE-1",
+            customer_city_state_zip="Los Angeles, CA 90001",
+        )
+        result = {
+            "situation": "new_order",
+            # No effective_situation, no confirmation_source — native path
+            "client_data": {"payment_type": "postpay", "city_state_zip": "Los Angeles, CA 90001"},
+            "_stock_check_items": [
+                {"base_flavor": "T Silver", "quantity": 1, "product_ids": [cat_id]},
+            ],
+        }
+
+        try_fulfillment(classification, result, gmail_message_id="msg_native")
+
+        ff = result["fulfillment"]
+        assert ff["trigger_type"] == "new_order_postpay"
+        assert ff["warehouse"] == "LA_MAKS"
+        assert ff["status"] in (STATUS_UPDATED, STATUS_ERROR)
+
+    def test_native_payment_received_unaffected(self, db_session):
+        """[8B.4b] native situation=payment_received + prepay → fulfillment still works."""
+        session = db_session()
+        cat_id = _add_catalog(session, "TEREA_JAPAN", "t silver", "T Silver")
+        _add_stock(session, "LA_MAKS", "TEREA_JAPAN", "T Silver", qty=10, product_id=cat_id)
+        _add_order_item(session, "test@example.com", "#PAY-1", "T Silver", "T Silver", qty=1)
+        session.commit()
+
+        classification = _mock_classification(
+            situation="payment_received",
+            order_id="#PAY-1",
+            customer_city_state_zip="Los Angeles, CA 90001",
+        )
+        result = {
+            "situation": "payment_received",
+            "client_data": {"payment_type": "prepay", "city_state_zip": "Los Angeles, CA 90001"},
+        }
+
+        try_fulfillment(classification, result, gmail_message_id="msg_pay")
+
+        ff = result["fulfillment"]
+        assert ff["trigger_type"] == "payment_received_prepay"
+        assert ff["warehouse"] == "LA_MAKS"
+
+    def test_llm_fallback_source_skipped(self, db_session):
+        """[8B.2b] llm_fallback source → fulfillment NOT run."""
+        classification = _mock_classification(
+            situation="oos_followup",
+            order_id="#OOS-LLM",
+        )
+        result = {
+            "situation": "oos_followup",
+            "effective_situation": "new_order",
+            "confirmation_source": "llm_fallback",
+            "client_data": {"payment_type": "postpay"},
+            "_stock_check_items": [
+                {"base_flavor": "T Silver", "quantity": 1, "product_ids": [99]},
+            ],
+        }
+
+        try_fulfillment(classification, result, gmail_message_id="msg_oos_llm")
+
+        assert "fulfillment" not in result
+
+
+# ══════════════════════════════════════════════════════════════════════
 # Claim lifecycle (Phase 3 fix)
 # ══════════════════════════════════════════════════════════════════════
 

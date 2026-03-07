@@ -82,6 +82,7 @@ def _install_import_stubs() -> None:
     db_memory.select_best_alternatives = lambda *args, **kwargs: {"alternatives": []}
     db_memory.get_full_thread_history = lambda *args, **kwargs: []
     db_memory.update_client = lambda *args, **kwargs: None
+    db_memory.replace_order_items = lambda *args, **kwargs: 0
     db_clients = types.ModuleType("db.clients")
     db_clients.get_client_profile = lambda *args, **kwargs: None
     db_clients.update_client_summary = lambda *args, **kwargs: True
@@ -180,6 +181,7 @@ class TestEmailPipelineSmoke(unittest.TestCase):
             ),
             patch.object(self.agents_pipeline, "save_email", side_effect=self._save_email),
             patch.object(self.agents_pipeline, "save_order_items", return_value=None),
+            patch.object(self.agents_pipeline, "replace_order_items", return_value=0),
             patch.object(self.agents_notifier, "send_telegram", side_effect=self._send_telegram),
             # Checker: return clean result (no LLM call)
             patch.object(self.agents_pipeline, "check_reply", return_value=fake_check),
@@ -599,6 +601,208 @@ class TestEmailPipelineSmoke(unittest.TestCase):
         # Parser should NOT have handled this (no Shipmecarton in From header)
         # LLM classifier MUST have been called
         self.assertGreater(self.classifier_calls, 0, "LLM should classify quoted-order reply")
+
+    # ---------------------------------------------------------------
+    # Phase 3: gmail_account propagation + persistence gate (plan §7.3)
+    # ---------------------------------------------------------------
+
+    def _make_fake_classification(self, **overrides):
+        """Build a fake classification SimpleNamespace with defaults."""
+        defaults = {
+            "client_email": "client1@example.com",
+            "client_name": "Test Client One",
+            "situation": "oos_followup",
+            "needs_reply": True,
+            "order_id": "ORD-P3",
+            "price": None,
+            "customer_street": None,
+            "customer_city_state_zip": None,
+            "order_items": None,
+            "parser_used": False,
+        }
+        defaults.update(overrides)
+        return types.SimpleNamespace(**defaults)
+
+    def _make_persist_result(self, **overrides):
+        """Build a minimal result dict suitable for _persist_results."""
+        defaults = {
+            "needs_reply": True,
+            "draft_reply": "Test reply",
+            "client_found": True,
+            "client_data": self.clients["client1@example.com"],
+            "template_used": True,
+        }
+        defaults.update(overrides)
+        return defaults
+
+    def test_gmail_account_propagated_to_result(self):
+        """[§7.3.1] gmail_account is set on result dict before handler routing."""
+        email = (
+            "From: client1@example.com\n"
+            "Subject: Re: Order\n"
+            "Body: where is my order?"
+        )
+        # Intercept result dict after routing
+        original_route = self.agents_pipeline.route_to_handler
+
+        captured = {}
+
+        def spy_route(cls, result, email_text):
+            captured["gmail_account"] = result.get("gmail_account")
+            return original_route(cls, result, email_text)
+
+        with patch.object(self.agents_pipeline, "route_to_handler", side_effect=spy_route):
+            self.email_agent.classify_and_process(email, gmail_account="sales@test.com")
+
+        self.assertEqual(captured.get("gmail_account"), "sales@test.com")
+
+    def test_oos_replace_called_for_trusted_source(self):
+        """[§7.3.2] trusted source + effective_situation + order_id + canonical → replace called."""
+        cls = self._make_fake_classification(order_id="ORD-T1")
+        result = self._make_persist_result(
+            effective_situation="new_order",
+            confirmation_source="thread_extraction",
+            canonical_confirmed_items=[
+                {"base_flavor": "Silver", "product_name": "Tera Silver EU", "ordered_qty": 3},
+                {"base_flavor": "Bronze", "product_name": "Tera Bronze EU", "ordered_qty": 2},
+            ],
+        )
+
+        with patch.object(self.agents_pipeline, "replace_order_items", return_value=2) as mock_replace:
+            self.agents_pipeline._persist_results(
+                cls, result, "thread_1", "msg_1", "email text",
+            )
+
+        mock_replace.assert_called_once()
+        call_kw = mock_replace.call_args
+        self.assertEqual(call_kw.kwargs.get("client_email") or call_kw[1].get("client_email", call_kw[0][0] if call_kw[0] else None),
+                         "client1@example.com")
+
+    def test_oos_replace_pending_oos_source_trusted(self):
+        """[§7.3.2b] pending_oos source is also trusted for replace."""
+        cls = self._make_fake_classification(order_id="ORD-T2")
+        result = self._make_persist_result(
+            effective_situation="new_order",
+            confirmation_source="pending_oos",
+            canonical_confirmed_items=[
+                {"base_flavor": "Green", "product_name": "Tera Green", "ordered_qty": 5},
+            ],
+        )
+
+        with patch.object(self.agents_pipeline, "replace_order_items", return_value=1) as mock_replace:
+            self.agents_pipeline._persist_results(
+                cls, result, "thread_2", "msg_2", "email text",
+            )
+
+        mock_replace.assert_called_once()
+
+    def test_oos_replace_skipped_for_classifier_source(self):
+        """[§7.3.3] classifier source → replace NOT called."""
+        cls = self._make_fake_classification(order_id="ORD-C1")
+        result = self._make_persist_result(
+            effective_situation="new_order",
+            confirmation_source="classifier",
+            canonical_confirmed_items=[
+                {"base_flavor": "Tropical", "product_name": "Tropical", "ordered_qty": 2},
+            ],
+        )
+
+        with patch.object(self.agents_pipeline, "replace_order_items", return_value=0) as mock_replace:
+            self.agents_pipeline._persist_results(
+                cls, result, "thread_c", "msg_c", "email text",
+            )
+
+        mock_replace.assert_not_called()
+
+    def test_oos_replace_skipped_for_no_order_id(self):
+        """[§7.3.4] order_id=None → replace NOT called even with trusted source."""
+        cls = self._make_fake_classification(order_id=None)
+        result = self._make_persist_result(
+            effective_situation="new_order",
+            confirmation_source="thread_extraction",
+            canonical_confirmed_items=[
+                {"base_flavor": "Silver", "product_name": "Tera Silver", "ordered_qty": 3},
+            ],
+        )
+
+        with patch.object(self.agents_pipeline, "replace_order_items", return_value=0) as mock_replace:
+            self.agents_pipeline._persist_results(
+                cls, result, "thread_n", "msg_n", "email text",
+            )
+
+        mock_replace.assert_not_called()
+
+    def test_oos_replace_skipped_for_empty_canonical(self):
+        """[§7.3.4b] empty canonical_confirmed_items → replace NOT called."""
+        cls = self._make_fake_classification(order_id="ORD-E1")
+        result = self._make_persist_result(
+            effective_situation="new_order",
+            confirmation_source="thread_extraction",
+            canonical_confirmed_items=[],
+        )
+
+        with patch.object(self.agents_pipeline, "replace_order_items", return_value=0) as mock_replace:
+            self.agents_pipeline._persist_results(
+                cls, result, "thread_e", "msg_e", "email text",
+            )
+
+        mock_replace.assert_not_called()
+
+    def test_native_new_order_still_uses_save_order_items(self):
+        """[§7.3.5] native new_order path (no effective_situation) → save_order_items, NOT replace."""
+        cls = self._make_fake_classification(
+            situation="new_order",
+            order_id="ORD-N1",
+            order_items=[
+                types.SimpleNamespace(product_name="Tera Green EU", base_flavor="Green", quantity=2),
+            ],
+        )
+        result = self._make_persist_result()
+        # No effective_situation or confirmation_source
+
+        with patch.object(self.agents_pipeline, "save_order_items", return_value=None) as mock_save:
+            with patch.object(self.agents_pipeline, "replace_order_items", return_value=0) as mock_replace:
+                self.agents_pipeline._persist_results(
+                    cls, result, "thread_nat", "msg_nat", "email text",
+                )
+
+        mock_save.assert_called_once()
+        mock_replace.assert_not_called()
+
+    def test_oos_replace_maps_ordered_qty_to_quantity(self):
+        """[§7.3.6] canonical items with ordered_qty are mapped to quantity for replace."""
+        cls = self._make_fake_classification(order_id="ORD-M1")
+        result = self._make_persist_result(
+            effective_situation="new_order",
+            confirmation_source="thread_extraction",
+            canonical_confirmed_items=[
+                {"base_flavor": "Silver", "product_name": "Tera Silver EU", "ordered_qty": 4},
+            ],
+        )
+
+        with patch.object(self.agents_pipeline, "replace_order_items", return_value=1) as mock_replace:
+            self.agents_pipeline._persist_results(
+                cls, result, "thread_m", "msg_m", "email text",
+            )
+
+        mock_replace.assert_called_once()
+        items_arg = mock_replace.call_args.kwargs.get("order_items",
+                     mock_replace.call_args[0][2] if len(mock_replace.call_args[0]) > 2 else None)
+        self.assertEqual(items_arg[0]["quantity"], 4)
+        self.assertEqual(items_arg[0]["base_flavor"], "Silver")
+
+    def test_no_effective_situation_no_replace(self):
+        """[§7.3.7] no effective_situation at all → replace NOT called."""
+        cls = self._make_fake_classification(situation="oos_followup", order_id="ORD-X1")
+        result = self._make_persist_result()
+        # No effective_situation key
+
+        with patch.object(self.agents_pipeline, "replace_order_items", return_value=0) as mock_replace:
+            self.agents_pipeline._persist_results(
+                cls, result, "thread_x", "msg_x", "email text",
+            )
+
+        mock_replace.assert_not_called()
 
 
 if __name__ == "__main__":

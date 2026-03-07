@@ -34,6 +34,7 @@ from db.memory import (
     check_stock_for_order,
     get_client,
     get_stock_summary,
+    replace_order_items,
     resolve_order_items,
     save_email,
     save_order_items,
@@ -403,6 +404,46 @@ def _persist_results(
             ],
         )
 
+    # Step 6.1: OOS canonical replace — trusted source persistence gate (plan §7.3)
+    _TRUSTED_PERSISTENCE_SOURCES = {"thread_extraction", "pending_oos"}
+    if result.get("effective_situation") == "new_order":
+        source = result.get("confirmation_source")
+        if source in _TRUSTED_PERSISTENCE_SOURCES:
+            order_id_norm = (getattr(classification, "order_id", None) or "").strip() or None
+            canonical = result.get("canonical_confirmed_items")
+            if order_id_norm and canonical:
+                replace_order_items(
+                    client_email=classification.client_email,
+                    order_id=order_id_norm,
+                    order_items=[
+                        {
+                            "product_name": item.get("product_name", item.get("base_flavor", "")),
+                            "base_flavor": item.get("base_flavor", ""),
+                            "quantity": item.get("ordered_qty", item.get("quantity", 1)),
+                        }
+                        for item in canonical
+                    ],
+                )
+                logger.info(
+                    "OOS canonical replace for %s order %s (%d items, source=%s)",
+                    classification.client_email, order_id_norm, len(canonical), source,
+                )
+            else:
+                reasons = []
+                if not order_id_norm:
+                    reasons.append("order_id=None")
+                if not canonical:
+                    reasons.append("canonical_items empty")
+                logger.info(
+                    "OOS canonical replace skipped for %s: %s",
+                    classification.client_email, ", ".join(reasons),
+                )
+        else:
+            logger.info(
+                "OOS canonical replace skipped for %s: source=%s not trusted",
+                classification.client_email, source,
+            )
+
     # Step 6.5: Auto-save client address if extracted from email
     if result["client_found"] and (
         classification.customer_street or classification.customer_city_state_zip
@@ -482,8 +523,9 @@ def classify_and_process(
         # Step 2: Python processes (0 tokens — pure logic)
         result = process_classified_email(classification)
 
-        # Attach gmail_thread_id for downstream context building
+        # Attach gmail_thread_id and gmail_account for downstream context building
         result["gmail_thread_id"] = gmail_thread_id
+        result["gmail_account"] = gmail_account
 
         # Step 2.5: State Updater LLM — update ConversationState
         result["conversation_state"] = _update_inbound_state(

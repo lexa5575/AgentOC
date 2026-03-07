@@ -10,6 +10,7 @@ from db.stock import (
     get_client_flavor_history,
     get_product_type,
     get_stock_summary,
+    replace_order_items,
     save_order_items,
     search_stock,
     select_best_alternatives,
@@ -501,3 +502,140 @@ def test_calculate_price_ambiguous_categories():
         ],
     }]
     assert calculate_order_price(items) is None
+
+
+# ---------------------------------------------------------------------------
+# replace_order_items (Plan 8C)
+# ---------------------------------------------------------------------------
+
+def test_replace_removes_stale_flavors():
+    """[8C.1] Replace deletes old flavors that are not in the new set."""
+    save_order_items("replace@example.com", "R1", [
+        {"product_name": "Tera Amber", "base_flavor": "Amber", "quantity": 2},
+        {"product_name": "Tera Green", "base_flavor": "Green", "quantity": 1},
+    ])
+    # Replace with completely different set
+    result = replace_order_items("replace@example.com", "R1", [
+        {"product_name": "Tera Silver", "base_flavor": "Silver", "quantity": 3},
+        {"product_name": "Tera Bronze", "base_flavor": "Bronze", "quantity": 1},
+    ])
+    assert result == 2
+
+    # Verify: only Silver + Bronze remain
+    history = get_client_flavor_history("replace@example.com")
+    flavors = {h["base_flavor"] for h in history}
+    assert flavors == {"Silver", "Bronze"}
+
+
+def test_replace_updates_qty_via_replacement(db_session):
+    """[8C.2] Replace updates quantity by deleting old row and inserting new."""
+    save_order_items("rqty@example.com", "R2", [
+        {"product_name": "Tera Green", "base_flavor": "Green", "quantity": 2},
+    ])
+    replace_order_items("rqty@example.com", "R2", [
+        {"product_name": "Tera Green", "base_flavor": "Green", "quantity": 5},
+    ])
+
+    from db.models import ClientOrderItem
+    session = db_session()
+    try:
+        row = session.query(ClientOrderItem).filter_by(
+            client_email="rqty@example.com", order_id="R2", base_flavor="Green",
+        ).one()
+        assert row.quantity == 5
+    finally:
+        session.close()
+
+
+def test_replace_atomic_on_error(monkeypatch):
+    """[8C.3] Error mid-insert rolls back everything — old items preserved."""
+    from db.models import ClientOrderItem as _ClientOrderItem
+    from db import stock as stock_module
+
+    save_order_items("atomic@example.com", "R3", [
+        {"product_name": "Tera Green", "base_flavor": "Green", "quantity": 1},
+    ])
+
+    original_get_session = stock_module.get_session
+
+    def patched_get_session():
+        session = original_get_session()
+        _original_add = session.add
+        count = {"n": 0}
+
+        def failing_add(obj):
+            if isinstance(obj, _ClientOrderItem):
+                count["n"] += 1
+                if count["n"] == 2:
+                    raise RuntimeError("simulated insert failure on 2nd item")
+            return _original_add(obj)
+
+        session.add = failing_add
+        return session
+
+    monkeypatch.setattr(stock_module, "get_session", patched_get_session)
+
+    result = replace_order_items("atomic@example.com", "R3", [
+        {"product_name": "Tera Silver", "base_flavor": "Silver", "quantity": 1},
+        {"product_name": "Tera Bronze", "base_flavor": "Bronze", "quantity": 1},
+    ])
+    assert result == 0  # error → 0
+
+    # Restore original get_session to verify old data
+    monkeypatch.setattr(stock_module, "get_session", original_get_session)
+
+    history = get_client_flavor_history("atomic@example.com")
+    flavors = {h["base_flavor"] for h in history}
+    assert "Green" in flavors  # old data preserved
+    assert "Silver" not in flavors  # new data NOT written
+    assert "Bronze" not in flavors
+
+
+def test_replace_guard_empty_list():
+    """[8C.4] Empty order_items → no deletion, return 0."""
+    save_order_items("guard@example.com", "R4", [
+        {"product_name": "Tera Green", "base_flavor": "Green", "quantity": 1},
+    ])
+    result = replace_order_items("guard@example.com", "R4", [])
+    assert result == 0
+
+    # Verify original items still exist
+    history = get_client_flavor_history("guard@example.com")
+    assert len(history) == 1
+    assert history[0]["base_flavor"] == "Green"
+
+
+def test_replace_guard_empty_order_id():
+    """[8C.4b] None/empty order_id → return 0, no operation."""
+    assert replace_order_items("x@example.com", None, [
+        {"product_name": "X", "base_flavor": "X", "quantity": 1},
+    ]) == 0
+    assert replace_order_items("x@example.com", "", [
+        {"product_name": "X", "base_flavor": "X", "quantity": 1},
+    ]) == 0
+    assert replace_order_items("x@example.com", "  ", [
+        {"product_name": "X", "base_flavor": "X", "quantity": 1},
+    ]) == 0
+
+
+# ---------------------------------------------------------------------------
+# save_order_items savepoint fix (Plan 8C.5)
+# ---------------------------------------------------------------------------
+
+def test_savepoint_preserves_previous_inserts_despite_duplicate():
+    """[8C.5] Insert A, dup A, insert B → both A and B saved (not just B)."""
+    # Insert A first time
+    save_order_items("sp@example.com", "SP1", [
+        {"product_name": "Tera Green", "base_flavor": "Green", "quantity": 1},
+    ])
+    # Now save [Green (dup), Silver (new)] — Green should be skipped,
+    # Silver should be saved, and Green should NOT be rolled back
+    saved = save_order_items("sp@example.com", "SP1", [
+        {"product_name": "Tera Green", "base_flavor": "Green", "quantity": 1},
+        {"product_name": "Tera Silver", "base_flavor": "Silver", "quantity": 1},
+    ])
+    assert saved == 1  # only Silver is new
+
+    history = get_client_flavor_history("sp@example.com")
+    flavors = {h["base_flavor"] for h in history}
+    assert flavors == {"Green", "Silver"}  # both must exist
