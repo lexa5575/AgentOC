@@ -57,6 +57,30 @@ def _format_email_text(msg: dict) -> str:
     return "\n".join(parts)
 
 
+def _format_combined_email_text(candidates: list[dict]) -> str:
+    """Combine multiple same-thread messages into one text with dates.
+
+    Messages are expected to be sorted chronologically (oldest first).
+    Dates help the classifier distinguish old vs new content.
+    """
+    newest = candidates[-1]["msg"]
+    from_addr = newest.get("from_raw", newest.get("from", ""))
+    parts = [
+        f"From: {from_addr}",
+        f"Subject: {newest.get('subject', '')}",
+        f"Body: [{len(candidates)} messages from this client in the same thread]\n",
+    ]
+
+    for c in candidates:
+        ts = c["created_at"]
+        date_str = ts.strftime("%Y-%m-%d %H:%M") if ts else "unknown date"
+        parts.append(f"--- Message from {date_str} ---")
+        parts.append(c["msg"].get("body", ""))
+        parts.append("")
+
+    return "\n".join(parts)
+
+
 def _send_telegram_result(msg: dict, result: str) -> None:
     """Send formatted processing result to Telegram."""
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -137,27 +161,61 @@ def process_client_email(client_email: str, account: str = "default") -> str:
         # No timestamps available — treat all candidates as recent.
         recent = list(candidates)
 
-    # Process newest-first: the latest message is the primary intent.
-    # Older messages in the thread serve as context (loaded by classifier).
-    for candidate in sorted(recent, key=lambda c: c["created_at"] or datetime.min.replace(tzinfo=timezone.utc), reverse=True):
-        if candidate["processed"]:
-            continue
+    # Separate unprocessed from already-processed.
+    unprocessed = [c for c in recent if not c["processed"]]
+    if not unprocessed:
+        return f"Все непрочитанные письма от {client_email} уже обработаны."
 
-        msg_id = candidate["msg_id"]
-        msg = candidate["msg"]
-        try:
-            email_text = _format_email_text(msg)
-            result = classify_and_process(
-                email_text,
-                gmail_message_id=msg_id,
-                gmail_thread_id=msg.get("gmail_thread_id"),
-                gmail_account=account,
-            )
-            _send_telegram_result(msg, result)
-            return result
-        except Exception as e:
-            logger.error("Failed to process message %s: %s", msg_id, e, exc_info=True)
-            return f"Ошибка обработки письма {msg_id}: {e}"
+    _dt_key = lambda c: c["created_at"] or datetime.min.replace(tzinfo=timezone.utc)
+
+    # Pick the newest unprocessed message as the primary.
+    primary = max(unprocessed, key=_dt_key)
+    primary_thread = primary["msg"].get("gmail_thread_id")
+
+    # Collect all unprocessed messages in the same thread.
+    if primary_thread:
+        same_thread = sorted(
+            [c for c in unprocessed if c["msg"].get("gmail_thread_id") == primary_thread],
+            key=_dt_key,
+        )
+    else:
+        same_thread = [primary]
+
+    # Build email text: combine same-thread messages with dates.
+    if len(same_thread) > 1:
+        email_text = _format_combined_email_text(same_thread)
+    else:
+        email_text = _format_email_text(primary["msg"])
+
+    try:
+        result = classify_and_process(
+            email_text,
+            gmail_message_id=primary["msg_id"],
+            gmail_thread_id=primary_thread,
+            gmail_account=account,
+        )
+        _send_telegram_result(primary["msg"], result)
+
+        # Mark extra same-thread messages as processed so they aren't
+        # picked up again on the next trigger.
+        if len(same_thread) > 1:
+            from db.email_history import save_email
+            for c in same_thread:
+                if c["msg_id"] != primary["msg_id"]:
+                    save_email(
+                        client_email=client_email,
+                        direction="inbound",
+                        subject=c["msg"].get("subject", ""),
+                        body="(merged into combined processing)",
+                        situation="merged",
+                        gmail_message_id=c["msg_id"],
+                        gmail_thread_id=primary_thread,
+                    )
+
+        return result
+    except Exception as e:
+        logger.error("Failed to process message %s: %s", primary["msg_id"], e, exc_info=True)
+        return f"Ошибка обработки письма {primary['msg_id']}: {e}"
 
     stale_count = sum(1 for c in candidates if c not in recent and not c["processed"])
     if stale_count > 0:
