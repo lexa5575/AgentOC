@@ -99,14 +99,42 @@ def select_fulfillment_warehouse(
                     "tried_warehouses": tried,
                 }
 
+        breakdown = _collect_split_breakdown(session, priority, order_items)
         return {
             "status": STATUS_SKIPPED_SPLIT,
             "warehouse": None,
             "matched_items": None,
             "tried_warehouses": tried,
+            "split_breakdown": breakdown,
         }
     finally:
         session.close()
+
+
+def _query_stock_entries(
+    session, warehouse: str, base_flavor: str, product_ids: list,
+) -> list:
+    """Query StockItem entries for an item in a warehouse.
+
+    Shared by _try_warehouse and _collect_split_breakdown.
+    """
+    if product_ids:
+        return (
+            session.query(StockItem)
+            .filter(
+                StockItem.product_id.in_(product_ids),
+                StockItem.warehouse == warehouse,
+            )
+            .all()
+        )
+    return (
+        session.query(StockItem)
+        .filter(
+            StockItem.product_name.ilike(base_flavor),
+            StockItem.warehouse == warehouse,
+        )
+        .all()
+    )
 
 
 def _try_warehouse(
@@ -126,24 +154,7 @@ def _try_warehouse(
         ordered_qty = item.get("quantity", 1)
         product_ids = item.get("product_ids", [])
 
-        if product_ids:
-            entries = (
-                session.query(StockItem)
-                .filter(
-                    StockItem.product_id.in_(product_ids),
-                    StockItem.warehouse == warehouse,
-                )
-                .all()
-            )
-        else:
-            entries = (
-                session.query(StockItem)
-                .filter(
-                    StockItem.product_name.ilike(base_flavor),
-                    StockItem.warehouse == warehouse,
-                )
-                .all()
-            )
+        entries = _query_stock_entries(session, warehouse, base_flavor, product_ids)
 
         if not entries:
             return None
@@ -167,6 +178,34 @@ def _try_warehouse(
         })
 
     return matched
+
+
+def _collect_split_breakdown(
+    session, warehouses: list[str], order_items: list[dict],
+) -> list[dict]:
+    """Collect per-item availability across all warehouses.
+
+    Called only on the skipped_split path.
+    Warehouse order in availability matches the warehouses param.
+    """
+    breakdown = []
+    for item in order_items:
+        base_flavor = item["base_flavor"].strip()
+        ordered_qty = item.get("quantity", 1)
+        product_ids = item.get("product_ids", [])
+
+        availability = {}
+        for wh in warehouses:
+            entries = _query_stock_entries(session, wh, base_flavor, product_ids)
+            total = sum(e.quantity for e in entries if e.quantity > 0) if entries else 0
+            availability[wh] = total
+
+        breakdown.append({
+            "base_flavor": base_flavor,
+            "ordered_qty": ordered_qty,
+            "availability": availability,
+        })
+    return breakdown
 
 
 # ── maks_sales increment ─────────────────────────────────────────────

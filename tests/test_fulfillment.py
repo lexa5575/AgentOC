@@ -1199,3 +1199,157 @@ class TestFormatResultFulfillment:
         result = _base_result()
         output = format_result(result)
         assert "FULFILLMENT" not in output
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Split breakdown
+# ══════════════════════════════════════════════════════════════════════
+
+class TestSplitBreakdown:
+
+    def test_split_returns_breakdown(self, db_session):
+        """Split result includes split_breakdown with correct qty per warehouse."""
+        session = db_session()
+        cat_silver = _add_catalog(session, "TEREA_JAPAN", "t silver", "T Silver")
+        cat_amber = _add_catalog(session, "TEREA_EUROPE", "amber", "Amber")
+        _add_stock(session, "LA_MAKS", "TEREA_JAPAN", "T Silver", qty=5, product_id=cat_silver)
+        _add_stock(session, "CHICAGO_MAX", "TEREA_EUROPE", "Amber", qty=3, product_id=cat_amber)
+        session.commit()
+
+        order_items = [
+            {"base_flavor": "T Silver", "quantity": 1, "product_ids": [cat_silver]},
+            {"base_flavor": "Amber", "quantity": 1, "product_ids": [cat_amber]},
+        ]
+        result = select_fulfillment_warehouse(order_items, "Los Angeles, CA 90001")
+
+        assert result["status"] == STATUS_SKIPPED_SPLIT
+        bd = result["split_breakdown"]
+        assert len(bd) == 2
+
+        silver = bd[0]
+        assert silver["base_flavor"] == "T Silver"
+        assert silver["ordered_qty"] == 1
+        assert silver["availability"]["LA_MAKS"] == 5
+        assert silver["availability"]["CHICAGO_MAX"] == 0
+        assert silver["availability"]["MIAMI_MAKS"] == 0
+
+        amber = bd[1]
+        assert amber["base_flavor"] == "Amber"
+        assert amber["ordered_qty"] == 1
+        assert amber["availability"]["LA_MAKS"] == 0
+        assert amber["availability"]["CHICAGO_MAX"] == 3
+        assert amber["availability"]["MIAMI_MAKS"] == 0
+
+    def test_split_breakdown_sums_multiple_rows(self, db_session):
+        """Multiple stock rows for same item in same warehouse are summed."""
+        session = db_session()
+        cat_id1 = _add_catalog(session, "TEREA_JAPAN", "t silver", "T Silver")
+        cat_id2 = _add_catalog(session, "УНИКАЛЬНАЯ_ТЕРЕА", "t silver v2", "T Silver")
+        cat_amber = _add_catalog(session, "TEREA_EUROPE", "amber", "Amber")
+        # Two stock entries for Silver in LA_MAKS (different product_ids)
+        _add_stock(session, "LA_MAKS", "TEREA_JAPAN", "T Silver", qty=3, product_id=cat_id1)
+        _add_stock(session, "LA_MAKS", "УНИКАЛЬНАЯ_ТЕРЕА", "T Silver", qty=4, product_id=cat_id2)
+        # Amber only in CHICAGO
+        _add_stock(session, "CHICAGO_MAX", "TEREA_EUROPE", "Amber", qty=5, product_id=cat_amber)
+        session.commit()
+
+        order_items = [
+            {"base_flavor": "T Silver", "quantity": 8, "product_ids": [cat_id1, cat_id2]},
+            {"base_flavor": "Amber", "quantity": 1, "product_ids": [cat_amber]},
+        ]
+        result = select_fulfillment_warehouse(order_items, "Los Angeles, CA 90001")
+
+        assert result["status"] == STATUS_SKIPPED_SPLIT
+        bd = result["split_breakdown"]
+        silver = bd[0]
+        assert silver["availability"]["LA_MAKS"] == 7  # 3 + 4
+
+    def test_split_breakdown_warehouse_order(self, db_session):
+        """Availability keys match tried_warehouses order."""
+        session = db_session()
+        cat_silver = _add_catalog(session, "TEREA_JAPAN", "t silver", "T Silver")
+        cat_amber = _add_catalog(session, "TEREA_EUROPE", "amber", "Amber")
+        _add_stock(session, "LA_MAKS", "TEREA_JAPAN", "T Silver", qty=5, product_id=cat_silver)
+        _add_stock(session, "MIAMI_MAKS", "TEREA_EUROPE", "Amber", qty=5, product_id=cat_amber)
+        session.commit()
+
+        order_items = [
+            {"base_flavor": "T Silver", "quantity": 1, "product_ids": [cat_silver]},
+            {"base_flavor": "Amber", "quantity": 1, "product_ids": [cat_amber]},
+        ]
+        # FL address -> MIAMI_MAKS first
+        result = select_fulfillment_warehouse(order_items, "Miami, FL 33101")
+
+        bd = result["split_breakdown"]
+        tried = result["tried_warehouses"]
+        # Availability keys should be in same order as tried_warehouses
+        for item in bd:
+            assert list(item["availability"].keys()) == tried
+
+    def test_no_breakdown_on_success(self, db_session):
+        """Success path does not include split_breakdown."""
+        session = db_session()
+        cat_id = _add_catalog(session, "TEREA_JAPAN", "t silver", "T Silver")
+        _add_stock(session, "LA_MAKS", "TEREA_JAPAN", "T Silver", qty=10, product_id=cat_id)
+        session.commit()
+
+        order_items = [
+            {"base_flavor": "T Silver", "quantity": 1, "product_ids": [cat_id]},
+        ]
+        result = select_fulfillment_warehouse(order_items, "Los Angeles, CA 90001")
+
+        assert result["status"] == STATUS_UPDATED
+        assert "split_breakdown" not in result
+
+    def test_format_split_with_breakdown(self):
+        """Formatter renders breakdown with OK/PARTIAL/-- tags."""
+        result = _base_result()
+        result["fulfillment"] = {
+            "status": "skipped_split",
+            "warehouse": None,
+            "trigger_type": "new_order_postpay",
+            "tried_warehouses": ["LA_MAKS", "CHICAGO_MAX", "MIAMI_MAKS"],
+            "split_breakdown": [
+                {
+                    "base_flavor": "T Silver",
+                    "ordered_qty": 3,
+                    "availability": {
+                        "LA_MAKS": 5,
+                        "CHICAGO_MAX": 0,
+                        "MIAMI_MAKS": 2,
+                    },
+                },
+                {
+                    "base_flavor": "Amber",
+                    "ordered_qty": 2,
+                    "availability": {
+                        "LA_MAKS": 0,
+                        "CHICAGO_MAX": 8,
+                        "MIAMI_MAKS": 0,
+                    },
+                },
+            ],
+        }
+        output = format_result(result)
+        assert "Split breakdown:" in output
+        assert "T Silver (need 3):" in output
+        assert "LA_MAKS: 5 [OK]" in output
+        assert "CHICAGO_MAX: 0 [--]" in output
+        assert "MIAMI_MAKS: 2 [PARTIAL]" in output
+        assert "Amber (need 2):" in output
+        assert "CHICAGO_MAX: 8 [OK]" in output
+        assert "LA_MAKS: 0 [--]" in output
+
+    def test_format_split_without_breakdown(self):
+        """Formatter works when no breakdown (backward compat)."""
+        result = _base_result()
+        result["fulfillment"] = {
+            "status": "skipped_split",
+            "warehouse": None,
+            "trigger_type": "new_order_postpay",
+            "tried_warehouses": ["LA_MAKS", "CHICAGO_MAX", "MIAMI_MAKS"],
+        }
+        output = format_result(result)
+        assert "skipped_split" in output
+        assert "NOT updated" in output
+        assert "Split breakdown:" not in output

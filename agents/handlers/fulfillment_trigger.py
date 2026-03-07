@@ -165,6 +165,7 @@ def try_fulfillment(
             "warehouse": wh,
             "trigger_type": trigger_type,
             "tried_warehouses": fulfillment.get("tried_warehouses", []),
+            "split_breakdown": fulfillment.get("split_breakdown"),
         }
 
         # 7. If single warehouse found -> increment maks_sales

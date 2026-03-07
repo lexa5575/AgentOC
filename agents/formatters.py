@@ -148,6 +148,20 @@ def format_result(result: dict) -> str:
         elif ff["status"] == "skipped_split":
             lines.append("Reason: no single warehouse can fulfill all items")
             lines.append("maks_sales was NOT updated")
+            breakdown = ff.get("split_breakdown")
+            if breakdown:
+                lines.append("")
+                lines.append("Split breakdown:")
+                for bd_item in breakdown:
+                    lines.append(f"  {bd_item['base_flavor']} (need {bd_item['ordered_qty']}):")
+                    for wh, available in bd_item["availability"].items():
+                        if available >= bd_item["ordered_qty"]:
+                            tag = "OK"
+                        elif available > 0:
+                            tag = "PARTIAL"
+                        else:
+                            tag = "--"
+                        lines.append(f"    {wh}: {available} [{tag}]")
         elif ff["status"] == "skipped_duplicate":
             lines.append("Reason: already processed (duplicate)")
         elif ff["status"] == "skipped_unresolved_order":
