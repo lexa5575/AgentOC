@@ -128,12 +128,19 @@ followup_to: what our message was about:
   - null — not a followup or unknown
 
 dialog_intent: what the customer wants:
-  - "agrees_to_alternative" — accepts our suggestion ("yes", "that works", "I'll take it",
-    "sounds good", "that will be fine", "that is perfect")
+  - "agrees_to_alternative" — accepts our suggestion OR confirms a specific order
+    in the context of an OOS discussion. Examples:
+    Simple agreement: "yes", "that works", "I'll take it", "sounds good"
+    Order confirmation: "ok send me 4 black menthol", "please send me the 4 boxes",
+      "I'll take 4 of those", "ok. Please send me the 4 black menthol please"
+    KEY RULE: In an OOS/alternatives thread, if the customer says "send me X" or
+    "I'll take X" with specific product+quantity, this is agrees_to_alternative
+    (NOT provides_info). The customer is confirming what they want shipped.
   - "declines_alternative" — rejects our suggestion ("no thanks", "I'll pass", "cancel")
   - "confirms_payment" — says they paid (overlaps with payment_received situation)
   - "asks_question" — asks about products, availability, pricing
-  - "provides_info" — gives us information we asked for
+  - "provides_info" — gives us information we asked for (address, phone, etc.)
+    NOT for product/quantity choices — those are agrees_to_alternative.
   - null — unclear or not a followup
 
 IMPORTANT: When CONVERSATION STATE mentions out-of-stock or alternatives,
