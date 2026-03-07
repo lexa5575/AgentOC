@@ -14,7 +14,7 @@ Usage:
 
 import logging
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from os import getenv
 
 from agents.email_agent import classify_and_process
@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 _gmail_clients: dict[str, GmailClient] = {}
 _poll_lock = threading.Lock()
+_RECENT_UNREAD_WINDOW_DAYS = 14
 
 
 def _get_client(account: str = "default") -> GmailClient:
@@ -82,7 +83,7 @@ def _send_telegram_result(msg: dict, result: str) -> None:
 
 
 def process_client_email(client_email: str, account: str = "default") -> str:
-    """Find the latest unread email from client_email and process it.
+    """Find the next relevant unread email from client_email and process it.
 
     Args:
         client_email: The client's email address.
@@ -108,30 +109,58 @@ def process_client_email(client_email: str, account: str = "default") -> str:
     if not unread:
         return f"Нет непрочитанных писем от {client_email}."
 
-    # Find the first (newest) unprocessed message
+    # Build message candidates with timestamps.
+    candidates = []
     for msg_info in unread:
         msg_id = msg_info["msg_id"]
-        if email_already_processed(msg_id):
-            continue
-
         try:
             msg = client.get_message(msg_id)
-            email_text = _format_email_text(msg)
+            candidates.append({
+                "msg_id": msg_id,
+                "msg": msg,
+                "created_at": msg.get("created_at"),
+                "processed": email_already_processed(msg_id),
+            })
+        except Exception as e:
+            logger.error("Failed to load unread message %s: %s", msg_id, e, exc_info=True)
 
+    if not candidates:
+        return f"Не удалось прочитать непрочитанные письма от {client_email}."
+
+    # Only process messages from a recent window anchored at the newest unread.
+    newest_ts = max(c["created_at"] for c in candidates if c["created_at"] is not None)
+    cutoff = newest_ts - timedelta(days=_RECENT_UNREAD_WINDOW_DAYS)
+    recent = [c for c in candidates if c["created_at"] and c["created_at"] >= cutoff]
+
+    # Process newest-first: the latest message is the primary intent.
+    # Older messages in the thread serve as context (loaded by classifier).
+    for candidate in sorted(recent, key=lambda c: c["created_at"], reverse=True):
+        if candidate["processed"]:
+            continue
+
+        msg_id = candidate["msg_id"]
+        msg = candidate["msg"]
+        try:
+            email_text = _format_email_text(msg)
             result = classify_and_process(
                 email_text,
                 gmail_message_id=msg_id,
                 gmail_thread_id=msg.get("gmail_thread_id"),
                 gmail_account=account,
             )
-
             _send_telegram_result(msg, result)
             return result
-
         except Exception as e:
             logger.error("Failed to process message %s: %s", msg_id, e, exc_info=True)
             return f"Ошибка обработки письма {msg_id}: {e}"
 
+    stale_count = sum(1 for c in candidates if c not in recent and not c["processed"])
+    if stale_count > 0:
+        return (
+            f"Свежих непрочитанных писем от {client_email} нет. "
+            f"Остались только старые unread ({stale_count}) за пределами "
+            f"{_RECENT_UNREAD_WINDOW_DAYS} дней."
+        )
     return f"Все непрочитанные письма от {client_email} уже обработаны."
 
 
