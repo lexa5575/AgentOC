@@ -826,7 +826,8 @@ class TestTryFulfillment:
         session = db_session()
         cat_id = _add_catalog(session, "TEREA_JAPAN", "t silver", "T Silver")
         _add_stock(session, "LA_MAKS", "TEREA_JAPAN", "T Silver", qty=10, product_id=cat_id)
-        _add_order_item(session, "buyer@example.com", "#200", "T Silver", "T Silver", qty=1)
+        _add_order_item(session, "buyer@example.com", "#200", "T Silver", "T Silver", qty=1,
+                        variant_id=cat_id)
         session.commit()
 
         classification = _mock_classification(
@@ -859,7 +860,8 @@ class TestTryFulfillment:
         cat_id = _add_catalog(session, "TEREA_JAPAN", "t silver", "T Silver")
         _add_stock(session, "LA_MAKS", "TEREA_JAPAN", "T Silver", qty=10, product_id=cat_id)
         # Order #CORRECT in DB — T Silver (matches stock)
-        _add_order_item(session, "buyer@example.com", "#CORRECT", "T Silver", "T Silver", qty=1)
+        _add_order_item(session, "buyer@example.com", "#CORRECT", "T Silver", "T Silver", qty=1,
+                        variant_id=cat_id)
         # Order #WRONG in DB — Amber (NOT in stock for LA_MAKS)
         _add_order_item(session, "buyer@example.com", "#WRONG", "Amber", "Amber", qty=5)
         session.commit()
@@ -891,7 +893,8 @@ class TestTryFulfillment:
         cat_id = _add_catalog(session, "TEREA_JAPAN", "t silver", "T Silver")
         _add_stock(session, "LA_MAKS", "TEREA_JAPAN", "T Silver", qty=10, product_id=cat_id)
         # Only a "latest" order exists (different order_id than classification)
-        _add_order_item(session, "buyer@example.com", "#LATEST", "T Silver", "T Silver", qty=2)
+        _add_order_item(session, "buyer@example.com", "#LATEST", "T Silver", "T Silver", qty=2,
+                        variant_id=cat_id)
         session.commit()
 
         classification = _mock_classification(
