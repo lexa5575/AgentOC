@@ -280,7 +280,29 @@ def search_stock(query: str, warehouse: str | None = None) -> list[dict]:
         q = session.query(StockItem).filter(or_(*filters))
         if warehouse:
             q = q.filter_by(warehouse=warehouse)
-        return [item.to_dict() for item in q.all()]
+        results = q.all()
+
+        # Fallback: if no results with full phrase, try individual words.
+        # Handles cases like "Starling Pearl" → stock has "Starling".
+        if not results and " " in trimmed:
+            words = trimmed.split()
+            for word in words:
+                word = word.strip()
+                if len(word) < 3:
+                    continue
+                word_norms = get_equivalent_norms(word.lower())
+                word_filters = [StockItem.product_name.ilike(f"%{word}%")]
+                for wn in word_norms:
+                    if wn != word.lower():
+                        word_filters.append(StockItem.product_name.ilike(f"%{wn}%"))
+                wq = session.query(StockItem).filter(or_(*word_filters))
+                if warehouse:
+                    wq = wq.filter_by(warehouse=warehouse)
+                results = wq.all()
+                if results:
+                    break
+
+        return [item.to_dict() for item in results]
     finally:
         session.close()
 
@@ -305,12 +327,12 @@ def search_stock_by_ids(
 
 
 def get_available_by_category(category: str, warehouse: str | None = None) -> list[dict]:
-    """Get all items with quantity > 0 in a category."""
+    """Get all items with available stock (quantity - maks_sales > 0) in a category."""
     session = get_session()
     try:
         q = session.query(StockItem).filter(
             StockItem.category == category,
-            StockItem.quantity > 0,
+            (StockItem.quantity - func.coalesce(StockItem.maks_sales, 0)) > 0,
         )
         if warehouse:
             q = q.filter_by(warehouse=warehouse)
@@ -333,7 +355,7 @@ def get_stock_summary(warehouse: str | None = None) -> dict:
 
         return {
             "total": len(items),
-            "available": sum(1 for i in items if i.quantity > 0),
+            "available": sum(1 for i in items if (i.quantity - (i.maks_sales or 0)) > 0),
             "fallback": sum(1 for i in items if i.is_fallback),
             "synced_at": max(i.synced_at for i in items if i.synced_at),
         }
@@ -393,7 +415,10 @@ def check_stock_for_order(
                 stock_entries = stock_entries.filter_by(warehouse=warehouse)
             stock_entries = stock_entries.all()
 
-            total_available = sum(s.quantity for s in stock_entries if s.quantity > 0)
+            total_available = sum(
+                max(s.quantity - (s.maks_sales or 0), 0)
+                for s in stock_entries
+            )
             is_sufficient = total_available >= ordered_qty
 
             entry = {
@@ -606,15 +631,16 @@ def _get_available_items(
     """
     session = get_session()
     try:
+        avail_expr = StockItem.quantity - func.coalesce(StockItem.maks_sales, 0)
         q = session.query(StockItem).filter(
             StockItem.category.in_(allowed_cats),
-            StockItem.quantity > 0,
+            avail_expr > 0,
         )
         if exclude_product_ids:
             q = q.filter(~StockItem.product_id.in_(exclude_product_ids))
         if warehouse:
             q = q.filter_by(warehouse=warehouse)
-        return [item.to_dict() for item in q.order_by(StockItem.quantity.desc()).all()]
+        return [item.to_dict() for item in q.order_by(avail_expr.desc()).all()]
     finally:
         session.close()
 

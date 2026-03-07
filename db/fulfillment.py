@@ -159,7 +159,10 @@ def _try_warehouse(
         if not entries:
             return None
 
-        total_available = sum(e.quantity for e in entries if e.quantity > 0)
+        total_available = sum(
+            max(e.quantity - (e.maks_sales or 0), 0)
+            for e in entries
+        )
         if total_available < ordered_qty:
             return None
 
@@ -197,7 +200,7 @@ def _collect_split_breakdown(
         availability = {}
         for wh in warehouses:
             entries = _query_stock_entries(session, wh, base_flavor, product_ids)
-            total = sum(e.quantity for e in entries if e.quantity > 0) if entries else 0
+            total = sum(max(e.quantity - (e.maks_sales or 0), 0) for e in entries) if entries else 0
             availability[wh] = total
 
         breakdown.append({

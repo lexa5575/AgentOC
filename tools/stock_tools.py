@@ -26,19 +26,23 @@ def search_stock_tool(flavor: str) -> str:
         if not items:
             return f"No products found matching '{flavor}'."
 
-        available = [it for it in items if it["quantity"] > 0]
+        available = [
+            it for it in items
+            if (it["quantity"] - it.get("maks_sales", 0)) > 0
+        ]
 
         if available:
             lines = [f"{flavor} — IN STOCK:"]
             for item in available:
+                avail_qty = item["quantity"] - item.get("maks_sales", 0)
                 price = CATEGORY_PRICES.get(item["category"])
                 price_str = f" (${price}/box)" if price else ""
                 lines.append(
                     f"  • {item['product_name']} [{item['category']}]"
-                    f" — qty: {item['quantity']}{price_str}"
+                    f" — available: {avail_qty}{price_str}"
                 )
         else:
-            lines = [f"{flavor} — OUT OF STOCK (qty: 0)"]
+            lines = [f"{flavor} — OUT OF STOCK (available: 0)"]
 
         return "\n".join(lines)
 
