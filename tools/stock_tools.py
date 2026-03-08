@@ -26,22 +26,40 @@ def search_stock_tool(flavor: str) -> str:
         if not items:
             return f"No products found matching '{flavor}'."
 
-        available = [
-            it for it in items
-            if (it["quantity"] - it.get("maks_sales", 0)) > 0
-        ]
+        available = []
+        out_of_stock = []
+        for it in items:
+            avail_qty = it["quantity"] - it.get("maks_sales", 0)
+            if avail_qty > 0:
+                available.append((it, avail_qty))
+            else:
+                out_of_stock.append(it)
 
+        lines = []
+
+        # Show in-stock items
         if available:
-            lines = [f"{flavor} — IN STOCK:"]
-            for item in available:
-                avail_qty = item["quantity"] - item.get("maks_sales", 0)
+            lines.append(f"{flavor} — IN STOCK:")
+            for item, avail_qty in available:
                 price = CATEGORY_PRICES.get(item["category"])
                 price_str = f" (${price}/box)" if price else ""
                 lines.append(
                     f"  • {item['product_name']} [{item['category']}]"
                     f" — available: {avail_qty}{price_str}"
                 )
-        else:
+
+        # Show OOS items so LLM knows they exist but are unavailable
+        if out_of_stock:
+            lines.append(f"{flavor} — OUT OF STOCK:")
+            for item in out_of_stock:
+                price = CATEGORY_PRICES.get(item["category"])
+                price_str = f" (${price}/box)" if price else ""
+                lines.append(
+                    f"  • {item['product_name']} [{item['category']}]"
+                    f" — OUT OF STOCK{price_str}"
+                )
+
+        if not lines:
             lines = [f"{flavor} — OUT OF STOCK (available: 0)"]
 
         return "\n".join(lines)
