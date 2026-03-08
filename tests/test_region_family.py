@@ -64,9 +64,9 @@ class TestIsSameFamily(unittest.TestCase):
     def test_cross_family_me_eu(self):
         self.assertFalse(is_same_family({"ARMENIA", "TEREA_EUROPE"}))
 
-    def test_japan_not_in_v1(self):
-        """Japan is NOT in REGION_FAMILIES v1 — treated as unknown → False."""
-        self.assertFalse(is_same_family({"TEREA_JAPAN", "УНИКАЛЬНАЯ_ТЕРЕА"}))
+    def test_japan_same_family(self):
+        """TEREA_JAPAN and УНИКАЛЬНАЯ_ТЕРЕА are in JAPAN family."""
+        self.assertTrue(is_same_family({"TEREA_JAPAN", "УНИКАЛЬНАЯ_ТЕРЕА"}))
 
     # --- Fail-closed tests ---
 
@@ -158,10 +158,10 @@ class TestExpandToFamilyIds(unittest.TestCase):
         result = expand_to_family_ids([999], MOCK_CATALOG)
         self.assertEqual(result, [999])
 
-    def test_japan_not_expanded_in_v1(self):
-        """Japan not in REGION_FAMILIES v1 — no sibling expansion."""
+    def test_japan_expanded(self):
+        """JAPAN family: TEREA_JAPAN(80) expands to include УНИКАЛЬНАЯ_ТЕРЕА(85) sibling."""
         result = expand_to_family_ids([80], MOCK_CATALOG)
-        self.assertEqual(result, [80])  # TEREA_JAPAN only, no УНИКАЛЬНАЯ_ТЕРЕА
+        self.assertEqual(result, [80, 85])  # both "smooth" entries
 
     def test_cross_family_not_mixed(self):
         """Sun Pearl: ARMENIA(61) + TEREA_EUROPE(76) — different families.
