@@ -25,6 +25,7 @@ from db.stock import (
     resolve_warehouse,
 )
 from db.catalog import get_base_display_name, get_display_name
+from db.region_family import CATEGORY_REGION_SUFFIX
 from db.product_resolver import resolve_product_to_catalog
 from agents.context import build_context, format_context_for_prompt
 from agno.agent import Agent
@@ -52,6 +53,11 @@ You are James, answering a product availability question for shipmecarton.com.
 - For products that are NOT available: say so and mention alternatives if provided
 - Ask if any of the available products or alternatives work for the customer
 - Never invent product names or prices not listed in STOCK INFO
+
+## Region in product names — MANDATORY
+- ALWAYS include the region suffix (ME, EU, or Japan) when mentioning a product
+- Say "Terea Silver ME", NOT just "Terea Silver"
+- This is critical — without region, the system can't process the order correctly
 """
 
 _oos_agent = Agent(
@@ -152,13 +158,33 @@ def _build_in_stock_reply(
             f"Let us know which one you'd like! Thank you!"
         )
 
-    # Single product query
-    price_str = f" It's ${price:.0f} per box." if price is not None else ""
-    return (
-        f"{greeting} yes, we have {flavor} in stock{loc_suffix}!{price_str} "
-        f"Let us know how many boxes you'd like and we'll get it ready for you. "
-        f"Thank you!"
-    )
+    # Single product query — include region to disambiguate (ME vs EU vs Japan)
+    regions = sorted({CATEGORY_REGION_SUFFIX.get(it["category"], "") for it in stock_items} - {""})
+    if len(regions) > 1:
+        # Multiple regions available — list each with region suffix
+        region_list = ", ".join(f"{flavor} {r}" for r in regions)
+        price_str = f" ${price:.0f} per box." if price is not None else ""
+        return (
+            f"{greeting} yes, we have {flavor} in stock{loc_suffix}!{price_str} "
+            f"Available regions: {region_list}. "
+            f"Which one would you like? Thank you!"
+        )
+    elif len(regions) == 1:
+        # Single region — include it in the name
+        flavor_with_region = f"{flavor} {regions[0]}"
+        price_str = f" It's ${price:.0f} per box." if price is not None else ""
+        return (
+            f"{greeting} yes, we have {flavor_with_region} in stock{loc_suffix}!{price_str} "
+            f"Let us know how many boxes you'd like and we'll get it ready for you. "
+            f"Thank you!"
+        )
+    else:
+        price_str = f" It's ${price:.0f} per box." if price is not None else ""
+        return (
+            f"{greeting} yes, we have {flavor} in stock{loc_suffix}!{price_str} "
+            f"Let us know how many boxes you'd like and we'll get it ready for you. "
+            f"Thank you!"
+        )
 
 
 def _build_multi_stock_reply(

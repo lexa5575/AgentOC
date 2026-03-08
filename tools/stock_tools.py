@@ -2,6 +2,7 @@
 
 import logging
 
+from db.region_family import CATEGORY_REGION_SUFFIX
 from db.stock import CATEGORY_PRICES, search_stock
 
 logger = logging.getLogger(__name__)
@@ -26,36 +27,44 @@ def search_stock_tool(flavor: str) -> str:
         if not items:
             return f"No products found matching '{flavor}'."
 
-        available = []
-        out_of_stock = []
+        # Group by (product_name, region) — combine ARMENIA + KZ_TEREA into "ME"
+        in_stock: dict[tuple[str, str], dict] = {}   # (name, region) → {qty, price}
+        oos: dict[tuple[str, str], dict] = {}
+
         for it in items:
             avail_qty = it["quantity"] - it.get("maks_sales", 0)
+            region = CATEGORY_REGION_SUFFIX.get(it["category"], "")
+            price = CATEGORY_PRICES.get(it["category"])
+            key = (it["product_name"], region)
+
             if avail_qty > 0:
-                available.append((it, avail_qty))
+                if key in in_stock:
+                    in_stock[key]["qty"] += avail_qty
+                else:
+                    in_stock[key] = {"qty": avail_qty, "price": price}
             else:
-                out_of_stock.append(it)
+                if key not in in_stock and key not in oos:
+                    oos[key] = {"price": price}
 
         lines = []
 
-        # Show in-stock items
-        if available:
+        if in_stock:
             lines.append(f"{flavor} — IN STOCK:")
-            for item, avail_qty in available:
-                price = CATEGORY_PRICES.get(item["category"])
-                price_str = f" (${price}/box)" if price else ""
+            for (name, region), info in sorted(in_stock.items()):
+                price_str = f" (${info['price']}/box)" if info["price"] else ""
+                region_str = f" {region}" if region else ""
                 lines.append(
-                    f"  • {item['product_name']} [{item['category']}]"
-                    f" — available: {avail_qty}{price_str}"
+                    f"  • {name}{region_str}"
+                    f" — available: {info['qty']}{price_str}"
                 )
 
-        # Show OOS items so LLM knows they exist but are unavailable
-        if out_of_stock:
+        if oos:
             lines.append(f"{flavor} — OUT OF STOCK:")
-            for item in out_of_stock:
-                price = CATEGORY_PRICES.get(item["category"])
-                price_str = f" (${price}/box)" if price else ""
+            for (name, region), info in sorted(oos.items()):
+                price_str = f" (${info['price']}/box)" if info["price"] else ""
+                region_str = f" {region}" if region else ""
                 lines.append(
-                    f"  • {item['product_name']} [{item['category']}]"
+                    f"  • {name}{region_str}"
                     f" — OUT OF STOCK{price_str}"
                 )
 
