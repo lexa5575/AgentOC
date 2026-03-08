@@ -216,8 +216,16 @@ def get_full_thread_history(
     """
     history = get_thread_history(gmail_thread_id, limit=max_results)
 
-    if len(history) < 2:
-        gmail_history = _fetch_gmail_thread_by_id(gmail_thread_id, gmail_account=gmail_account)
+    # Keep behavior aligned with get_full_email_history():
+    # when local DB has fewer than requested messages, supplement from Gmail API.
+    if len(history) < max_results:
+        # Keep Gmail fetch bounded to avoid huge thread payloads on long-lived clients.
+        fetch_limit = min(max_results * 3, 120)
+        gmail_history = _fetch_gmail_thread_by_id(
+            gmail_thread_id,
+            gmail_account=gmail_account,
+            max_results=fetch_limit,
+        )
         if gmail_history:
             local_keys = {(h["subject"], h["direction"]) for h in history}
             for gh in gmail_history:
@@ -237,14 +245,16 @@ def get_full_thread_history(
 
 
 def _fetch_gmail_thread_by_id(
-    gmail_thread_id: str, gmail_account: str = "default",
+    gmail_thread_id: str,
+    gmail_account: str = "default",
+    max_results: int | None = None,
 ) -> list[dict]:
     """Fetch thread history from Gmail API by thread ID."""
     from tools.gmail import GmailClient
 
     try:
         gmail = GmailClient(account=gmail_account)
-        history = gmail.fetch_thread(gmail_thread_id)
+        history = gmail.fetch_thread(gmail_thread_id, max_messages=max_results)
         logger.info(
             "Gmail thread fetch for %s: %d messages",
             gmail_thread_id, len(history),

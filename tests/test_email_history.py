@@ -202,13 +202,13 @@ from db.email_history import get_full_thread_history
 
 
 def test_full_thread_history_sufficient_local():
-    """When >=2 local records exist, Gmail is NOT called."""
+    """When local records satisfy max_results, Gmail is NOT called."""
     thread_id = "thread_local_ok"
     save_email("a@example.com", "inbound", "Order", "Body", "new_order", gmail_thread_id=thread_id)
     save_email("a@example.com", "outbound", "Re: Order", "Reply", "new_order", gmail_thread_id=thread_id)
 
     with patch.object(_eh_module, "_fetch_gmail_thread_by_id") as mock_gmail:
-        result = get_full_thread_history(thread_id)
+        result = get_full_thread_history(thread_id, max_results=2)
 
     mock_gmail.assert_not_called()
     assert len(result) == 2
@@ -217,7 +217,7 @@ def test_full_thread_history_sufficient_local():
 
 
 def test_full_thread_history_supplements_from_gmail():
-    """When <2 local records, supplements from Gmail API."""
+    """When local records are fewer than max_results, supplements from Gmail API."""
     thread_id = "thread_sparse"
     save_email("b@example.com", "inbound", "Hello", "Body", "other", gmail_thread_id=thread_id)
 
@@ -234,7 +234,7 @@ def test_full_thread_history_supplements_from_gmail():
     ]
 
     with patch.object(_eh_module, "_fetch_gmail_thread_by_id", return_value=gmail_msgs):
-        result = get_full_thread_history(thread_id)
+        result = get_full_thread_history(thread_id, max_results=2)
 
     assert len(result) == 2
     subjects = [r["subject"] for r in result]
@@ -268,9 +268,24 @@ def test_full_thread_history_deduplicates():
     ]
 
     with patch.object(_eh_module, "_fetch_gmail_thread_by_id", return_value=gmail_msgs):
-        result = get_full_thread_history(thread_id)
+        result = get_full_thread_history(thread_id, max_results=3)
 
     assert len(result) == 2  # 1 local + 1 new from Gmail (duplicate skipped)
     directions = [r["direction"] for r in result]
     assert "inbound" in directions
     assert "outbound" in directions
+
+
+def test_full_thread_history_passes_fetch_limit():
+    """Gmail thread fetch uses bounded max_results multiplier."""
+    thread_id = "thread_fetch_limit"
+    save_email("d@example.com", "inbound", "One", "Body", "other", gmail_thread_id=thread_id)
+
+    with patch.object(_eh_module, "_fetch_gmail_thread_by_id", return_value=[]) as mock_gmail:
+        get_full_thread_history(thread_id, max_results=15)
+
+    mock_gmail.assert_called_once_with(
+        thread_id,
+        gmail_account="default",
+        max_results=45,
+    )

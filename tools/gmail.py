@@ -176,7 +176,8 @@ class GmailClient:
     def get_message(self, msg_id: str) -> dict:
         """Fetch and parse a single Gmail message.
 
-        Returns: {from, reply_to, subject, body, gmail_message_id}
+        Returns:
+            {from, reply_to, subject, body, gmail_message_id, gmail_thread_id, created_at}
         """
         service = self._get_service()
         msg = service.users().messages().get(
@@ -194,6 +195,15 @@ class GmailClient:
 
         body = self._extract_body(msg["payload"])
 
+        # Prefer Gmail internalDate (epoch ms, UTC); fallback to now UTC.
+        created_at = datetime.now(timezone.utc)
+        internal_ms = msg.get("internalDate")
+        if internal_ms:
+            try:
+                created_at = datetime.fromtimestamp(int(internal_ms) / 1000, tz=timezone.utc)
+            except Exception:
+                pass
+
         return {
             "from": from_email or from_raw,
             "from_raw": from_raw,
@@ -202,13 +212,18 @@ class GmailClient:
             "body": body,
             "gmail_message_id": msg_id,
             "gmail_thread_id": msg.get("threadId"),
+            "created_at": created_at,
         }
 
-    def fetch_thread(self, thread_id: str) -> list[dict]:
-        """Fetch all messages in a Gmail thread by threadId.
+    def fetch_thread(self, thread_id: str, max_messages: int | None = None) -> list[dict]:
+        """Fetch messages in a Gmail thread by threadId.
 
         Uses threads().get() — single API call for entire thread.
         Returns list of dicts matching get_email_history() format, sorted oldest-first.
+
+        Notes:
+        - Gmail threads().get() returns full thread payload.
+        - max_messages limits how many newest messages we parse/return from that payload.
         """
         from email.utils import parsedate_to_datetime
 
@@ -221,8 +236,12 @@ class GmailClient:
             logger.error("Failed to fetch thread %s: %s", thread_id, e)
             return []
 
+        raw_messages = thread.get("messages", [])
+        if max_messages is not None and max_messages > 0:
+            raw_messages = raw_messages[-max_messages:]
+
         messages = []
-        for msg in thread.get("messages", []):
+        for msg in raw_messages:
             headers = {h["name"].lower(): h["value"] for h in msg["payload"]["headers"]}
 
             from_raw = headers.get("from", "")
