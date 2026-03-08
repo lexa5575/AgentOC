@@ -91,14 +91,15 @@ REPLY_TEMPLATES = {
 # ---------------------------------------------------------------------------
 # Out-of-Stock Template (STABLE — Python fills variables, no LLM)
 # ---------------------------------------------------------------------------
-def _format_alternative(alt_entry: dict) -> str:
+def _format_alternative(alt_entry: dict, qty: int = 1) -> str:
     """Format a single alternative for customer-facing display.
 
     Args:
         alt_entry: Dict with keys: alternative (stock item dict), reason, order_count
+        qty: Number of units needed (shown as "2 x ..." when > 1)
 
     Returns:
-        Formatted string like "Terea Purple made in Japan", "Terea Green EU", "Terea Amber ME"
+        Formatted string like "2 x Terea Amber ME (same product, different region)"
     """
     from db.catalog import get_display_name
 
@@ -108,6 +109,8 @@ def _format_alternative(alt_entry: dict) -> str:
     category = alt.get("category", "")
 
     formatted = get_display_name(raw_name, category)
+    if qty > 1:
+        formatted = f"{qty} x {formatted}"
 
     if reason == "same_flavor":
         formatted += " (same product, different region)"
@@ -190,8 +193,11 @@ def fill_out_of_stock_template(
 
         if alts:
             has_alternatives = True
-            # Format up to 3 alternatives
-            formatted_alts = [_format_alternative(a) for a in alts[:3]]
+            # Qty for alternatives: full OOS → ordered_qty, partial → missing qty
+            ordered_qty = item.get("ordered_qty", 1)
+            available = item.get("total_available", 0)
+            alt_qty = max(1, ordered_qty - available)
+            formatted_alts = [_format_alternative(a, alt_qty) for a in alts[:3]]
 
             if len(insufficient_items) == 1:
                 # Single flavor — no need to specify "For X:"

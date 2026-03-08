@@ -38,6 +38,18 @@ STATUS_SKIPPED_UNRESOLVED = "skipped_unresolved_order"
 STATUS_SKIPPED_DUPLICATE = "skipped_duplicate"
 STATUS_BLOCKED_AMBIGUOUS = "blocked_ambiguous_variant"
 STATUS_ERROR = "error"
+STATUS_PROCESSING = "processing"
+
+# Statuses that block retry (success + in-progress + duplicate-protection)
+_BLOCKING_STATUSES = frozenset({STATUS_UPDATED, STATUS_PROCESSING, STATUS_SKIPPED_DUPLICATE})
+
+# Statuses that allow retry (retriable business failures)
+_RETRIABLE_STATUSES = frozenset({
+    STATUS_SKIPPED_SPLIT,
+    STATUS_SKIPPED_UNRESOLVED,
+    STATUS_BLOCKED_AMBIGUOUS,
+    STATUS_ERROR,
+})
 
 
 # ── Warehouse config accessor (reads env var, no private imports) ────
@@ -532,11 +544,10 @@ def is_duplicate_fulfillment(
     trigger_type: str,
     gmail_message_id: str | None = None,
 ) -> bool:
-    """Check if a fulfillment event was already recorded.
+    """Check if a fulfillment event with blocking status already exists.
 
-    Checks by:
-    1. gmail_message_id + trigger_type (if gmail_message_id provided)
-    2. client_email + order_id + trigger_type (fallback)
+    Blocks if status in {updated, processing} — prevents double-increment and race.
+    Allows retry if status in {skipped_*, error} — retriable business failures.
     """
     session = get_session()
     try:
@@ -549,7 +560,7 @@ def is_duplicate_fulfillment(
                 )
                 .first()
             )
-            if existing:
+            if existing and existing.status in _BLOCKING_STATUSES:
                 return True
 
         if order_id:
@@ -562,15 +573,12 @@ def is_duplicate_fulfillment(
                 )
                 .first()
             )
-            if existing:
+            if existing and existing.status in _BLOCKING_STATUSES:
                 return True
 
         return False
     finally:
         session.close()
-
-
-STATUS_PROCESSING = "processing"
 
 
 # ── details_json v2 helpers ──────────────────────────────────────────
@@ -609,6 +617,31 @@ def parse_details_json(raw: str | None) -> dict:
         return {"version": 1, "_raw": raw}
     data["version"] = data.pop("v", 1)
     return data
+
+
+def _find_existing_event_id(session, client_email, order_id, trigger_type, gmail_message_id):
+    """Find existing fulfillment event id by unique key. Returns id or None."""
+    if gmail_message_id:
+        ev = (
+            session.query(FulfillmentEvent.id)
+            .filter_by(gmail_message_id=gmail_message_id, trigger_type=trigger_type)
+            .first()
+        )
+        if ev:
+            return ev[0]
+    if order_id:
+        ev = (
+            session.query(FulfillmentEvent.id)
+            .filter_by(
+                client_email=client_email.lower().strip(),
+                order_id=order_id,
+                trigger_type=trigger_type,
+            )
+            .first()
+        )
+        if ev:
+            return ev[0]
+    return None
 
 
 def claim_fulfillment_event(
@@ -655,10 +688,53 @@ def claim_fulfillment_event(
         return {"created": True, "duplicate": False, "error": None, "event_id": event_id}
     except IntegrityError:
         session.rollback()
-        logger.info(
-            "Fulfillment duplicate blocked by DB: %s/%s/%s",
-            client_email, order_id, trigger_type,
-        )
+        # Atomic retry: UPDATE existing event if its status is retriable
+        session2 = get_session()
+        try:
+            event_id = _find_existing_event_id(
+                session2, client_email, order_id, trigger_type, gmail_message_id,
+            )
+            if event_id is not None:
+                rows = (
+                    session2.query(FulfillmentEvent)
+                    .filter(
+                        FulfillmentEvent.id == event_id,
+                        FulfillmentEvent.status.in_(_RETRIABLE_STATUSES),
+                    )
+                    .update(
+                        {
+                            FulfillmentEvent.status: status,
+                            FulfillmentEvent.warehouse: warehouse,
+                            FulfillmentEvent.details_json: (
+                                json.dumps(stamped) if stamped else None
+                            ),
+                        },
+                        synchronize_session=False,
+                    )
+                )
+                session2.commit()
+                if rows == 1:
+                    logger.info(
+                        "Fulfillment event RETRIED: id=%s → %s", event_id, status,
+                    )
+                    return {
+                        "created": False, "duplicate": False, "retried": True,
+                        "error": None, "event_id": event_id,
+                    }
+                logger.info(
+                    "Fulfillment event NOT retriable: id=%s (rows=%d)",
+                    event_id, rows,
+                )
+            else:
+                logger.info(
+                    "Fulfillment duplicate blocked by DB: %s/%s/%s",
+                    client_email, order_id, trigger_type,
+                )
+        except Exception as retry_err:
+            session2.rollback()
+            logger.warning("Fulfillment retry failed: %s", retry_err)
+        finally:
+            session2.close()
         return {"created": False, "duplicate": True, "error": None, "event_id": None}
     except Exception as e:
         session.rollback()

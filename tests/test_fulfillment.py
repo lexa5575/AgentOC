@@ -958,10 +958,19 @@ class TestTryFulfillment:
         assert "fulfillment" not in result
 
     def test_duplicate_skipped(self, db_session):
-        """Duplicate processing -> skipped_duplicate."""
+        """Duplicate processing -> skipped_duplicate when first event is updated/processing."""
         session = db_session()
         cat_id = _add_catalog(session, "TEREA_JAPAN", "t silver", "T Silver")
         _add_stock(session, "LA_MAKS", "TEREA_JAPAN", "T Silver", qty=10, product_id=cat_id)
+        # Pre-create a successful fulfillment event so the 2nd call is truly a duplicate
+        ev = FulfillmentEvent(
+            client_email="test@example.com",
+            order_id="#400",
+            gmail_message_id="msg_dup",
+            trigger_type="new_order_postpay",
+            status=STATUS_UPDATED,
+        )
+        session.add(ev)
         session.commit()
 
         classification = _mock_classification(
@@ -977,13 +986,7 @@ class TestTryFulfillment:
             ],
         }
 
-        # First call -> updated (or error due to no sheet config, but claim is recorded)
-        try_fulfillment(classification, result, gmail_message_id="msg_dup")
-        first_status = result["fulfillment"]["status"]
-        assert first_status in (STATUS_UPDATED, STATUS_ERROR)  # depends on sheet config
-
-        # Second call -> duplicate
-        del result["fulfillment"]
+        # Call with same gmail_message_id -> should be blocked as duplicate
         try_fulfillment(classification, result, gmail_message_id="msg_dup")
         assert result["fulfillment"]["status"] == STATUS_SKIPPED_DUPLICATE
 
@@ -1424,10 +1427,19 @@ class TestClaimLifecycle:
         assert stored["exception"] == "something crashed"
 
     def test_duplicate_still_skipped_after_lifecycle(self, db_session):
-        """After a lifecycle claim, duplicate is still properly detected."""
+        """After a successful lifecycle, duplicate is properly detected."""
         session = db_session()
         cat_id = _add_catalog(session, "TEREA_JAPAN", "t silver", "T Silver")
         _add_stock(session, "LA_MAKS", "TEREA_JAPAN", "T Silver", qty=10, product_id=cat_id)
+        # Pre-create a successful (updated) event to simulate completed lifecycle
+        ev = FulfillmentEvent(
+            client_email="test@example.com",
+            order_id="#LC4",
+            gmail_message_id="msg_lc4",
+            trigger_type="new_order_postpay",
+            status=STATUS_UPDATED,
+        )
+        session.add(ev)
         session.commit()
 
         classification = _mock_classification(
@@ -1442,14 +1454,7 @@ class TestClaimLifecycle:
             "_stock_check_items": items,
         }
 
-        # First call
-        try_fulfillment(classification, result, gmail_message_id="msg_lc4")
-        first_status = result["fulfillment"]["status"]
-        assert first_status in (STATUS_UPDATED, STATUS_ERROR)
-
-        # Second call -> duplicate
-        del result["fulfillment"]
-        result["_stock_check_items"] = items
+        # Call with same gmail_message_id -> should be blocked as duplicate
         try_fulfillment(classification, result, gmail_message_id="msg_lc4")
         assert result["fulfillment"]["status"] == STATUS_SKIPPED_DUPLICATE
 
@@ -2279,3 +2284,113 @@ class TestQueryStockEntriesNoIlike:
         result = select_fulfillment_warehouse(order_items, "Los Angeles, CA 90001")
         # No warehouse can fulfill because _query_stock_entries returns []
         assert result["status"] == STATUS_SKIPPED_SPLIT
+
+
+# ── Idempotency retry tests ─────────────────────────────────────────
+
+
+class TestIsDuplicateFulfillmentStatusFilter:
+    """is_duplicate_fulfillment blocks only updated/processing, allows retry for others."""
+
+    def _create_event(self, db_session, status, **kwargs):
+        session = db_session()
+        ev = FulfillmentEvent(
+            client_email="test@example.com",
+            order_id="ORD-1",
+            gmail_message_id="msg-1",
+            trigger_type="new_order_postpay",
+            status=status,
+            **kwargs,
+        )
+        session.add(ev)
+        session.commit()
+        return ev.id
+
+    def test_blocks_after_updated(self, db_session):
+        self._create_event(db_session, STATUS_UPDATED)
+        assert is_duplicate_fulfillment(
+            "test@example.com", "ORD-1", "new_order_postpay", "msg-1",
+        ) is True
+
+    def test_blocks_after_processing(self, db_session):
+        self._create_event(db_session, STATUS_PROCESSING)
+        assert is_duplicate_fulfillment(
+            "test@example.com", "ORD-1", "new_order_postpay", "msg-1",
+        ) is True
+
+    def test_allows_retry_after_skipped_split(self, db_session):
+        self._create_event(db_session, STATUS_SKIPPED_SPLIT)
+        assert is_duplicate_fulfillment(
+            "test@example.com", "ORD-1", "new_order_postpay", "msg-1",
+        ) is False
+
+    def test_allows_retry_after_error(self, db_session):
+        self._create_event(db_session, STATUS_ERROR)
+        assert is_duplicate_fulfillment(
+            "test@example.com", "ORD-1", "new_order_postpay", "msg-1",
+        ) is False
+
+    def test_blocks_after_skipped_duplicate(self, db_session):
+        """skipped_duplicate is in _BLOCKING_STATUSES — pre-check blocks."""
+        self._create_event(db_session, STATUS_SKIPPED_DUPLICATE)
+        assert is_duplicate_fulfillment(
+            "test@example.com", "ORD-1", "new_order_postpay", "msg-1",
+        ) is True
+
+
+class TestClaimRetryOnIntegrityError:
+    """claim_fulfillment_event retries (UPDATE) for retriable statuses."""
+
+    def _create_event(self, db_session, status):
+        session = db_session()
+        ev = FulfillmentEvent(
+            client_email="retry@example.com",
+            order_id="ORD-RETRY",
+            gmail_message_id="msg-retry",
+            trigger_type="new_order_postpay",
+            status=status,
+            created_at=datetime(2026, 1, 1, 12, 0, 0),
+        )
+        session.add(ev)
+        session.commit()
+        return ev.id
+
+    def test_retries_existing_skipped_split(self, db_session):
+        old_id = self._create_event(db_session, STATUS_SKIPPED_SPLIT)
+        result = claim_fulfillment_event(
+            "retry@example.com", "ORD-RETRY", "new_order_postpay",
+            STATUS_PROCESSING, gmail_message_id="msg-retry",
+        )
+        assert result.get("retried") is True
+        assert result["event_id"] == old_id
+        # Verify created_at NOT changed
+        session = db_session()
+        ev = session.query(FulfillmentEvent).get(old_id)
+        assert ev.status == STATUS_PROCESSING
+        assert ev.created_at == datetime(2026, 1, 1, 12, 0, 0)
+
+    def test_blocks_retry_on_updated(self, db_session):
+        self._create_event(db_session, STATUS_UPDATED)
+        result = claim_fulfillment_event(
+            "retry@example.com", "ORD-RETRY", "new_order_postpay",
+            STATUS_PROCESSING, gmail_message_id="msg-retry",
+        )
+        assert result["duplicate"] is True
+        assert result.get("retried") is not True
+
+    def test_blocks_retry_on_processing(self, db_session):
+        self._create_event(db_session, STATUS_PROCESSING)
+        result = claim_fulfillment_event(
+            "retry@example.com", "ORD-RETRY", "new_order_postpay",
+            STATUS_PROCESSING, gmail_message_id="msg-retry",
+        )
+        assert result["duplicate"] is True
+
+    def test_blocks_retry_on_skipped_duplicate(self, db_session):
+        """skipped_duplicate is not in _RETRIABLE_STATUSES → duplicate."""
+        self._create_event(db_session, STATUS_SKIPPED_DUPLICATE)
+        result = claim_fulfillment_event(
+            "retry@example.com", "ORD-RETRY", "new_order_postpay",
+            STATUS_PROCESSING, gmail_message_id="msg-retry",
+        )
+        assert result["duplicate"] is True

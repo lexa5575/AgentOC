@@ -19,6 +19,7 @@ Uses ConversationState to understand:
 
 import json
 import logging
+import re
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
@@ -433,10 +434,164 @@ def _normalize_extracted_region(items: list[dict]) -> list[dict]:
     return result
 
 
+# ---------------------------------------------------------------------------
+# Quantity enrichment from pending_oos_resolution (P0 fix)
+# ---------------------------------------------------------------------------
+
+_STANDALONE_QTY = re.compile(
+    r'\b(\d+)\s*(?:box(?:es)?|carton(?:s)?|block(?:s)?|pack(?:s)?|unit(?:s)?|piece(?:s)?)\b',
+    re.IGNORECASE,
+)
+
+
+def _extract_client_qty_for_flavor(inbound_text: str, base_flavor: str) -> int | None:
+    """Extract quantity explicitly mentioned by customer near a specific flavor.
+
+    Uses word boundaries to avoid false matches (e.g. "amber" won't match "remember").
+    Returns the quantity if found, None otherwise.
+    """
+    if not base_flavor:
+        return None
+    escaped = re.escape(base_flavor.strip())
+    patterns = [
+        rf'\b(\d+)\s*x\s+\b{escaped}\b',
+        rf'\b(\d+)\s+\b{escaped}\b',
+        rf'\b{escaped}\b\s*x\s*(\d+)',
+        rf'\b(\d+)\s*(?:box(?:es)?|carton(?:s)?|block(?:s)?|pack(?:s)?|unit(?:s)?|piece(?:s)?)\s+(?:of\s+)?\b{escaped}\b',
+        rf'\b{escaped}\b\s+(\d+)\s*(?:box(?:es)?|carton(?:s)?|block(?:s)?|pack(?:s)?|unit(?:s)?|piece(?:s)?)',
+    ]
+    m = re.search("|".join(patterns), inbound_text, re.IGNORECASE)
+    if m:
+        for g in m.groups():
+            if g and g.isdigit():
+                return int(g)
+    return None
+
+
+def _extract_standalone_qty(inbound_text: str) -> int | None:
+    """Extract standalone quantity from text (no flavor nearby).
+
+    Used only for single-item orders when no flavor-specific qty found.
+    """
+    m = _STANDALONE_QTY.search(inbound_text)
+    if m:
+        for g in m.groups():
+            if g and g.isdigit():
+                return int(g)
+    return None
+
+
+def _build_pending_qty_map(pending: dict) -> dict[str, int]:
+    """Build base_flavor → requested_qty map from pending_oos_resolution.
+
+    Includes direct OOS items, in-stock items, and reverse-mapped alternatives.
+    Uses _detect_region_and_core() for proper multi-word flavor extraction.
+
+    Conflict handling: if an alt maps to multiple parents with different qtys,
+    that alt is excluded (logged as warning).
+    """
+    qty_map: dict[str, int] = {}
+
+    for item in pending.get("items", []):
+        bf = (item.get("base_flavor") or "").strip().lower()
+        if bf:
+            qty_map[bf] = item.get("requested_qty", 1)
+
+    for item in pending.get("in_stock_items", []):
+        bf = (item.get("base_flavor") or "").strip().lower()
+        if bf:
+            qty_map[bf] = item.get("ordered_qty", 1)
+
+    # Reverse alternatives: alt_flavor → parent OOS requested_qty
+    alt_conflicts: dict[str, set[int]] = {}
+    alternatives = pending.get("alternatives", {})
+    for oos_flavor, alt_data in alternatives.items():
+        oos_bf = oos_flavor.strip().lower()
+        parent_qty = qty_map.get(oos_bf)
+        if parent_qty is None:
+            logger.warning(
+                "Reverse-map: OOS flavor '%s' not found in qty_map (keys: %s) — "
+                "skipping alt enrichment for this flavor",
+                oos_bf, list(qty_map.keys()),
+            )
+            continue
+        for alt in alt_data.get("alternatives", []):
+            alt_pn = (alt.get("product_name") or "").strip()
+            if not alt_pn:
+                continue
+            _, alt_core = _detect_region_and_core(alt_pn)
+            alt_bf = alt_core.strip().lower()
+            if not alt_bf or alt_bf in qty_map:
+                continue
+            alt_conflicts.setdefault(alt_bf, set()).add(parent_qty)
+
+    for alt_bf, qtys in alt_conflicts.items():
+        if len(qtys) == 1:
+            qty_map[alt_bf] = qtys.pop()
+        else:
+            logger.warning(
+                "Qty conflict for alt '%s': parents have different qtys %s — skipping enrichment",
+                alt_bf, qtys,
+            )
+
+    return qty_map
+
+
+def _enrich_qty_from_pending(
+    extracted_items: list[dict],
+    result: dict,
+    inbound_text: str = "",
+) -> list[dict]:
+    """Enrich extracted quantities from pending_oos_resolution (per-item).
+
+    For EACH item: if LLM returned qty=1 (default) and pending knows a higher qty,
+    use pending qty — unless customer explicitly specified a qty near that flavor.
+    Single-item special case: standalone qty (e.g. "just 1 box") counts as explicit.
+    """
+    state = result.get("conversation_state") or {}
+    facts = state.get("facts") or {}
+    pending = facts.get("pending_oos_resolution")
+    if not pending:
+        return extracted_items
+
+    pending_qty = _build_pending_qty_map(pending)
+    if not pending_qty:
+        return extracted_items
+
+    enriched = []
+    for item in extracted_items:
+        item = dict(item)
+        bf = (item.get("base_flavor") or "").strip().lower()
+        extracted_qty = item.get("quantity", 1)
+        original_qty = pending_qty.get(bf)
+
+        if original_qty and extracted_qty == 1 and original_qty > 1:
+            client_qty = _extract_client_qty_for_flavor(inbound_text, bf)
+            if client_qty is None and len(extracted_items) == 1:
+                client_qty = _extract_standalone_qty(inbound_text)
+
+            if client_qty is not None:
+                item["quantity"] = client_qty
+                logger.info(
+                    "Keeping client-specified qty for '%s': %d", bf, client_qty,
+                )
+            else:
+                item["quantity"] = original_qty
+                logger.info(
+                    "Enriched qty for '%s': 1 → %d (from pending_oos_resolution)",
+                    bf, original_qty,
+                )
+
+        enriched.append(item)
+
+    return enriched
+
+
 def _extract_agreed_items_from_thread(
     gmail_thread_id: str,
     inbound_text: str,
     gmail_account: str = "default",
+    result: dict | None = None,
 ) -> list[dict] | None:
     """Extract agreed items from thread history using structured LLM extraction (plan §7.2A).
 
@@ -462,6 +617,29 @@ def _extract_agreed_items_from_thread(
             for i, h in enumerate(outbound)
         ])
 
+        # Build qty hint from pending_oos_resolution (P1b)
+        qty_hint = ""
+        if result:
+            _state = result.get("conversation_state") or {}
+            _pending = (_state.get("facts") or {}).get("pending_oos_resolution")
+            if _pending:
+                qty_lines = []
+                for _item in _pending.get("items", []):
+                    qty_lines.append(
+                        f"  {_item.get('base_flavor', '?')}: {_item.get('requested_qty', '?')}"
+                    )
+                for _item in _pending.get("in_stock_items", []):
+                    qty_lines.append(
+                        f"  {_item.get('base_flavor', '?')}: {_item.get('ordered_qty', '?')}"
+                    )
+                if qty_lines:
+                    qty_hint = (
+                        "\n\n=== ORIGINAL REQUESTED QUANTITIES ===\n"
+                        + "\n".join(qty_lines)
+                        + "\n\nIMPORTANT: Unless the customer explicitly changes the quantity, "
+                        "use these original quantities.\n"
+                    )
+
         prompt = (
             "You are an order extraction assistant.\n\n"
             "Below are our recent OUTBOUND proposals to a customer, "
@@ -481,7 +659,8 @@ def _extract_agreed_items_from_thread(
             "  If no region is mentioned, omit the suffix.\n"
             "- base_flavor is the core flavor WITHOUT region (e.g. 'Bronze', 'Smooth')\n\n"
             f"=== OUTBOUND PROPOSALS ===\n{outbound_text}\n\n"
-            f"=== INBOUND REPLY ===\n{inbound_text}\n\n"
+            f"=== INBOUND REPLY ===\n{inbound_text}\n"
+            f"{qty_hint}\n"
             'Return JSON: {"items": [{"product_name": "...", "base_flavor": "...", '
             '"quantity": N}]}\n'
             'If you cannot determine the agreed items, return {"items": []}.'
@@ -568,9 +747,11 @@ def handle_oos_followup(
             if gmail_thread_id:
                 extracted = _extract_agreed_items_from_thread(
                     gmail_thread_id, clean_text, gmail_account,
+                    result=result,
                 )
                 if extracted:
                     try:
+                        extracted = _enrich_qty_from_pending(extracted, result, clean_text)
                         resolved, _ = resolve_order_items(extracted)
                         stock_result = check_stock_for_order(resolved)
                         if stock_result["all_in_stock"]:

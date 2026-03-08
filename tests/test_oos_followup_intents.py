@@ -1013,5 +1013,309 @@ class TestNormalizeExtractedRegion(unittest.TestCase):
         self.assertEqual(result[0]["base_flavor"], "Bronze")
 
 
+# ---------------------------------------------------------------------------
+# Tests for OOS template qty in alternatives (P1a)
+# ---------------------------------------------------------------------------
+
+class TestOosTemplateAlternativesQty(unittest.TestCase):
+    """Tests that alternatives show correct qty."""
+
+    @classmethod
+    def setUpClass(cls):
+        _install_stubs()
+        cls.templates = importlib.import_module("agents.reply_templates")
+
+    @patch("db.catalog.get_display_name", side_effect=lambda name, cat: f"Terea {name}")
+    @patch("db.catalog.get_base_display_name", side_effect=lambda bf: f"Terea {bf}")
+    def test_full_oos_shows_ordered_qty(self, mock_base, mock_display):
+        """Full OOS ordered_qty=2 → '2 x Terea Amber ME ...'."""
+        items = [{"base_flavor": "Amber", "ordered_qty": 2, "total_available": 0}]
+        alts = {"Amber": {"alternatives": [
+            {"alternative": {"product_name": "Amber ME", "category": "ARMENIA"}, "reason": "same_flavor"},
+        ]}}
+        text = self.templates.fill_out_of_stock_template(items, alts)
+        self.assertIn("2 x Terea Amber ME", text)
+
+    @patch("db.catalog.get_display_name", side_effect=lambda name, cat: f"Terea {name}")
+    @patch("db.catalog.get_base_display_name", side_effect=lambda bf: f"Terea {bf}")
+    def test_partial_oos_shows_missing_qty(self, mock_base, mock_display):
+        """Partial OOS ordered=3, available=1 → '2 x ...' (missing=2)."""
+        items = [{"base_flavor": "Bronze", "ordered_qty": 3, "total_available": 1}]
+        alts = {"Bronze": {"alternatives": [
+            {"alternative": {"product_name": "Bronze EU", "category": "TEREA_EUROPE"}, "reason": "fallback"},
+        ]}}
+        text = self.templates.fill_out_of_stock_template(items, alts)
+        self.assertIn("2 x Terea Bronze EU", text)
+
+    @patch("db.catalog.get_display_name", side_effect=lambda name, cat: f"Terea {name}")
+    @patch("db.catalog.get_base_display_name", side_effect=lambda bf: f"Terea {bf}")
+    def test_single_qty_no_prefix(self, mock_base, mock_display):
+        """ordered_qty=1 → no 'x' prefix."""
+        items = [{"base_flavor": "Amber", "ordered_qty": 1, "total_available": 0}]
+        alts = {"Amber": {"alternatives": [
+            {"alternative": {"product_name": "Amber ME", "category": "ARMENIA"}, "reason": "fallback"},
+        ]}}
+        text = self.templates.fill_out_of_stock_template(items, alts)
+        self.assertIn("Terea Amber ME", text)
+        self.assertNotIn("1 x", text)
+
+
+# ---------------------------------------------------------------------------
+# Tests for qty enrichment (P0 fix)
+# ---------------------------------------------------------------------------
+
+class TestExtractClientQtyForFlavor(unittest.TestCase):
+    """Tests for _extract_client_qty_for_flavor()."""
+
+    @classmethod
+    def setUpClass(cls):
+        _install_stubs()
+        cls.mod = importlib.import_module("agents.handlers.oos_followup")
+
+    def test_qty_x_amber(self):
+        self.assertEqual(self.mod._extract_client_qty_for_flavor("2 x Amber", "amber"), 2)
+
+    def test_amber_3_boxes(self):
+        self.assertEqual(self.mod._extract_client_qty_for_flavor("Amber 3 boxes", "amber"), 3)
+
+    def test_just_1_amber(self):
+        self.assertEqual(self.mod._extract_client_qty_for_flavor("just 1 Amber", "amber"), 1)
+
+    def test_amber_x2(self):
+        self.assertEqual(self.mod._extract_client_qty_for_flavor("Amber x2", "amber"), 2)
+
+    def test_no_match_ok(self):
+        self.assertIsNone(self.mod._extract_client_qty_for_flavor("ok sounds good", "amber"))
+
+    def test_no_false_match_remember(self):
+        """'remember' should NOT match 'amber' due to word boundaries."""
+        self.assertIsNone(self.mod._extract_client_qty_for_flavor("2 remember me", "amber"))
+
+    def test_no_false_match_chamber(self):
+        self.assertIsNone(self.mod._extract_client_qty_for_flavor("3 chamber", "amber"))
+
+    def test_no_false_match_amberton(self):
+        self.assertIsNone(self.mod._extract_client_qty_for_flavor("2 amberton", "amber"))
+
+    def test_multi_word_sun_pearl(self):
+        self.assertEqual(
+            self.mod._extract_client_qty_for_flavor("2 x Sun Pearl", "sun pearl"), 2,
+        )
+
+    def test_empty_flavor(self):
+        self.assertIsNone(self.mod._extract_client_qty_for_flavor("2 boxes", ""))
+
+
+class TestExtractStandaloneQty(unittest.TestCase):
+    """Tests for _extract_standalone_qty()."""
+
+    @classmethod
+    def setUpClass(cls):
+        _install_stubs()
+        cls.mod = importlib.import_module("agents.handlers.oos_followup")
+
+    def test_just_1_box(self):
+        self.assertEqual(self.mod._extract_standalone_qty("just 1 box please"), 1)
+
+    def test_2_cartons(self):
+        self.assertEqual(self.mod._extract_standalone_qty("2 cartons"), 2)
+
+    def test_only_3_no_unit(self):
+        """'only 3' without unit → None (requires unit to avoid false positives like 'only 2 days ago')."""
+        self.assertIsNone(self.mod._extract_standalone_qty("only 3"))
+
+    def test_only_2_days_ago(self):
+        """'only 2 days ago' → None (no false match on 'only N' without unit)."""
+        self.assertIsNone(self.mod._extract_standalone_qty("only 2 days ago"))
+
+    def test_no_match_sounds_good(self):
+        self.assertIsNone(self.mod._extract_standalone_qty("sounds good"))
+
+    def test_no_match_ok(self):
+        self.assertIsNone(self.mod._extract_standalone_qty("ok let's go"))
+
+
+class TestBuildPendingQtyMap(unittest.TestCase):
+    """Tests for _build_pending_qty_map()."""
+
+    @classmethod
+    def setUpClass(cls):
+        _install_stubs()
+        cls.mod = importlib.import_module("agents.handlers.oos_followup")
+
+    def test_direct_oos(self):
+        pending = {"items": [{"base_flavor": "Amber", "requested_qty": 2}]}
+        result = self.mod._build_pending_qty_map(pending)
+        self.assertEqual(result["amber"], 2)
+
+    def test_in_stock(self):
+        pending = {"in_stock_items": [{"base_flavor": "Silver", "ordered_qty": 3}]}
+        result = self.mod._build_pending_qty_map(pending)
+        self.assertEqual(result["silver"], 3)
+
+    def test_reverse_map_alt(self):
+        """Bronze is alternative for OOS Amber(qty=2) → bronze gets 2."""
+        pending = {
+            "items": [{"base_flavor": "Amber", "requested_qty": 2}],
+            "alternatives": {
+                "Amber": {"alternatives": [{"product_name": "Bronze EU", "category": "TEREA_EUROPE"}]}
+            },
+        }
+        result = self.mod._build_pending_qty_map(pending)
+        self.assertEqual(result["amber"], 2)
+        self.assertEqual(result["bronze"], 2)
+
+    def test_reverse_map_multi_word(self):
+        """Purple Wave is alt for OOS Sun Pearl → purple wave gets parent qty."""
+        pending = {
+            "items": [{"base_flavor": "Sun Pearl", "requested_qty": 2}],
+            "alternatives": {
+                "Sun Pearl": {"alternatives": [
+                    {"product_name": "Purple Wave EU", "category": "TEREA_EUROPE"},
+                ]}
+            },
+        }
+        result = self.mod._build_pending_qty_map(pending)
+        self.assertEqual(result["sun pearl"], 2)
+        self.assertEqual(result["purple wave"], 2)
+
+    def test_reverse_map_oos_flavor_not_in_map(self):
+        """OOS flavor key doesn't match any item → alts skipped (fail-closed)."""
+        pending = {
+            "items": [{"base_flavor": "Amber", "requested_qty": 2}],
+            "alternatives": {
+                # Key "Amberr" (typo) doesn't match "Amber" in items
+                "Amberr": {"alternatives": [
+                    {"product_name": "Bronze EU", "category": "TEREA_EUROPE"},
+                ]}
+            },
+        }
+        result = self.mod._build_pending_qty_map(pending)
+        self.assertEqual(result["amber"], 2)
+        self.assertNotIn("bronze", result)  # not mapped because parent not found
+
+    def test_reverse_map_conflict(self):
+        """Bronze is alt for Amber(qty=2) AND Silver(qty=3) → conflict, not in map."""
+        pending = {
+            "items": [
+                {"base_flavor": "Amber", "requested_qty": 2},
+                {"base_flavor": "Silver", "requested_qty": 3},
+            ],
+            "alternatives": {
+                "Amber": {"alternatives": [{"product_name": "Bronze EU", "category": "TEREA_EUROPE"}]},
+                "Silver": {"alternatives": [{"product_name": "Bronze ME", "category": "ARMENIA"}]},
+            },
+        }
+        result = self.mod._build_pending_qty_map(pending)
+        self.assertNotIn("bronze", result)
+
+
+class TestEnrichQtyFromPending(unittest.TestCase):
+    """Tests for _enrich_qty_from_pending()."""
+
+    @classmethod
+    def setUpClass(cls):
+        _install_stubs()
+        cls.mod = importlib.import_module("agents.handlers.oos_followup")
+
+    def _make_result(self, pending=None):
+        """Build a result dict with optional pending_oos_resolution."""
+        state = {"facts": {}}
+        if pending is not None:
+            state["facts"]["pending_oos_resolution"] = pending
+        return {"conversation_state": state}
+
+    def test_default_1_to_2(self):
+        """LLM returned qty=1, pending says 2, text='ok' → enriched to 2."""
+        extracted = [{"base_flavor": "Amber", "quantity": 1}]
+        result = self._make_result({"items": [{"base_flavor": "Amber", "requested_qty": 2}]})
+        enriched = self.mod._enrich_qty_from_pending(extracted, result, "ok let's go")
+        self.assertEqual(enriched[0]["quantity"], 2)
+
+    def test_preserves_explicit_gt1(self):
+        """LLM returned qty=3 (client increased) → stays 3."""
+        extracted = [{"base_flavor": "Amber", "quantity": 3}]
+        result = self._make_result({"items": [{"base_flavor": "Amber", "requested_qty": 2}]})
+        enriched = self.mod._enrich_qty_from_pending(extracted, result, "make it 3")
+        self.assertEqual(enriched[0]["quantity"], 3)
+
+    def test_client_specifies_for_flavor(self):
+        """'just 1 Amber' → Amber stays 1 despite pending=2."""
+        extracted = [{"base_flavor": "Amber", "quantity": 1}]
+        result = self._make_result({"items": [{"base_flavor": "Amber", "requested_qty": 2}]})
+        enriched = self.mod._enrich_qty_from_pending(extracted, result, "just 1 Amber please")
+        self.assertEqual(enriched[0]["quantity"], 1)
+
+    def test_no_pending(self):
+        """No pending → no change."""
+        extracted = [{"base_flavor": "Amber", "quantity": 1}]
+        result = self._make_result(None)
+        enriched = self.mod._enrich_qty_from_pending(extracted, result, "ok")
+        self.assertEqual(enriched[0]["quantity"], 1)
+
+    def test_multi_item_partial_explicit(self):
+        """2 items, qty near only 1 flavor → only that keeps client qty, other enriched."""
+        extracted = [
+            {"base_flavor": "Amber", "quantity": 1},
+            {"base_flavor": "Bronze", "quantity": 1},
+        ]
+        result = self._make_result({
+            "items": [
+                {"base_flavor": "Amber", "requested_qty": 2},
+                {"base_flavor": "Bronze", "requested_qty": 3},
+            ],
+        })
+        enriched = self.mod._enrich_qty_from_pending(
+            extracted, result, "1 x Amber and Bronze",
+        )
+        self.assertEqual(enriched[0]["quantity"], 1)   # client said "1 x Amber"
+        self.assertEqual(enriched[1]["quantity"], 3)   # enriched from pending
+
+    def test_reverse_map_alt_flavor(self):
+        """OOS Amber(qty=2), client chose Bronze (alt) → Bronze gets qty=2."""
+        extracted = [{"base_flavor": "Bronze", "quantity": 1}]
+        result = self._make_result({
+            "items": [{"base_flavor": "Amber", "requested_qty": 2}],
+            "alternatives": {
+                "Amber": {"alternatives": [
+                    {"product_name": "Bronze EU", "category": "TEREA_EUROPE"},
+                ]},
+            },
+        })
+        enriched = self.mod._enrich_qty_from_pending(extracted, result, "I'll take Bronze EU")
+        self.assertEqual(enriched[0]["quantity"], 2)
+
+    def test_single_item_standalone_qty(self):
+        """Single item, 'just 1 box please' (no flavor) → qty=1 (standalone)."""
+        extracted = [{"base_flavor": "Bronze", "quantity": 1}]
+        result = self._make_result({
+            "items": [{"base_flavor": "Amber", "requested_qty": 2}],
+            "alternatives": {
+                "Amber": {"alternatives": [
+                    {"product_name": "Bronze EU", "category": "TEREA_EUROPE"},
+                ]},
+            },
+        })
+        enriched = self.mod._enrich_qty_from_pending(extracted, result, "just 1 box please")
+        self.assertEqual(enriched[0]["quantity"], 1)
+
+    def test_reverse_map_conflict_no_enrich(self):
+        """Bronze is alt for both Amber(qty=2) AND Silver(qty=3) → no enrichment."""
+        extracted = [{"base_flavor": "Bronze", "quantity": 1}]
+        result = self._make_result({
+            "items": [
+                {"base_flavor": "Amber", "requested_qty": 2},
+                {"base_flavor": "Silver", "requested_qty": 3},
+            ],
+            "alternatives": {
+                "Amber": {"alternatives": [{"product_name": "Bronze EU", "category": "TEREA_EUROPE"}]},
+                "Silver": {"alternatives": [{"product_name": "Bronze ME", "category": "ARMENIA"}]},
+            },
+        })
+        enriched = self.mod._enrich_qty_from_pending(extracted, result, "ok Bronze")
+        # Conflict: Bronze maps to both 2 and 3 → stays at extracted qty=1
+        self.assertEqual(enriched[0]["quantity"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()
