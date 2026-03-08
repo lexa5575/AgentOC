@@ -1969,6 +1969,138 @@ class TestLegacyReResolveAmbiguousBlocked:
 
 
 # ══════════════════════════════════════════════════════════════════════
+# Region Family: expansion + legacy same-family
+# ══════════════════════════════════════════════════════════════════════
+
+class TestFamilyExpansionInQueryStock:
+    """_query_stock_entries expands product_ids to family siblings."""
+
+    def test_expansion_finds_sibling_stock(self, db_session, monkeypatch):
+        """variant_id=ARMENIA Silver, warehouse has KZ_TEREA Silver → found."""
+        monkeypatch.setenv("USE_FAMILY_FULFILLMENT", "true")
+        session = db_session()
+        # Catalog: ARMENIA Silver (id=17), KZ_TEREA Silver (id=24)
+        arm_id = _add_catalog(session, "ARMENIA", "silver", "Silver")
+        kz_id = _add_catalog(session, "KZ_TEREA", "silver", "Silver")
+        # Stock: only KZ_TEREA Silver in warehouse
+        _add_stock(session, "LA_MAKS", "KZ_TEREA", "Silver", qty=10, product_id=kz_id)
+        session.commit()
+
+        order_items = [
+            {"base_flavor": "Silver", "quantity": 2, "product_ids": [arm_id]},
+        ]
+        result = select_fulfillment_warehouse(order_items, "Los Angeles, CA 90001")
+        assert result["status"] == STATUS_UPDATED
+        assert result["warehouse"] == "LA_MAKS"
+
+    def test_expansion_disabled_misses_sibling(self, db_session, monkeypatch):
+        """USE_FAMILY_FULFILLMENT=false → no expansion, can't find sibling."""
+        monkeypatch.setenv("USE_FAMILY_FULFILLMENT", "false")
+        session = db_session()
+        arm_id = _add_catalog(session, "ARMENIA", "silver", "Silver")
+        kz_id = _add_catalog(session, "KZ_TEREA", "silver", "Silver")
+        _add_stock(session, "LA_MAKS", "KZ_TEREA", "Silver", qty=10, product_id=kz_id)
+        session.commit()
+
+        order_items = [
+            {"base_flavor": "Silver", "quantity": 2, "product_ids": [arm_id]},
+        ]
+        result = select_fulfillment_warehouse(order_items, "Los Angeles, CA 90001")
+        assert result["status"] == STATUS_SKIPPED_SPLIT  # can't find ARMENIA stock
+
+    def test_expansion_respects_name_norm(self, db_session, monkeypatch):
+        """Silver(ARMENIA) must NOT pull Bronze(KZ_TEREA) — different name_norm."""
+        monkeypatch.setenv("USE_FAMILY_FULFILLMENT", "true")
+        session = db_session()
+        arm_silver_id = _add_catalog(session, "ARMENIA", "silver", "Silver")
+        kz_bronze_id = _add_catalog(session, "KZ_TEREA", "bronze", "Bronze")
+        _add_stock(
+            session, "LA_MAKS", "KZ_TEREA", "Bronze", qty=10,
+            product_id=kz_bronze_id,
+        )
+        session.commit()
+
+        order_items = [
+            {"base_flavor": "Silver", "quantity": 1, "product_ids": [arm_silver_id]},
+        ]
+        result = select_fulfillment_warehouse(order_items, "Los Angeles, CA 90001")
+        # No KZ_TEREA Silver in stock, only Bronze → split
+        assert result["status"] == STATUS_SKIPPED_SPLIT
+
+
+class TestLegacySameFamilyNotSkipped:
+    """Legacy re-resolve: same-family multi-match → ready (not skipped)."""
+
+    def test_legacy_same_family_ready(self, db_session, monkeypatch):
+        """ARMENIA + KZ_TEREA (same family ME) → ready with preferred id."""
+        monkeypatch.setenv("REQUIRE_VARIANT_ID", "false")
+        session = db_session()
+        arm_id = _add_catalog(session, "ARMENIA", "silver", "Silver")
+        kz_id = _add_catalog(session, "KZ_TEREA", "silver", "Silver")
+        _add_order_item(
+            session, "buyer@example.com", "#600", "Silver ME", "Silver",
+            qty=2,  # no variant_id → legacy re-resolve
+        )
+        session.commit()
+
+        mock_result = MagicMock()
+        mock_result.product_ids = [arm_id, kz_id]
+        mock_result.confidence = "exact"
+        with patch("db.product_resolver.resolve_product_to_catalog", return_value=mock_result):
+            ready, skipped = get_order_items_for_fulfillment("buyer@example.com", "#600")
+
+        assert len(ready) == 1
+        assert skipped == []
+        # Preferred is ARMENIA
+        assert ready[0]["product_ids"] == [arm_id]
+
+    def test_legacy_cross_family_skipped(self, db_session, monkeypatch):
+        """ARMENIA + TEREA_EUROPE (cross-family) → skipped."""
+        monkeypatch.setenv("REQUIRE_VARIANT_ID", "false")
+        session = db_session()
+        arm_id = _add_catalog(session, "ARMENIA", "sun pearl", "Sun Pearl")
+        eu_id = _add_catalog(session, "TEREA_EUROPE", "sun pearl", "Sun Pearl")
+        _add_order_item(
+            session, "buyer@example.com", "#601", "Sun Pearl", "Sun Pearl",
+            qty=1,
+        )
+        session.commit()
+
+        mock_result = MagicMock()
+        mock_result.product_ids = [arm_id, eu_id]
+        mock_result.confidence = "exact"
+        with patch("db.product_resolver.resolve_product_to_catalog", return_value=mock_result):
+            ready, skipped = get_order_items_for_fulfillment("buyer@example.com", "#601")
+
+        assert ready == []
+        assert len(skipped) == 1
+        assert skipped[0]["product_ids_count"] == 2
+
+    def test_legacy_resolves_product_name_first(self, db_session, monkeypatch):
+        """product_name='Silver ME' tried before base_flavor='Silver'."""
+        monkeypatch.setenv("REQUIRE_VARIANT_ID", "false")
+        session = db_session()
+        arm_id = _add_catalog(session, "ARMENIA", "silver", "Silver")
+        _add_order_item(
+            session, "buyer@example.com", "#602", "Silver ME", "Silver",
+            qty=1,
+        )
+        session.commit()
+
+        # First call (product_name="Silver ME") → exact match, 1 id
+        mock_exact = MagicMock()
+        mock_exact.product_ids = [arm_id]
+        mock_exact.confidence = "exact"
+        with patch("db.product_resolver.resolve_product_to_catalog", return_value=mock_exact) as mock_resolve:
+            ready, skipped = get_order_items_for_fulfillment("buyer@example.com", "#602")
+
+        assert len(ready) == 1
+        assert skipped == []
+        # Should have been called with "Silver ME" (product_name), not "Silver" (base_flavor)
+        mock_resolve.assert_called_once_with("Silver ME")
+
+
+# ══════════════════════════════════════════════════════════════════════
 # Phase 5: details_json v2 schema
 # ══════════════════════════════════════════════════════════════════════
 

@@ -21,6 +21,15 @@ from db.warehouse_geo import resolve_warehouse_from_address
 
 logger = logging.getLogger(__name__)
 
+
+def _use_family_fulfillment() -> bool:
+    """Feature flag for region-family expansion in fulfillment queries.
+
+    Default=true. Set USE_FAMILY_FULFILLMENT=false/0/no/off to disable.
+    """
+    return getenv("USE_FAMILY_FULFILLMENT", "true").lower() not in ("false", "0", "no", "off")
+
+
 # ── Fulfillment statuses ─────────────────────────────────────────────
 
 STATUS_UPDATED = "updated"
@@ -117,13 +126,22 @@ def _query_stock_entries(
 ) -> list:
     """Query StockItem entries for an item in a warehouse.
 
+    When USE_FAMILY_FULFILLMENT=true, expands product_ids to include
+    same-family siblings (e.g. variant_id=ARMENIA Silver → also finds
+    KZ_TEREA Silver). Expansion is strictly by name_norm + family.
+
     Shared by _try_warehouse and _collect_split_breakdown.
     """
     if product_ids:
+        expanded = list(product_ids)
+        if _use_family_fulfillment():
+            from db.catalog import get_catalog_products
+            from db.region_family import expand_to_family_ids
+            expanded = expand_to_family_ids(product_ids, get_catalog_products())
         return (
             session.query(StockItem)
             .filter(
-                StockItem.product_id.in_(product_ids),
+                StockItem.product_id.in_(expanded),
                 StockItem.warehouse == warehouse,
             )
             .all()
@@ -377,6 +395,7 @@ def get_order_items_for_fulfillment(
 
         ready = []
         skipped = []
+        catalog_entries = None  # lazy-loaded for legacy re-resolve
 
         for item in items:
             if item.variant_id is not None:
@@ -402,15 +421,23 @@ def get_order_items_for_fulfillment(
                 )
             else:
                 # Legacy path: re-resolve from text (temporary, REQUIRE_VARIANT_ID=false)
+                # Try product_name first (contains region), fallback to base_flavor
                 from db.product_resolver import resolve_product_to_catalog
 
-                resolved = resolve_product_to_catalog(item.base_flavor)
+                pn = (item.product_name or "").strip()
+                bf = (item.base_flavor or "").strip()
+                resolve_name = pn or bf
+
+                resolved = resolve_product_to_catalog(resolve_name)
+                if resolved.confidence not in ("exact", "high") and pn and pn != bf:
+                    resolved = resolve_product_to_catalog(bf)
+
                 product_ids = (
                     resolved.product_ids
                     if resolved.confidence in ("exact", "high")
                     else []
                 )
-                # Phase 4.1: ambiguous re-resolve (len!=1) → skip, never auto-fulfill
+
                 if len(product_ids) == 1:
                     ready.append({
                         "base_flavor": item.base_flavor,
@@ -418,6 +445,48 @@ def get_order_items_for_fulfillment(
                         "quantity": item.quantity,
                         "product_ids": product_ids,
                     })
+                elif len(product_ids) > 1:
+                    # Same-family multi-match → pick preferred, cross-family → skip
+                    from db.region_family import get_preferred_product_id, is_same_family
+
+                    if catalog_entries is None:
+                        from db.catalog import get_catalog_products
+                        catalog_entries = get_catalog_products()
+                    id_to_cat = {
+                        e["id"]: e["category"]
+                        for e in catalog_entries
+                        if e["id"] in set(product_ids)
+                    }
+                    # Fail-closed: not all pids found → skip
+                    if len(id_to_cat) != len(product_ids):
+                        skipped.append({
+                            "base_flavor": item.base_flavor,
+                            "product_name": item.product_name,
+                            "quantity": item.quantity,
+                            "product_ids": product_ids,
+                            "product_ids_count": len(product_ids),
+                        })
+                    elif is_same_family(set(id_to_cat.values())):
+                        preferred = get_preferred_product_id(product_ids, catalog_entries)
+                        ready.append({
+                            "base_flavor": item.base_flavor,
+                            "product_name": item.product_name,
+                            "quantity": item.quantity,
+                            "product_ids": [preferred] if preferred else product_ids,
+                        })
+                    else:
+                        skipped.append({
+                            "base_flavor": item.base_flavor,
+                            "product_name": item.product_name,
+                            "quantity": item.quantity,
+                            "product_ids": product_ids,
+                            "product_ids_count": len(product_ids),
+                        })
+                        logger.warning(
+                            "Fulfillment read-path: legacy re-resolve for %s/%s/%s "
+                            "cross-family %d product_ids (skipped)",
+                            email, order_id, item.base_flavor, len(product_ids),
+                        )
                 else:
                     skipped.append({
                         "base_flavor": item.base_flavor,

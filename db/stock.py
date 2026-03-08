@@ -37,16 +37,35 @@ CATEGORY_PRICES: dict[str, int] = {
 }
 
 
-def extract_variant_id(product_ids: list[int] | None) -> int | None:
+def extract_variant_id(
+    product_ids: list[int] | None,
+    catalog_entries: list[dict] | None = None,
+) -> int | None:
     """Extract variant_id from resolved product_ids.
 
     Single-match → return the id.
-    Multi-match or empty → None + warning.
+    Same-family multi-match → return preferred id (ARMENIA for ME).
+    Cross-family or unknown → None + warning.
+
+    Args:
+        product_ids: Resolved product catalog ids.
+        catalog_entries: Optional pre-loaded catalog (avoids extra DB call).
     """
     if not product_ids:
         return None
     if len(product_ids) == 1:
         return product_ids[0]
+
+    from db.region_family import get_preferred_product_id
+
+    if catalog_entries is None:
+        from db.catalog import get_catalog_products
+        catalog_entries = get_catalog_products()
+
+    preferred = get_preferred_product_id(product_ids, catalog_entries)
+    if preferred is not None:
+        return preferred
+
     logger.warning(
         "variant_id ambiguous: %d product_ids %s — stored as NULL",
         len(product_ids), product_ids,
@@ -58,16 +77,48 @@ def extract_variant_id(product_ids: list[int] | None) -> int | None:
 _extract_variant_id = extract_variant_id
 
 
-def has_ambiguous_variants(items: list[dict]) -> list[str]:
-    """Return base_flavors of items with multi-match product_ids (len > 1).
+def has_ambiguous_variants(
+    items: list[dict],
+    catalog_entries: list[dict] | None = None,
+) -> list[str]:
+    """Return base_flavors of items with ambiguous (cross-family) product_ids.
 
-    Used as a runtime gate: any ambiguous item should block auto-fulfillment.
+    Same-family multi-match (e.g. ARMENIA + KZ_TEREA) is NOT ambiguous.
+    Cross-family or unknown product_ids ARE ambiguous → block fulfillment.
+
+    FAIL-CLOSED: unknown pid not in catalog → ambiguous.
+
+    Args:
+        items: Order items with 'product_ids' and 'base_flavor' keys.
+        catalog_entries: Optional pre-loaded catalog (avoids extra DB call).
     """
-    return [
-        item.get("base_flavor", "?")
-        for item in items
-        if len(item.get("product_ids") or []) > 1
-    ]
+    from db.region_family import is_same_family
+
+    ambiguous = []
+    catalog: dict[int, dict] | None = None
+
+    for item in items:
+        pids = item.get("product_ids") or []
+        if len(pids) <= 1:
+            continue
+
+        # Lazy-load catalog on first multi-match
+        if catalog is None:
+            if catalog_entries is None:
+                from db.catalog import get_catalog_products
+                catalog_entries = get_catalog_products()
+            catalog = {e["id"]: e for e in catalog_entries}
+
+        # Fail-closed: if any pid not found in catalog → ambiguous
+        if any(pid not in catalog for pid in pids):
+            ambiguous.append(item.get("base_flavor", "?"))
+            continue
+
+        categories = {catalog[pid]["category"] for pid in pids}
+        if not is_same_family(categories):
+            ambiguous.append(item.get("base_flavor", "?"))
+
+    return ambiguous
 
 
 # Backward compat alias

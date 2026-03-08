@@ -94,7 +94,7 @@ def _install_import_stubs() -> None:
     # Stub db.stock so pipeline + downstream can import extract_variant_id, CATEGORY_PRICES, etc.
     db_stock = types.ModuleType("db.stock")
 
-    def _stub_extract_variant_id(product_ids):
+    def _stub_extract_variant_id(product_ids, catalog_entries=None):
         if not product_ids:
             return None
         if len(product_ids) == 1:
@@ -104,7 +104,7 @@ def _install_import_stubs() -> None:
     db_stock.extract_variant_id = _stub_extract_variant_id
     db_stock._extract_variant_id = _stub_extract_variant_id
 
-    def _stub_has_ambiguous_variants(items):
+    def _stub_has_ambiguous_variants(items, catalog_entries=None):
         return [
             item.get("base_flavor", "?")
             for item in items

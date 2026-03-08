@@ -338,14 +338,8 @@ def _apply_confirmation_flags(
             )
 
 
-# Category → region suffix mapping (used by pending path + normalization)
-_CATEGORY_TO_REGION_SUFFIX: dict[str, str] = {
-    "TEREA_EUROPE": "EU",
-    "TEREA_JAPAN": "Japan",
-    "УНИКАЛЬНАЯ_ТЕРЕА": "Japan",
-    "ARMENIA": "ME",
-    "KZ_TEREA": "KZ",
-}
+# Category → region suffix mapping (single source of truth in region_family)
+from db.region_family import CATEGORY_REGION_SUFFIX as _CATEGORY_TO_REGION_SUFFIX
 
 # Known region tokens (lowered) → normalized suffix
 _REGION_TOKEN_MAP: dict[str, str] = {

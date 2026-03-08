@@ -738,9 +738,24 @@ def test_extract_variant_id_single():
     assert extract_variant_id([42]) == 42
 
 
-def test_extract_variant_id_multi_returns_none():
-    """[T2] Multiple product_ids → None (ambiguous)."""
-    assert extract_variant_id([10, 20, 30]) is None
+def test_extract_variant_id_multi_cross_family_returns_none():
+    """[T2] Multiple cross-family product_ids → None (ambiguous)."""
+    # Cross-family: ARMENIA(17) + TEREA_EUROPE(10) → None
+    catalog = [
+        {"id": 10, "category": "TEREA_EUROPE", "name_norm": "silver"},
+        {"id": 17, "category": "ARMENIA", "name_norm": "silver"},
+    ]
+    assert extract_variant_id([10, 17], catalog_entries=catalog) is None
+
+
+def test_extract_variant_id_same_family_returns_preferred():
+    """Same-family multi-match → preferred id (ARMENIA for ME)."""
+    catalog = [
+        {"id": 17, "category": "ARMENIA", "name_norm": "silver"},
+        {"id": 24, "category": "KZ_TEREA", "name_norm": "silver"},
+    ]
+    assert extract_variant_id([17, 24], catalog_entries=catalog) == 17
+    assert extract_variant_id([24, 17], catalog_entries=catalog) == 17
 
 
 def test_extract_variant_id_empty():
@@ -752,7 +767,6 @@ def test_extract_variant_id_empty():
 def test_extract_variant_id_backward_compat_alias():
     """[T3b] _extract_variant_id alias works identically."""
     assert _extract_variant_id([42]) == 42
-    assert _extract_variant_id([1, 2]) is None
     assert _extract_variant_id is extract_variant_id
 
 
@@ -853,15 +867,34 @@ def test_replace_order_items_persists_variant_fields(db_session):
 # Phase 3: has_ambiguous_variants
 # ---------------------------------------------------------------------------
 
-def test_has_ambiguous_variants_detects_multi_match():
-    """[P3-T4] Items with len(product_ids) > 1 are returned."""
+def test_has_ambiguous_variants_detects_cross_family():
+    """[P3-T4] Cross-family multi-match items are ambiguous."""
+    catalog = [
+        {"id": 17, "category": "ARMENIA", "name_norm": "silver"},
+        {"id": 10, "category": "TEREA_EUROPE", "name_norm": "silver"},
+        {"id": 7, "category": "TEREA_EUROPE", "name_norm": "green"},
+        {"id": 52, "category": "ARMENIA", "name_norm": "bronze"},
+    ]
     items = [
         {"base_flavor": "Bronze", "product_ids": [52]},
-        {"base_flavor": "Silver", "product_ids": [10, 30, 54]},
+        {"base_flavor": "Silver", "product_ids": [17, 10]},  # ARMENIA + EU = cross-family
         {"base_flavor": "Green", "product_ids": [7]},
     ]
-    result = has_ambiguous_variants(items)
+    result = has_ambiguous_variants(items, catalog_entries=catalog)
     assert result == ["Silver"]
+
+
+def test_has_ambiguous_variants_same_family_not_ambiguous():
+    """Same-family multi-match (ARMENIA + KZ_TEREA) is NOT ambiguous."""
+    catalog = [
+        {"id": 17, "category": "ARMENIA", "name_norm": "silver"},
+        {"id": 24, "category": "KZ_TEREA", "name_norm": "silver"},
+    ]
+    items = [
+        {"base_flavor": "Silver", "product_ids": [17, 24]},
+    ]
+    result = has_ambiguous_variants(items, catalog_entries=catalog)
+    assert result == []
 
 
 def test_has_ambiguous_variants_no_ambiguous():
@@ -887,8 +920,7 @@ def test_has_ambiguous_variants_empty_and_none():
 
 def test_has_ambiguous_variants_backward_compat_alias():
     """Backward compat alias _has_ambiguous_variants works."""
-    items = [{"base_flavor": "Silver", "product_ids": [1, 2]}]
-    assert _has_ambiguous_variants(items) == ["Silver"]
+    assert _has_ambiguous_variants is has_ambiguous_variants
 
 
 # ---------------------------------------------------------------------------

@@ -28,12 +28,14 @@ def db_session(monkeypatch):
     # Some unittest-style suites inject lightweight stubs (e.g. fake `db` package) that
     # don't expose all submodules, so we skip missing targets instead of failing setup.
     for module_name in (
+        "db.models",
         "db.clients",
         "db.email_history",
         "db.stock",
         "db.conversation_state",
         "db.product_resolver",
         "db.fulfillment",
+        "db.catalog",
     ):
         try:
             module = importlib.import_module(module_name)
