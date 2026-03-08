@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 _gmail_clients: dict[str, GmailClient] = {}
 _poll_lock = threading.Lock()
 _RECENT_UNREAD_WINDOW_DAYS = 14
+_MAX_MERGE_GAP_HOURS = 2  # Only merge same-thread messages within this time gap
 
 
 def _get_client(account: str = "default") -> GmailClient:
@@ -172,12 +173,37 @@ def process_client_email(client_email: str, account: str = "default") -> str:
     primary = max(unprocessed, key=_dt_key)
     primary_thread = primary["msg"].get("gmail_thread_id")
 
-    # Collect all unprocessed messages in the same thread.
+    # Collect all unprocessed messages in the same thread, but only merge
+    # messages that are close in time (within _MAX_MERGE_GAP_HOURS).
+    # Messages far apart (e.g. payment confirmation 12 days ago + reorder today)
+    # are different intents and must NOT be merged.
     if primary_thread:
-        same_thread = sorted(
+        thread_msgs = sorted(
             [c for c in unprocessed if c["msg"].get("gmail_thread_id") == primary_thread],
             key=_dt_key,
         )
+        primary_ts = _dt_key(primary)
+        merge_cutoff = primary_ts - timedelta(hours=_MAX_MERGE_GAP_HOURS)
+        same_thread = [c for c in thread_msgs if _dt_key(c) >= merge_cutoff]
+        # Stale messages (outside merge window) — mark as processed so they
+        # don't get picked up on the next trigger.
+        stale_thread = [c for c in thread_msgs if _dt_key(c) < merge_cutoff]
+        if stale_thread:
+            from db.email_history import save_email
+            for c in stale_thread:
+                save_email(
+                    client_email=client_email,
+                    direction="inbound",
+                    subject=c["msg"].get("subject", ""),
+                    body="(stale unread — skipped, outside merge window)",
+                    situation="skipped_stale",
+                    gmail_message_id=c["msg_id"],
+                    gmail_thread_id=primary_thread,
+                )
+            logger.info(
+                "Skipped %d stale same-thread messages (older than %dh from newest)",
+                len(stale_thread), _MAX_MERGE_GAP_HOURS,
+            )
     else:
         same_thread = [primary]
 
