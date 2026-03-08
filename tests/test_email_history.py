@@ -243,37 +243,53 @@ def test_full_thread_history_supplements_from_gmail():
 
 
 def test_full_thread_history_deduplicates():
-    """Duplicate (subject, direction) pairs from Gmail are not added."""
+    """Duplicate gmail_message_id from Gmail are not added."""
     thread_id = "thread_dedup"
-    save_email("c@example.com", "inbound", "Order 99", "Body", "new_order", gmail_thread_id=thread_id)
+    save_email(
+        "c@example.com", "inbound", "Order 99", "Body", "new_order",
+        gmail_message_id="msg_local_1", gmail_thread_id=thread_id,
+    )
 
     from datetime import datetime, timezone as tz
     gmail_msgs = [
         {
             "client_email": "c@example.com",
             "direction": "inbound",
-            "subject": "Order 99",  # same subject+direction as local
+            "subject": "Order 99",  # same message (same gmail_message_id)
             "body": "Body from Gmail",
             "situation": "unknown",
             "created_at": datetime(2025, 6, 1, 10, 0, tzinfo=tz.utc),
+            "gmail_message_id": "msg_local_1",
+        },
+        {
+            "client_email": "c@example.com",
+            "direction": "inbound",
+            "subject": "Order 99",  # same subject but different message
+            "body": "Follow-up from client",
+            "situation": "unknown",
+            "created_at": datetime(2025, 6, 1, 10, 30, tzinfo=tz.utc),
+            "gmail_message_id": "msg_gmail_2",
         },
         {
             "client_email": "c@example.com",
             "direction": "outbound",
-            "subject": "Re: Order 99",  # new — should be added
+            "subject": "Re: Order 99",
             "body": "Our reply",
             "situation": "unknown",
             "created_at": datetime(2025, 6, 1, 11, 0, tzinfo=tz.utc),
+            "gmail_message_id": "msg_gmail_3",
         },
     ]
 
     with patch.object(_eh_module, "_fetch_gmail_thread_by_id", return_value=gmail_msgs):
-        result = get_full_thread_history(thread_id, max_results=3)
+        result = get_full_thread_history(thread_id, max_results=5)
 
-    assert len(result) == 2  # 1 local + 1 new from Gmail (duplicate skipped)
-    directions = [r["direction"] for r in result]
-    assert "inbound" in directions
-    assert "outbound" in directions
+    # 1 local + 2 new from Gmail (msg_local_1 deduplicated, msg_gmail_2 and msg_gmail_3 added)
+    assert len(result) == 3
+    bodies = [r["body"] for r in result]
+    assert "Body" in bodies  # local
+    assert "Follow-up from client" in bodies  # new inbound (was wrongly deduplicated before)
+    assert "Our reply" in bodies  # new outbound
 
 
 def test_full_thread_history_passes_fetch_limit():

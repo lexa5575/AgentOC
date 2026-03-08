@@ -279,6 +279,7 @@ class GmailClient:
                 "body": self._extract_body(msg["payload"]),
                 "situation": "unknown",
                 "created_at": created_at,
+                "gmail_message_id": msg.get("id", ""),
             })
 
         messages.sort(key=lambda m: m["created_at"])
@@ -340,6 +341,7 @@ class GmailClient:
                     "body": self._extract_body(raw["payload"]),
                     "situation": "unknown",
                     "created_at": created_at,
+                    "gmail_message_id": msg_id,
                 })
             except Exception as e:
                 logger.error("Failed to fetch message %s: %s", msg_id, e)

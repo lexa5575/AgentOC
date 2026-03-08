@@ -73,6 +73,7 @@ class EmailHistory(Base):
             "subject": self.subject,
             "body": self.body,
             "situation": self.situation,
+            "gmail_message_id": self.gmail_message_id,
             "gmail_thread_id": self.gmail_thread_id,
             "created_at": self.created_at,
         }

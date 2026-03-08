@@ -190,10 +190,21 @@ def get_full_email_history(
             client_email, max_results=max_results, gmail_account=gmail_account,
         )
         if gmail_history:
-            local_subjects = {(h["subject"], h["direction"]) for h in history}
+            # Deduplicate by gmail_message_id (unique per message).
+            # Old approach used (subject, direction) which collapsed all messages
+            # in a thread to at most one inbound + one outbound.
+            local_msg_ids = {
+                h.get("gmail_message_id")
+                for h in history
+                if h.get("gmail_message_id")
+            }
             for gh in gmail_history:
-                if (gh["subject"], gh["direction"]) not in local_subjects:
-                    history.append(gh)
+                gh_mid = gh.get("gmail_message_id")
+                if gh_mid and gh_mid in local_msg_ids:
+                    continue  # already in local DB
+                history.append(gh)
+                if gh_mid:
+                    local_msg_ids.add(gh_mid)
 
             def _sort_key(h):
                 dt = h["created_at"]
@@ -227,10 +238,19 @@ def get_full_thread_history(
             max_results=fetch_limit,
         )
         if gmail_history:
-            local_keys = {(h["subject"], h["direction"]) for h in history}
+            # Deduplicate by gmail_message_id (unique per message).
+            local_msg_ids = {
+                h.get("gmail_message_id")
+                for h in history
+                if h.get("gmail_message_id")
+            }
             for gh in gmail_history:
-                if (gh["subject"], gh["direction"]) not in local_keys:
-                    history.append(gh)
+                gh_mid = gh.get("gmail_message_id")
+                if gh_mid and gh_mid in local_msg_ids:
+                    continue
+                history.append(gh)
+                if gh_mid:
+                    local_msg_ids.add(gh_mid)
 
             def _sort_key(h):
                 dt = h["created_at"]
