@@ -757,7 +757,7 @@ class TestOOSFollowupIntents(unittest.TestCase):
             ):
                 self.handler_mod.handle_oos_followup(cls, result, "Ok thanks")
 
-        mock_extract.assert_called_once_with("thread_acct", "Ok thanks", "sales@example.com")
+        mock_extract.assert_called_once_with("thread_acct", "Ok thanks", "sales@example.com", result=result)
 
 
     # ---------------------------------------------------------------
