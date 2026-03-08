@@ -5,8 +5,8 @@ Region Family Policy — Single Source of Truth
 Groups of stock categories that are interchangeable for customers
 (same product, same price, same customer-facing region label).
 
-v1: Only ME family (ARMENIA ↔ KZ_TEREA).
-Japan (TEREA_JAPAN ↔ УНИКАЛЬНАЯ_ТЕРЕА) deferred to v2 after business confirmation.
+v1: ME family (ARMENIA ↔ KZ_TEREA).
+v2: Japan family (TEREA_JAPAN ↔ УНИКАЛЬНАЯ_ТЕРЕА) — same manufacturer, same price ($115).
 
 All helpers follow FAIL-CLOSED principle:
 - Unknown categories → not same family → ambiguous
@@ -22,19 +22,17 @@ logger = logging.getLogger(__name__)
 # Core data structures
 # ---------------------------------------------------------------------------
 
-# v1: only ME family active
 REGION_FAMILIES: dict[str, frozenset[str]] = {
     "ME": frozenset({"ARMENIA", "KZ_TEREA"}),
     "EU": frozenset({"TEREA_EUROPE"}),
+    "JAPAN": frozenset({"TEREA_JAPAN", "УНИКАЛЬНАЯ_ТЕРЕА"}),
 }
-# v2 (after business confirmation):
-# REGION_FAMILIES["Japan"] = frozenset({"TEREA_JAPAN", "УНИКАЛЬНАЯ_ТЕРЕА"})
 
 # Within a family, which category's product_id to pick as variant_id
 PREFERRED_CATEGORY: dict[str, str] = {
     "ME": "ARMENIA",
     "EU": "TEREA_EUROPE",
-    # v2: "Japan": "TEREA_JAPAN",
+    "JAPAN": "TEREA_JAPAN",
 }
 
 # Customer-facing region suffix (all categories, including Japan — display
