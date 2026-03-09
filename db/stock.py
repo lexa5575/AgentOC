@@ -431,12 +431,12 @@ def search_stock_by_ids(
 
 
 def get_available_by_category(category: str, warehouse: str | None = None) -> list[dict]:
-    """Get all items with available stock (quantity - maks_sales > 0) in a category."""
+    """Get all items with available stock (quantity > 0) in a category."""
     session = get_session()
     try:
         q = session.query(StockItem).filter(
             StockItem.category == category,
-            (StockItem.quantity - func.coalesce(StockItem.maks_sales, 0)) > 0,
+            StockItem.quantity > 0,
         )
         if warehouse:
             q = q.filter_by(warehouse=warehouse)
@@ -459,7 +459,7 @@ def get_stock_summary(warehouse: str | None = None) -> dict:
 
         return {
             "total": len(items),
-            "available": sum(1 for i in items if (i.quantity - (i.maks_sales or 0)) > 0),
+            "available": sum(1 for i in items if i.quantity > 0),
             "fallback": sum(1 for i in items if i.is_fallback),
             "synced_at": max(i.synced_at for i in items if i.synced_at),
         }
@@ -520,7 +520,7 @@ def check_stock_for_order(
             stock_entries = stock_entries.all()
 
             total_available = sum(
-                max(s.quantity - (s.maks_sales or 0), 0)
+                max(s.quantity, 0)
                 for s in stock_entries
             )
             is_sufficient = total_available >= ordered_qty
@@ -735,16 +735,15 @@ def _get_available_items(
     """
     session = get_session()
     try:
-        avail_expr = StockItem.quantity - func.coalesce(StockItem.maks_sales, 0)
         q = session.query(StockItem).filter(
             StockItem.category.in_(allowed_cats),
-            avail_expr > 0,
+            StockItem.quantity > 0,
         )
         if exclude_product_ids:
             q = q.filter(~StockItem.product_id.in_(exclude_product_ids))
         if warehouse:
             q = q.filter_by(warehouse=warehouse)
-        return [item.to_dict() for item in q.order_by(avail_expr.desc()).all()]
+        return [item.to_dict() for item in q.order_by(StockItem.quantity.desc()).all()]
     finally:
         session.close()
 

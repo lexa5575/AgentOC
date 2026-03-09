@@ -32,7 +32,7 @@ def search_stock_tool(flavor: str) -> str:
         oos: dict[tuple[str, str], dict] = {}
 
         for it in items:
-            avail_qty = it["quantity"] - it.get("maks_sales", 0)
+            avail_qty = it["quantity"]
             region = CATEGORY_REGION_SUFFIX.get(it["category"], "")
             price = CATEGORY_PRICES.get(it["category"])
             key = (it["product_name"], region)
