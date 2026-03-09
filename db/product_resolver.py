@@ -97,6 +97,8 @@ _ALIASES: dict[str, str] = {
     "turqoise": "Turquoise",
     # Site-specific naming patterns (word-prefix handles some, alias is faster)
     "summer breeze": "Summer",
+    # Catalog name ≠ common name (T Lemon is marketed as Yellow Menthol)
+    "yellow menthol": "T Lemon",
 }
 
 # ---------------------------------------------------------------------------
