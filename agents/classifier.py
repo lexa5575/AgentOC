@@ -161,9 +161,13 @@ You only need to extract order_items for rare non-standard orders.
 
 If the email contains a clear product list/table, extract:
 - product_name: full name (e.g. "Tera Green made in Middle East")
-- base_flavor: flavor/color only — strip "Tera"/"Terea"/"Heets" prefix and
-  "EU"/"made in Middle East"/etc. suffix.
-  Examples: "Tera Green made in Middle East" → "Green", "Tera Turquoise EU" → "Turquoise"
+- base_flavor: flavor/variant name — strip "Tera"/"Terea"/"Heets" prefix and
+  "EU"/"made in Middle East"/etc. region suffix. Keep compound flavor names INTACT:
+  "Yellow Menthol", "Purple Menthol", "Bright Menthol", "Fusion Menthol",
+  "Black Purple Menthol", "Black Ruby Menthol", "Black Tropical Menthol" — these are
+  SINGLE flavors, do NOT split them.
+  Examples: "Tera Green made in Middle East" → "Green", "Tera Turquoise EU" → "Turquoise",
+  "yellow menthol" → "Yellow Menthol", "black purple menthol" → "Black Purple Menthol"
   Keep non-Tera brands intact: "ONE Green" → "ONE Green", "PRIME Black" → "PRIME Black"
 - quantity: number of units (default 1)
 
