@@ -459,12 +459,14 @@ def _extract_client_qty_for_flavor(inbound_text: str, base_flavor: str) -> int |
     if not base_flavor:
         return None
     escaped = re.escape(base_flavor.strip())
+    # Optional brand prefix (Terea/IQOS/Heets) between number and flavor
+    _brand = r'(?:terea|iqos|heets)\s+'
     patterns = [
-        rf'\b(\d+)\s*x\s+\b{escaped}\b',
-        rf'\b(\d+)\s+\b{escaped}\b',
-        rf'\b{escaped}\b\s*x\s*(\d+)',
-        rf'\b(\d+)\s*(?:box(?:es)?|carton(?:s)?|block(?:s)?|pack(?:s)?|unit(?:s)?|piece(?:s)?)\s+(?:of\s+)?\b{escaped}\b',
-        rf'\b{escaped}\b\s+(\d+)\s*(?:box(?:es)?|carton(?:s)?|block(?:s)?|pack(?:s)?|unit(?:s)?|piece(?:s)?)',
+        rf'\b(\d+)\s*x\s+(?:{_brand})?\b{escaped}\b',           # "2 x Terea Bronze" or "2 x Bronze"
+        rf'\b(\d+)\s+(?:{_brand})?\b{escaped}\b',                # "1 Terea Bronze" or "1 Bronze"
+        rf'\b(?:{_brand})?\b{escaped}\b\s*x\s*(\d+)',            # "Bronze x2" or "Terea Bronze x2"
+        rf'\b(\d+)\s*(?:box(?:es)?|carton(?:s)?|block(?:s)?|pack(?:s)?|unit(?:s)?|piece(?:s)?)\s+(?:of\s+)?(?:{_brand})?\b{escaped}\b',
+        rf'\b(?:{_brand})?\b{escaped}\b\s+(\d+)\s*(?:box(?:es)?|carton(?:s)?|block(?:s)?|pack(?:s)?|unit(?:s)?|piece(?:s)?)',
     ]
     m = re.search("|".join(patterns), inbound_text, re.IGNORECASE)
     if m:

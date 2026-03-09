@@ -1246,6 +1246,34 @@ class TestEnrichQtyFromPending(unittest.TestCase):
         enriched = self.mod._enrich_qty_from_pending(extracted, result, "just 1 Amber please")
         self.assertEqual(enriched[0]["quantity"], 1)
 
+    def test_client_specifies_qty_with_brand_prefix(self):
+        """'1 Terea Bronze and 1 Terea Sun Pearl' → both stay 1 despite pending=2.
+
+        Regression: brand name (Terea/IQOS/Heets) between qty and flavor
+        was not matched, causing enrichment to override client's explicit qty.
+        """
+        extracted = [
+            {"base_flavor": "Bronze", "quantity": 1},
+            {"base_flavor": "Sun Pearl", "quantity": 1},
+        ]
+        pending = {
+            "items": [{"base_flavor": "KONA", "requested_qty": 2}],
+            "in_stock_items": [{"base_flavor": "Oasis Pearl", "ordered_qty": 1}],
+            "alternatives": {
+                "KONA": {"alternatives": [
+                    {"product_name": "Bronze EU", "category": "TEREA_EUROPE"},
+                ]},
+                "Oasis Pearl": {"alternatives": [
+                    {"product_name": "Sun Pearl ME", "category": "ARMENIA"},
+                ]},
+            },
+        }
+        result = self._make_result(pending)
+        text = "Can you please send 1 Terea Bronze and 1 Terea Sun Pearl"
+        enriched = self.mod._enrich_qty_from_pending(extracted, result, text)
+        self.assertEqual(enriched[0]["quantity"], 1, "Bronze should stay 1")
+        self.assertEqual(enriched[1]["quantity"], 1, "Sun Pearl should stay 1")
+
     def test_no_pending(self):
         """No pending → no change."""
         extracted = [{"base_flavor": "Amber", "quantity": 1}]
