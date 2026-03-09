@@ -547,6 +547,26 @@ def _build_pending_qty_map(pending: dict) -> dict[str, int]:
     return qty_map
 
 
+def _extract_base_flavor_from_label(label: str) -> str:
+    """Extract base flavor from ordered_items label like 'Tera PURPLE WAVE made in Middle East x2'."""
+    import re
+    # Remove leading "Tera " / "Terea "
+    s = re.sub(r"^(?:Tera|Terea)\s+", "", label, flags=re.IGNORECASE)
+    # Remove trailing " xN"
+    s = re.sub(r"\s+x\d+$", "", s, flags=re.IGNORECASE)
+    # Remove region suffix: "made in ..." or " ME" / " EU" / " Japan" / " KZ"
+    s = re.sub(r"\s+made\s+in\s+.*$", "", s, flags=re.IGNORECASE)
+    s = re.sub(r"\s+(?:ME|EU|Japan|KZ|Armenia)$", "", s, flags=re.IGNORECASE)
+    return s.strip() or label
+
+
+def _extract_qty_from_label(label: str) -> int:
+    """Extract quantity from label like 'Tera PURPLE WAVE made in Middle East x2'."""
+    import re
+    m = re.search(r"\bx(\d+)\s*$", label, flags=re.IGNORECASE)
+    return int(m.group(1)) if m else 1
+
+
 def _merge_in_stock_items(
     extracted_items: list[dict],
     result: dict,
@@ -560,10 +580,30 @@ def _merge_in_stock_items(
     state = result.get("conversation_state") or {}
     facts = state.get("facts") or {}
     pending = facts.get("pending_oos_resolution")
-    if not pending:
-        return extracted_items
 
-    in_stock = pending.get("in_stock_items", [])
+    in_stock: list[dict] = []
+    if pending:
+        in_stock = pending.get("in_stock_items", [])
+    elif facts.get("ordered_items") and facts.get("oos_items"):
+        # Fallback: reconstruct in-stock from ordered_items minus oos_items
+        oos_flavors = {
+            _extract_base_flavor_from_label(oos).lower()
+            for oos in facts["oos_items"]
+        }
+        for label in facts["ordered_items"]:
+            bf = _extract_base_flavor_from_label(label)
+            qty = _extract_qty_from_label(label)
+            if bf.lower() not in oos_flavors:
+                in_stock.append({
+                    "base_flavor": bf,
+                    "product_name": bf,
+                    "ordered_qty": qty,
+                })
+                logger.info(
+                    "Reconstructed in-stock item '%s' x%d from facts.ordered_items",
+                    bf, qty,
+                )
+
     if not in_stock:
         return extracted_items
 
