@@ -40,16 +40,19 @@ CATEGORY_PRICES: dict[str, int] = {
 def extract_variant_id(
     product_ids: list[int] | None,
     catalog_entries: list[dict] | None = None,
+    client_email: str | None = None,
 ) -> int | None:
     """Extract variant_id from resolved product_ids.
 
     Single-match → return the id.
     Same-family multi-match → return preferred id (ARMENIA for ME).
-    Cross-family or unknown → None + warning.
+    Cross-family → check client order history for previous variant.
+    Otherwise → None + warning.
 
     Args:
         product_ids: Resolved product catalog ids.
         catalog_entries: Optional pre-loaded catalog (avoids extra DB call).
+        client_email: Optional client email for history-based disambiguation.
     """
     if not product_ids:
         return None
@@ -66,11 +69,55 @@ def extract_variant_id(
     if preferred is not None:
         return preferred
 
+    # Cross-family fallback: check client's order history
+    if client_email:
+        history_variant = _resolve_variant_from_history(client_email, product_ids)
+        if history_variant is not None:
+            logger.info(
+                "variant_id resolved from client history: %s → %d (from %s)",
+                product_ids, history_variant, client_email,
+            )
+            return history_variant
+
     logger.warning(
         "variant_id ambiguous: %d product_ids %s — stored as NULL",
         len(product_ids), product_ids,
     )
     return None
+
+
+def _resolve_variant_from_history(
+    client_email: str,
+    product_ids: list[int],
+) -> int | None:
+    """Check client's previous orders for a matching variant_id.
+
+    Returns the most recently used variant_id that matches one of the
+    candidate product_ids, or None if no match found.
+    """
+    from db.models import get_session, ClientOrderItem
+
+    session = get_session()
+    try:
+        # Find the most recent order item from this client
+        # where variant_id is one of the candidates
+        prev = (
+            session.query(ClientOrderItem.variant_id)
+            .filter(
+                ClientOrderItem.client_email == client_email.lower().strip(),
+                ClientOrderItem.variant_id.in_(product_ids),
+            )
+            .order_by(ClientOrderItem.created_at.desc())
+            .first()
+        )
+        if prev:
+            return prev[0]
+        return None
+    except Exception as e:
+        logger.warning("_resolve_variant_from_history failed for %s: %s", client_email, e)
+        return None
+    finally:
+        session.close()
 
 
 # Backward compat alias
@@ -80,10 +127,12 @@ _extract_variant_id = extract_variant_id
 def has_ambiguous_variants(
     items: list[dict],
     catalog_entries: list[dict] | None = None,
+    client_email: str | None = None,
 ) -> list[str]:
     """Return base_flavors of items with ambiguous (cross-family) product_ids.
 
     Same-family multi-match (e.g. ARMENIA + KZ_TEREA) is NOT ambiguous.
+    Cross-family with client history match → NOT ambiguous (resolved from history).
     Cross-family or unknown product_ids ARE ambiguous → block fulfillment.
 
     FAIL-CLOSED: unknown pid not in catalog → ambiguous.
@@ -91,6 +140,7 @@ def has_ambiguous_variants(
     Args:
         items: Order items with 'product_ids' and 'base_flavor' keys.
         catalog_entries: Optional pre-loaded catalog (avoids extra DB call).
+        client_email: Optional client email for history-based disambiguation.
     """
     from db.region_family import is_same_family
 
@@ -116,6 +166,9 @@ def has_ambiguous_variants(
 
         categories = {catalog[pid]["category"] for pid in pids}
         if not is_same_family(categories):
+            # Cross-family: check if client history can disambiguate
+            if client_email and _resolve_variant_from_history(client_email, pids) is not None:
+                continue  # resolved from history — not ambiguous
             ambiguous.append(item.get("base_flavor", "?"))
 
     return ambiguous

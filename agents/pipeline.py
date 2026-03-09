@@ -222,7 +222,9 @@ def process_classified_email(classification) -> dict:
 
             # Phase 3 ambiguity gate: block auto-fulfillment if any item
             # has multiple product_ids (plan §9.4, rule §4.3).
-            ambiguous = has_ambiguous_variants(items_for_check)
+            ambiguous = has_ambiguous_variants(
+                items_for_check, client_email=classification.client_email,
+            )
             if ambiguous:
                 result["fulfillment_blocked"] = True
                 result["ambiguous_flavors"] = ambiguous
@@ -419,7 +421,10 @@ def _persist_results(
                     "product_name": sci.get("product_name", oi.product_name),
                     "base_flavor": sci.get("base_flavor", oi.base_flavor),
                     "quantity": sci.get("quantity", oi.quantity),
-                    "variant_id": extract_variant_id(sci.get("product_ids")),
+                    "variant_id": extract_variant_id(
+                        sci.get("product_ids"),
+                        client_email=classification.client_email,
+                    ),
                     "display_name_snapshot": sci.get("display_name"),
                 }
             else:
@@ -453,7 +458,10 @@ def _persist_results(
                     }
                     if i < len(oos_stock_check):
                         sci = oos_stock_check[i]
-                        entry["variant_id"] = extract_variant_id(sci.get("product_ids"))
+                        entry["variant_id"] = extract_variant_id(
+                            sci.get("product_ids"),
+                            client_email=classification.client_email,
+                        )
                         entry["display_name_snapshot"] = (
                             sci.get("display_name") or item.get("display_name")
                         )

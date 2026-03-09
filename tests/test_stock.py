@@ -923,6 +923,73 @@ def test_has_ambiguous_variants_backward_compat_alias():
     assert _has_ambiguous_variants is has_ambiguous_variants
 
 
+def test_extract_variant_id_cross_family_resolved_from_history(monkeypatch):
+    """Cross-family ambiguity resolved by client order history."""
+    catalog = [
+        {"id": 21, "category": "TEREA_EUROPE", "name_norm": "teak"},
+        {"id": 58, "category": "ARMENIA", "name_norm": "teak"},
+    ]
+    # Mock _resolve_variant_from_history to return 58 (ARMENIA/ME)
+    monkeypatch.setattr(
+        "db.stock._resolve_variant_from_history",
+        lambda email, pids: 58 if email == "client@example.com" else None,
+    )
+    result = extract_variant_id(
+        [21, 58], catalog_entries=catalog, client_email="client@example.com",
+    )
+    assert result == 58
+
+
+def test_extract_variant_id_cross_family_no_history(monkeypatch):
+    """Cross-family ambiguity with no history → None."""
+    catalog = [
+        {"id": 21, "category": "TEREA_EUROPE", "name_norm": "teak"},
+        {"id": 58, "category": "ARMENIA", "name_norm": "teak"},
+    ]
+    monkeypatch.setattr(
+        "db.stock._resolve_variant_from_history",
+        lambda email, pids: None,
+    )
+    result = extract_variant_id(
+        [21, 58], catalog_entries=catalog, client_email="client@example.com",
+    )
+    assert result is None
+
+
+def test_has_ambiguous_variants_resolved_from_history(monkeypatch):
+    """Cross-family items resolved by history → not ambiguous."""
+    catalog = [
+        {"id": 21, "category": "TEREA_EUROPE", "name_norm": "teak"},
+        {"id": 58, "category": "ARMENIA", "name_norm": "teak"},
+    ]
+    items = [
+        {"base_flavor": "Teak", "product_ids": [21, 58]},
+    ]
+    monkeypatch.setattr(
+        "db.stock._resolve_variant_from_history",
+        lambda email, pids: 58,
+    )
+    result = has_ambiguous_variants(items, catalog_entries=catalog, client_email="client@example.com")
+    assert result == []
+
+
+def test_has_ambiguous_variants_no_history_still_ambiguous(monkeypatch):
+    """Cross-family items without history → still ambiguous."""
+    catalog = [
+        {"id": 21, "category": "TEREA_EUROPE", "name_norm": "teak"},
+        {"id": 58, "category": "ARMENIA", "name_norm": "teak"},
+    ]
+    items = [
+        {"base_flavor": "Teak", "product_ids": [21, 58]},
+    ]
+    monkeypatch.setattr(
+        "db.stock._resolve_variant_from_history",
+        lambda email, pids: None,
+    )
+    result = has_ambiguous_variants(items, catalog_entries=catalog, client_email="client@example.com")
+    assert result == ["Teak"]
+
+
 # ---------------------------------------------------------------------------
 # Phase 8: ILIKE removal — negative tests
 # ---------------------------------------------------------------------------

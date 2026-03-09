@@ -324,7 +324,9 @@ def _apply_confirmation_flags(
 
     # Phase 3 ambiguity gate: block fulfillment if any item has
     # multiple product_ids (plan §9.5, rule §4.3).
-    ambiguous = has_ambiguous_variants(resolved_items)
+    ambiguous = has_ambiguous_variants(
+        resolved_items, client_email=result.get("client_email"),
+    )
     if ambiguous:
         result["fulfillment_blocked"] = True
         result["ambiguous_flavors"] = ambiguous
