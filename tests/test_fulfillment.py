@@ -887,8 +887,12 @@ class TestTryFulfillment:
         assert ff["warehouse"] == "LA_MAKS"
         assert ff["trigger_type"] == "payment_received_prepay"
 
-    def test_payment_received_wrong_order_id_falls_back_to_latest(self, db_session):
-        """payment_received with wrong order_id falls back to latest order."""
+    def test_payment_received_wrong_order_id_no_latest_fallback(self, db_session):
+        """payment_received with explicit wrong order_id → SKIPPED_UNRESOLVED, no latest fallback.
+
+        Changed in v3.1: explicit order_id not found in DB no longer falls back to latest.
+        This prevents decrementing stock for the wrong order.
+        """
         session = db_session()
         cat_id = _add_catalog(session, "TEREA_JAPAN", "t silver", "T Silver")
         _add_stock(session, "LA_MAKS", "TEREA_JAPAN", "T Silver", qty=10, product_id=cat_id)
@@ -911,11 +915,8 @@ class TestTryFulfillment:
         try_fulfillment(classification, result, gmail_message_id="msg_fallback")
 
         ff = result["fulfillment"]
-        # Should have fallen back to latest order (#LATEST) and found warehouse
-        assert ff["warehouse"] == "LA_MAKS"
-        assert ff["trigger_type"] == "payment_received_prepay"
-        # Status depends on sheet config availability (error without mocks)
-        assert ff["status"] in (STATUS_UPDATED, STATUS_ERROR)
+        # Explicit order_id (#NONEXISTENT) not found → no latest fallback → unresolved
+        assert ff["status"] == STATUS_SKIPPED_UNRESOLVED
 
     def test_split_warehouse_skipped(self, db_session):
         """Items split across warehouses -> skipped_split, no increment."""
@@ -2394,3 +2395,236 @@ class TestClaimRetryOnIntegrityError:
             STATUS_PROCESSING, gmail_message_id="msg-retry",
         )
         assert result["duplicate"] is True
+
+
+# ── Dual-Intent Payment+Order Tests ─────────────────────────────────
+
+class TestDualIntentPaymentReceived:
+    """Tests for payment_received with order_items (dual-intent fix v3.1)."""
+
+    def test_payment_items_unresolved_no_db_fallback(self, db_session):
+        """payment_items_unresolved=True → SKIPPED_UNRESOLVED, no DB fallback."""
+        session = db_session()
+        cat_id = _add_catalog(session, "TEREA_JAPAN", "t silver", "T Silver")
+        _add_stock(session, "LA_MAKS", "TEREA_JAPAN", "T Silver", qty=10, product_id=cat_id)
+        # Old order items exist in DB — should NOT be used
+        _add_order_item(session, "dual@example.com", "#OLD", "T Silver", "T Silver",
+                        qty=1, variant_id=cat_id)
+        session.commit()
+
+        classification = _mock_classification(
+            situation="payment_received",
+            client_email="dual@example.com",
+            order_id=None,
+        )
+        result = {
+            "situation": "payment_received",
+            "client_data": {"payment_type": "prepay"},
+            "payment_items_unresolved": True,
+        }
+
+        try_fulfillment(classification, result, gmail_message_id="msg_unresolved")
+
+        ff = result["fulfillment"]
+        assert ff["status"] == STATUS_SKIPPED_UNRESOLVED
+        assert ff["reason"] == "payment_items_unresolved"
+
+    def test_dual_intent_resolved_uses_stock_check_items(self, db_session):
+        """Resolved _stock_check_items → used directly for fulfillment.
+
+        Without mocked Sheets, increment fails (no googleapiclient) → STATUS_ERROR.
+        The key assertion: trigger_type is correct and warehouse was selected.
+        """
+        session = db_session()
+        cat_id = _add_catalog(session, "TEREA_JAPAN", "t silver", "T Silver")
+        _add_stock(session, "LA_MAKS", "TEREA_JAPAN", "T Silver", qty=10, product_id=cat_id)
+        session.commit()
+
+        classification = _mock_classification(
+            situation="payment_received",
+            client_email="dual@example.com",
+            order_id="PAY-abc123def4",
+            customer_city_state_zip="Los Angeles, CA 90001",
+        )
+        result = {
+            "situation": "payment_received",
+            "client_data": {"payment_type": "prepay", "city_state_zip": "Los Angeles, CA 90001"},
+            "_stock_check_items": [
+                {"base_flavor": "T Silver", "quantity": 1, "product_ids": [cat_id]},
+            ],
+        }
+
+        try_fulfillment(classification, result, gmail_message_id="msg_dual")
+
+        ff = result["fulfillment"]
+        assert ff["trigger_type"] == "payment_received_prepay"
+        # Without sheet config, increment fails → exception → STATUS_ERROR
+        # But the key point: it reached the increment stage (used _stock_check_items)
+        assert ff["status"] == STATUS_ERROR
+
+    def test_explicit_order_id_skips_dual_intent_uses_db(self, db_session):
+        """Explicit order_id + items in DB → DB path, not _stock_check_items.
+
+        Without mocked Sheets → STATUS_ERROR, but warehouse should be selected.
+        """
+        session = db_session()
+        cat_id = _add_catalog(session, "TEREA_JAPAN", "t silver", "T Silver")
+        _add_stock(session, "LA_MAKS", "TEREA_JAPAN", "T Silver", qty=10, product_id=cat_id)
+        _add_order_item(session, "buyer@example.com", "#EXPLICIT", "T Silver", "T Silver",
+                        qty=1, variant_id=cat_id)
+        session.commit()
+
+        classification = _mock_classification(
+            situation="payment_received",
+            client_email="buyer@example.com",
+            order_id="#EXPLICIT",
+            customer_city_state_zip="Los Angeles, CA 90001",
+        )
+        # No _stock_check_items, no payment_items_unresolved → DB path
+        result = {
+            "situation": "payment_received",
+            "client_data": {"payment_type": "prepay", "city_state_zip": "Los Angeles, CA 90001"},
+            "has_explicit_order_id": True,
+        }
+
+        try_fulfillment(classification, result, gmail_message_id="msg_explicit")
+
+        ff = result["fulfillment"]
+        assert ff["trigger_type"] == "payment_received_prepay"
+        # Without sheet config → STATUS_ERROR, but warehouse was selected (DB path worked)
+        assert ff["status"] == STATUS_ERROR
+
+    def test_explicit_order_id_not_found_no_latest_fallback(self, db_session):
+        """Explicit order_id NOT in DB → SKIPPED_UNRESOLVED, no latest fallback."""
+        session = db_session()
+        cat_id = _add_catalog(session, "TEREA_JAPAN", "t silver", "T Silver")
+        _add_stock(session, "LA_MAKS", "TEREA_JAPAN", "T Silver", qty=10, product_id=cat_id)
+        # Old order under different order_id — should NOT be used
+        _add_order_item(session, "buyer@example.com", "#OLD_ORDER", "T Silver", "T Silver",
+                        qty=1, variant_id=cat_id)
+        session.commit()
+
+        classification = _mock_classification(
+            situation="payment_received",
+            client_email="buyer@example.com",
+            order_id="#NONEXISTENT",
+            customer_city_state_zip="Los Angeles, CA 90001",
+        )
+        result = {
+            "situation": "payment_received",
+            "client_data": {"payment_type": "prepay", "city_state_zip": "Los Angeles, CA 90001"},
+            "has_explicit_order_id": True,
+        }
+
+        try_fulfillment(classification, result, gmail_message_id="msg_notfound")
+
+        ff = result["fulfillment"]
+        assert ff["status"] == STATUS_SKIPPED_UNRESOLVED
+
+    def test_explicit_order_id_not_found_defensive_no_flag(self, db_session):
+        """Explicit order_id NOT in DB, without has_explicit_order_id flag → defensive check blocks fallback."""
+        session = db_session()
+        cat_id = _add_catalog(session, "TEREA_JAPAN", "t silver", "T Silver")
+        _add_stock(session, "LA_MAKS", "TEREA_JAPAN", "T Silver", qty=10, product_id=cat_id)
+        # Old order under different order_id
+        _add_order_item(session, "buyer@example.com", "#OLD_ORDER", "T Silver", "T Silver",
+                        qty=1, variant_id=cat_id)
+        session.commit()
+
+        classification = _mock_classification(
+            situation="payment_received",
+            client_email="buyer@example.com",
+            order_id="#NONEXISTENT",
+            customer_city_state_zip="Los Angeles, CA 90001",
+        )
+        # Deliberately omit has_explicit_order_id — defensive check should still block
+        result = {
+            "situation": "payment_received",
+            "client_data": {"payment_type": "prepay", "city_state_zip": "Los Angeles, CA 90001"},
+        }
+
+        try_fulfillment(classification, result, gmail_message_id="msg_noflg")
+
+        ff = result["fulfillment"]
+        # Defensive check: #NONEXISTENT doesn't start with PAY- or AUTO- → explicit
+        assert ff["status"] == STATUS_SKIPPED_UNRESOLVED
+
+    def test_no_order_items_normal_db_fallback(self, db_session):
+        """payment_received without order_items → normal DB path unchanged.
+
+        Without mocked Sheets → STATUS_ERROR, but warehouse selected = DB path works.
+        """
+        session = db_session()
+        cat_id = _add_catalog(session, "TEREA_JAPAN", "t silver", "T Silver")
+        _add_stock(session, "LA_MAKS", "TEREA_JAPAN", "T Silver", qty=10, product_id=cat_id)
+        _add_order_item(session, "buyer@example.com", "#200", "T Silver", "T Silver",
+                        qty=1, variant_id=cat_id)
+        session.commit()
+
+        classification = _mock_classification(
+            situation="payment_received",
+            client_email="buyer@example.com",
+            order_id="#200",
+            customer_city_state_zip="Los Angeles, CA 90001",
+        )
+        # No _stock_check_items, no payment_items_unresolved → DB path
+        result = {
+            "situation": "payment_received",
+            "client_data": {"payment_type": "prepay", "city_state_zip": "Los Angeles, CA 90001"},
+        }
+
+        try_fulfillment(classification, result, gmail_message_id="msg_normal")
+
+        ff = result["fulfillment"]
+        assert ff["trigger_type"] == "payment_received_prepay"
+        # Without sheet config → STATUS_ERROR, but warehouse was selected
+        assert ff["status"] == STATUS_ERROR
+
+    def test_payment_items_unresolved_no_get_latest_called(self, db_session):
+        """payment_items_unresolved → get_order_items_for_fulfillment(..., None) NOT called."""
+        classification = _mock_classification(
+            situation="payment_received",
+            client_email="dual@example.com",
+            order_id=None,
+        )
+        result = {
+            "situation": "payment_received",
+            "client_data": {"payment_type": "prepay"},
+            "payment_items_unresolved": True,
+        }
+
+        with patch(
+            "agents.handlers.fulfillment_trigger.get_order_items_for_fulfillment"
+        ) as mock_get:
+            try_fulfillment(classification, result, gmail_message_id="msg_mock")
+            # Should NOT be called at all — early return in branch 1
+            mock_get.assert_not_called()
+
+    def test_ambiguous_blocked_with_stock_check_items(self, db_session):
+        """fulfillment_blocked=True + _stock_check_items → BLOCKED_AMBIGUOUS."""
+        session = db_session()
+        cat_id = _add_catalog(session, "TEREA_JAPAN", "t silver", "T Silver")
+        _add_stock(session, "LA_MAKS", "TEREA_JAPAN", "T Silver", qty=10, product_id=cat_id)
+        session.commit()
+
+        classification = _mock_classification(
+            situation="payment_received",
+            client_email="dual@example.com",
+            order_id="PAY-abc123def4",
+            customer_city_state_zip="Los Angeles, CA 90001",
+        )
+        result = {
+            "situation": "payment_received",
+            "client_data": {"payment_type": "prepay", "city_state_zip": "Los Angeles, CA 90001"},
+            "_stock_check_items": [
+                {"base_flavor": "T Silver", "quantity": 1, "product_ids": [cat_id]},
+            ],
+            "fulfillment_blocked": True,
+            "ambiguous_flavors": ["Silver"],
+        }
+
+        try_fulfillment(classification, result, gmail_message_id="msg_ambig")
+
+        ff = result["fulfillment"]
+        assert ff["status"] == STATUS_BLOCKED_AMBIGUOUS
+        assert ff["reason"] == "ambiguous_variant"

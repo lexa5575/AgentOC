@@ -167,7 +167,9 @@ If the email contains a clear product list/table, extract:
   Keep non-Tera brands intact: "ONE Green" → "ONE Green", "PRIME Black" → "PRIME Black"
 - quantity: number of units (default 1)
 
-Extract order_items for new_order, price_question, stock_question, AND oos_followup situations.
+Extract order_items for new_order, payment_received, price_question, stock_question, AND oos_followup situations.
+For payment_received: if the customer mentions specific products in the same message
+(e.g. "send me 1 Silver, I just paid"), extract them as order_items.
 For stock_question: extract ALL products or regions being asked about as separate
 order_items (quantity defaults to 1). If the customer asks about multiple categories
 (e.g. "any European? and Japan regular?"), create one order_item per category/product.
@@ -213,7 +215,7 @@ Field rules:
 - customer_street: street address only, or null
 - customer_city_state_zip: "City, State Zip", or null
 - items: what was ordered as free text, or null
-- order_items: structured list (for new_order and price_question), or null
+- order_items: structured list (for new_order, payment_received, price_question, stock_question, oos_followup), or null
 - is_followup: true/false
 - followup_to: "oos_email" / "payment_info" / "tracking_info" / "order_confirmation" / null
 - dialog_intent: "agrees_to_alternative" / "declines_alternative" / "confirms_payment" / "asks_question" / "provides_info" / null

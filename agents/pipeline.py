@@ -73,7 +73,7 @@ def _enrich_display_name_with_region(variant_id: int, display_name: str) -> str:
 # process_classified_email (moved from agents/reply_templates.py)
 # ---------------------------------------------------------------------------
 
-def process_classified_email(classification) -> dict:
+def process_classified_email(classification, gmail_message_id: str | None = None) -> dict:
     """Process a classified email: classify metadata and prepare router context.
 
     This function uses ZERO tokens and does not generate text replies.
@@ -264,6 +264,84 @@ def process_classified_email(classification) -> dict:
                     classification.client_email, ambiguous,
                 )
 
+    # Dual-intent resolve for payment_received:
+    # Classifier extracted order_items → client mentioned products + payment in same message.
+    # Only activate when NO explicit order_id — if order_id exists, the order was already
+    # created via new_order and ClientOrderItem records exist in DB.
+    has_explicit_order_id = bool((classification.order_id or "").strip())
+    # Set only for payment_received — controls latest-order fallback in trigger
+    if classification.situation == "payment_received":
+        result["has_explicit_order_id"] = has_explicit_order_id
+
+    if (
+        classification.situation == "payment_received"
+        and classification.order_items
+        and result["client_found"]
+        and not has_explicit_order_id
+    ):
+        # Guard: without gmail_message_id we can't generate unique PAY-* order_id
+        if not gmail_message_id:
+            logger.warning(
+                "Dual-intent payment_received for %s but no gmail_message_id — "
+                "skipping resolve to protect idempotency",
+                classification.client_email,
+            )
+            result["payment_items_unresolved"] = True
+        else:
+            items_for_check = [
+                {
+                    "product_name": oi.product_name,
+                    "base_flavor": oi.base_flavor,
+                    "quantity": oi.quantity,
+                    "original_product_name": oi.product_name,
+                }
+                for oi in classification.order_items
+            ]
+            items_for_check, resolve_alerts = resolve_order_items(items_for_check)
+            if resolve_alerts:
+                logger.warning(
+                    "Product resolution failed for payment_received %s: %s",
+                    classification.client_email, resolve_alerts,
+                )
+                result["payment_items_unresolved"] = True
+            else:
+                # Validate: product_ids, quantity, base_flavor, product_name
+                valid = all(
+                    item.get("product_ids")
+                    and item.get("quantity", 0) > 0
+                    and item.get("base_flavor")
+                    and item.get("product_name")
+                    for item in items_for_check
+                )
+                if not valid:
+                    logger.warning(
+                        "Partially resolved items for payment_received %s — skipping",
+                        classification.client_email,
+                    )
+                    result["payment_items_unresolved"] = True
+                else:
+                    result["_stock_check_items"] = items_for_check
+
+                    # Generate PAY-* order_id (order_id guaranteed empty here)
+                    auto_id = f"PAY-{gmail_message_id[-12:]}"
+                    classification.order_id = auto_id
+                    logger.info(
+                        "Auto-generated order_id=%s for payment_received %s",
+                        auto_id, classification.client_email,
+                    )
+
+                    # Ambiguous variant gate (same as new_order above)
+                    ambiguous = has_ambiguous_variants(
+                        items_for_check, client_email=classification.client_email,
+                    )
+                    if ambiguous:
+                        result["fulfillment_blocked"] = True
+                        result["ambiguous_flavors"] = ambiguous
+                        logger.warning(
+                            "Ambiguous variants for payment_received %s: %s — fulfillment blocked",
+                            classification.client_email, ambiguous,
+                        )
+
     # All reply generation is delegated to specialized handlers via router.
     result["needs_routing"] = True
     return result
@@ -438,46 +516,55 @@ def _persist_results(
     # product_ids, display_name, normalized product_name/base_flavor).
     # Fallback: raw classification.order_items (no variant data).
     if (
-        classification.situation == "new_order"
+        classification.situation in ("new_order", "payment_received")
         and classification.order_items
         and result["client_found"]
     ):
         stock_check_items = result.get("_stock_check_items") or []
         use_resolved = len(stock_check_items) == len(classification.order_items)
-        order_items_for_save = []
-        for i, oi in enumerate(classification.order_items):
-            if use_resolved:
-                sci = stock_check_items[i]
-                variant_id = extract_variant_id(
-                    sci.get("product_ids"),
-                    client_email=classification.client_email,
-                )
-                display_name = sci.get("display_name")
-                # If variant resolved but display_name has no region,
-                # recalculate with the resolved category
-                if variant_id and display_name:
-                    display_name = _enrich_display_name_with_region(
-                        variant_id, display_name,
+
+        # For payment_received: ONLY save if items were resolved.
+        # Raw classifier items without product_ids are garbage for fulfillment.
+        if classification.situation == "payment_received" and not use_resolved:
+            logger.info(
+                "Skipping ClientOrderItem save for payment_received %s: items not resolved",
+                classification.client_email,
+            )
+        else:
+            order_items_for_save = []
+            for i, oi in enumerate(classification.order_items):
+                if use_resolved:
+                    sci = stock_check_items[i]
+                    variant_id = extract_variant_id(
+                        sci.get("product_ids"),
+                        client_email=classification.client_email,
                     )
-                item = {
-                    "product_name": sci.get("product_name", oi.product_name),
-                    "base_flavor": sci.get("base_flavor", oi.base_flavor),
-                    "quantity": sci.get("quantity", oi.quantity),
-                    "variant_id": variant_id,
-                    "display_name_snapshot": display_name,
-                }
-            else:
-                item = {
-                    "product_name": oi.product_name,
-                    "base_flavor": oi.base_flavor,
-                    "quantity": oi.quantity,
-                }
-            order_items_for_save.append(item)
-        save_order_items(
-            client_email=classification.client_email,
-            order_id=classification.order_id,
-            order_items=order_items_for_save,
-        )
+                    display_name = sci.get("display_name")
+                    # If variant resolved but display_name has no region,
+                    # recalculate with the resolved category
+                    if variant_id and display_name:
+                        display_name = _enrich_display_name_with_region(
+                            variant_id, display_name,
+                        )
+                    item = {
+                        "product_name": sci.get("product_name", oi.product_name),
+                        "base_flavor": sci.get("base_flavor", oi.base_flavor),
+                        "quantity": sci.get("quantity", oi.quantity),
+                        "variant_id": variant_id,
+                        "display_name_snapshot": display_name,
+                    }
+                else:
+                    item = {
+                        "product_name": oi.product_name,
+                        "base_flavor": oi.base_flavor,
+                        "quantity": oi.quantity,
+                    }
+                order_items_for_save.append(item)
+            save_order_items(
+                client_email=classification.client_email,
+                order_id=classification.order_id,
+                order_items=order_items_for_save,
+            )
 
     # Step 6.1: OOS canonical replace — trusted source persistence gate (plan §7.3)
     _TRUSTED_PERSISTENCE_SOURCES = {"thread_extraction", "pending_oos"}
@@ -634,7 +721,7 @@ def classify_and_process(
             )
 
         # Step 2: Python processes (0 tokens — pure logic)
-        result = process_classified_email(classification)
+        result = process_classified_email(classification, gmail_message_id=gmail_message_id)
 
         # Attach gmail_thread_id and gmail_account for downstream context building
         result["gmail_thread_id"] = gmail_thread_id

@@ -50,8 +50,11 @@ def try_fulfillment(
 
     Order item sources (deterministic, no conversation_state):
     - new_order_postpay: result["_stock_check_items"] (from pipeline stock check)
-    - payment_received_prepay: ClientOrderItem table via classification.order_id,
-      with fallback to latest order if order_id lookup returns empty
+    - payment_received_prepay — 3 branches:
+      1. payment_items_unresolved=True → SKIPPED_UNRESOLVED, no DB fallback
+      2. _stock_check_items present → use directly (dual-intent, PAY-* order_id)
+      3. Normal → ClientOrderItem table via order_id; fallback to latest order
+         only when has_explicit_order_id=False
     """
     trigger_type = None
     event_id = None  # Track claimed event for exception safety
@@ -121,17 +124,59 @@ def try_fulfillment(
         if trigger_type == "new_order_postpay":
             stock_items = result.get("_stock_check_items")
         else:
-            # payment_received: deterministic from ClientOrderItem table
-            # Phase 4: unpack (ready_items, skipped_items) tuple
-            # primary: classification.order_id
-            stock_items, skipped_items = get_order_items_for_fulfillment(
-                client_email, order_id,
-            )
-            # fallback: if order_id didn't match, try latest order
-            if not stock_items and not skipped_items and order_id is not None:
-                stock_items, skipped_items = get_order_items_for_fulfillment(
-                    client_email, None,
+            # payment_received_prepay — 3 branches:
+
+            # Branch 1: Dual-intent resolve FAILED → block, NO DB fallback
+            if result.get("payment_items_unresolved"):
+                result["fulfillment"] = {
+                    "status": STATUS_SKIPPED_UNRESOLVED,
+                    "warehouse": None,
+                    "trigger_type": trigger_type,
+                    "reason": "payment_items_unresolved",
+                }
+                claim_fulfillment_event(
+                    client_email=client_email,
+                    order_id=order_id,
+                    trigger_type=trigger_type,
+                    status=STATUS_SKIPPED_UNRESOLVED,
+                    gmail_message_id=msg_id,
+                    details={"reason": "payment_items_unresolved"},
                 )
+                logger.warning(
+                    "Fulfillment skipped for %s: dual-intent items unresolved, "
+                    "no DB fallback",
+                    client_email,
+                )
+                return
+
+            # Branch 2: Dual-intent resolved → use freshly resolved items
+            if result.get("_stock_check_items"):
+                stock_items = result["_stock_check_items"]
+
+            # Branch 3: Normal payment_received → read from ClientOrderItem table
+            else:
+                stock_items, skipped_items = get_order_items_for_fulfillment(
+                    client_email, order_id,
+                )
+                # Fallback to latest order ONLY when order_id is NOT explicit.
+                # Explicit order_id not found → don't touch wrong order.
+                if not stock_items and not skipped_items and order_id is not None:
+                    # Defensive: compute explicit flag if pipeline didn't set it
+                    _AUTO_PREFIXES = ("PAY-", "AUTO-")
+                    is_explicit = result.get(
+                        "has_explicit_order_id",
+                        not order_id.startswith(_AUTO_PREFIXES),
+                    )
+                    if is_explicit:
+                        logger.warning(
+                            "Fulfillment: explicit order_id=%s not found in DB "
+                            "for %s — skipping latest-order fallback",
+                            order_id, client_email,
+                        )
+                    else:
+                        stock_items, skipped_items = get_order_items_for_fulfillment(
+                            client_email, None,
+                        )
 
         # 1.1 Phase 4 + 4.2: skipped_items gate (payment_received path)
         # If get_order_items_for_fulfillment returned skipped items,
