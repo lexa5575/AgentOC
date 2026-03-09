@@ -560,6 +560,21 @@ def _extract_base_flavor_from_label(label: str) -> str:
     return s.strip() or label
 
 
+def _extract_region_suffix_from_label(label: str) -> str:
+    """Extract region suffix from label like 'Tera PURPLE WAVE made in Middle East x2' → 'ME'."""
+    import re
+    _REGION_MAP = {
+        "middle east": "ME", "europe": "EU", "european": "EU",
+        "japan": "Japan", "japanese": "Japan",
+        "kazakhstan": "KZ", "armenia": "Armenia",
+    }
+    m = re.search(r"\bmade\s+in\s+(.+?)(?:\s+x\d+)?$", label, flags=re.IGNORECASE)
+    if m:
+        region_raw = m.group(1).strip().lower()
+        return _REGION_MAP.get(region_raw, "")
+    return ""
+
+
 def _extract_qty_from_label(label: str) -> int:
     """Extract quantity from label like 'Tera PURPLE WAVE made in Middle East x2'."""
     import re
@@ -593,15 +608,17 @@ def _merge_in_stock_items(
         for label in facts["ordered_items"]:
             bf = _extract_base_flavor_from_label(label)
             qty = _extract_qty_from_label(label)
+            region = _extract_region_suffix_from_label(label)
+            pn = f"{bf} {region}" if region else bf
             if bf.lower() not in oos_flavors:
                 in_stock.append({
                     "base_flavor": bf,
-                    "product_name": bf,
+                    "product_name": pn,
                     "ordered_qty": qty,
                 })
                 logger.info(
                     "Reconstructed in-stock item '%s' x%d from facts.ordered_items",
-                    bf, qty,
+                    pn, qty,
                 )
 
     if not in_stock:
@@ -926,6 +943,9 @@ def handle_oos_followup(
             # --- FALLBACK C: Classifier (NOT trusted for persistence/fulfillment) ---
             confirmed_from_classifier = _resolve_from_classifier(classification)
             if confirmed_from_classifier:
+                confirmed_from_classifier = _merge_in_stock_items(
+                    confirmed_from_classifier, result,
+                )
                 try:
                     resolved, _ = resolve_order_items(confirmed_from_classifier)
                     stock_result = check_stock_for_order(resolved)
