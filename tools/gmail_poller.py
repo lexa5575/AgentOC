@@ -124,12 +124,16 @@ def process_client_email(client_email: str, account: str = "default") -> str:
 
     client = _get_client(account=account)
 
-    # Search for unread messages from this sender
+    # Search for unread messages from this sender + website order notifications
     unread = client.search_unread_from(client_email, max_results=5)
 
-    # Fallback: website orders come from order@shipmecarton.com with client email in body
-    if not unread:
-        unread = client.search_unread_order_notifications(client_email)
+    # Also check website order notifications (from order@shipmecarton.com)
+    # Merge both sources — client may have direct emails AND site orders
+    order_notifs = client.search_unread_order_notifications(client_email)
+    seen_ids = {m["msg_id"] for m in unread}
+    for notif in order_notifs:
+        if notif["msg_id"] not in seen_ids:
+            unread.append(notif)
 
     if not unread:
         return f"Нет непрочитанных писем от {client_email}."
