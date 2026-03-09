@@ -925,13 +925,14 @@ def test_has_ambiguous_variants_backward_compat_alias():
 
 def test_extract_variant_id_cross_family_resolved_from_history(monkeypatch):
     """Cross-family ambiguity resolved by client order history."""
+    import db.stock as _stock_mod
     catalog = [
         {"id": 21, "category": "TEREA_EUROPE", "name_norm": "teak"},
         {"id": 58, "category": "ARMENIA", "name_norm": "teak"},
     ]
     # Mock _resolve_variant_from_history to return 58 (ARMENIA/ME)
     monkeypatch.setattr(
-        "db.stock._resolve_variant_from_history",
+        _stock_mod, "_resolve_variant_from_history",
         lambda email, pids: 58 if email == "client@example.com" else None,
     )
     result = extract_variant_id(
@@ -942,12 +943,13 @@ def test_extract_variant_id_cross_family_resolved_from_history(monkeypatch):
 
 def test_extract_variant_id_cross_family_no_history(monkeypatch):
     """Cross-family ambiguity with no history → None."""
+    import db.stock as _stock_mod
     catalog = [
         {"id": 21, "category": "TEREA_EUROPE", "name_norm": "teak"},
         {"id": 58, "category": "ARMENIA", "name_norm": "teak"},
     ]
     monkeypatch.setattr(
-        "db.stock._resolve_variant_from_history",
+        _stock_mod, "_resolve_variant_from_history",
         lambda email, pids: None,
     )
     result = extract_variant_id(
@@ -958,6 +960,7 @@ def test_extract_variant_id_cross_family_no_history(monkeypatch):
 
 def test_has_ambiguous_variants_resolved_from_history(monkeypatch):
     """Cross-family items resolved by history → not ambiguous."""
+    import db.stock as _stock_mod
     catalog = [
         {"id": 21, "category": "TEREA_EUROPE", "name_norm": "teak"},
         {"id": 58, "category": "ARMENIA", "name_norm": "teak"},
@@ -966,7 +969,7 @@ def test_has_ambiguous_variants_resolved_from_history(monkeypatch):
         {"base_flavor": "Teak", "product_ids": [21, 58]},
     ]
     monkeypatch.setattr(
-        "db.stock._resolve_variant_from_history",
+        _stock_mod, "_resolve_variant_from_history",
         lambda email, pids: 58,
     )
     result = has_ambiguous_variants(items, catalog_entries=catalog, client_email="client@example.com")
@@ -975,6 +978,7 @@ def test_has_ambiguous_variants_resolved_from_history(monkeypatch):
 
 def test_has_ambiguous_variants_no_history_still_ambiguous(monkeypatch):
     """Cross-family items without history → still ambiguous."""
+    import db.stock as _stock_mod
     catalog = [
         {"id": 21, "category": "TEREA_EUROPE", "name_norm": "teak"},
         {"id": 58, "category": "ARMENIA", "name_norm": "teak"},
@@ -983,7 +987,7 @@ def test_has_ambiguous_variants_no_history_still_ambiguous(monkeypatch):
         {"base_flavor": "Teak", "product_ids": [21, 58]},
     ]
     monkeypatch.setattr(
-        "db.stock._resolve_variant_from_history",
+        _stock_mod, "_resolve_variant_from_history",
         lambda email, pids: None,
     )
     result = has_ambiguous_variants(items, catalog_entries=catalog, client_email="client@example.com")
