@@ -547,6 +547,49 @@ def _build_pending_qty_map(pending: dict) -> dict[str, int]:
     return qty_map
 
 
+def _merge_in_stock_items(
+    extracted_items: list[dict],
+    result: dict,
+) -> list[dict]:
+    """Merge in-stock items from pending_oos_resolution into extracted items.
+
+    Thread extraction only returns items the customer mentioned (substitutions).
+    Original in-stock items (not OOS) must be preserved in the final order.
+    Skips items whose base_flavor already appears in extracted (avoids duplicates).
+    """
+    state = result.get("conversation_state") or {}
+    facts = state.get("facts") or {}
+    pending = facts.get("pending_oos_resolution")
+    if not pending:
+        return extracted_items
+
+    in_stock = pending.get("in_stock_items", [])
+    if not in_stock:
+        return extracted_items
+
+    # Collect flavors already in extracted (lowercase for matching)
+    extracted_flavors = {
+        (item.get("base_flavor") or "").strip().lower()
+        for item in extracted_items
+    }
+
+    merged = list(extracted_items)
+    for item in in_stock:
+        bf = (item.get("base_flavor") or "").strip()
+        if bf.lower() not in extracted_flavors:
+            merged.append({
+                "base_flavor": bf,
+                "product_name": item.get("product_name", bf),
+                "quantity": item.get("ordered_qty", 1),
+            })
+            logger.info(
+                "Merged in-stock item '%s' x%d into extraction result",
+                bf, item.get("ordered_qty", 1),
+            )
+
+    return merged
+
+
 def _enrich_qty_from_pending(
     extracted_items: list[dict],
     result: dict,
@@ -658,7 +701,8 @@ def _extract_agreed_items_from_thread(
             "Rules:\n"
             "- Apply any customer modifications to quantities or flavors\n"
             "- If customer says 'Ok', 'Sounds good', etc. → accept the latest proposal as-is\n"
-            "- Return ONLY items the customer agreed to receive\n"
+            "- Return the COMPLETE FINAL order: keep all in-stock items from the original order "
+            "AND apply substitutions for out-of-stock items\n"
             "- Each item must have: product_name, base_flavor, quantity\n"
             "- IMPORTANT: preserve the region/origin in product_name as a SUFFIX:\n"
             '  "EU Bronze" or "Bronze EU" → product_name: "Bronze EU"\n'
@@ -762,6 +806,7 @@ def handle_oos_followup(
                 if extracted:
                     try:
                         extracted = _enrich_qty_from_pending(extracted, result, clean_text)
+                        extracted = _merge_in_stock_items(extracted, result)
                         resolved, _ = resolve_order_items(extracted)
                         stock_result = check_stock_for_order(resolved)
                         if stock_result["all_in_stock"]:
