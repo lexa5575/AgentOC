@@ -534,6 +534,14 @@ def classify_and_process(
         Formatted classification result with draft reply if template exists.
     """
     try:
+        # Step 0: Skip emails with empty body (e.g. inline image only, no text)
+        _body_marker = "Body:"
+        _body_idx = email_text.find(_body_marker)
+        _body_content = email_text[_body_idx + len(_body_marker):].strip() if _body_idx >= 0 else email_text.strip()
+        if not _body_content:
+            logger.info("Skipping email with empty body (gmail_message_id=%s)", gmail_message_id)
+            return "Пропущено: письмо без текста (возможно, только изображение/вложение)."
+
         # Step 0.5: Get conversation state + thread history for classifier context
         context_str, pre_state_record = build_classifier_context(gmail_thread_id, email_text, gmail_account=gmail_account)
 
