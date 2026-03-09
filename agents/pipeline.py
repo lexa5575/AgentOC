@@ -47,6 +47,28 @@ from utils.telegram import send_telegram
 logger = logging.getLogger(__name__)
 
 
+def _enrich_display_name_with_region(variant_id: int, display_name: str) -> str:
+    """Add region suffix to display_name if variant_id maps to a known category.
+
+    When resolver returns a generic name (e.g. "Terea Teak") because multiple
+    regions exist, but variant_id is resolved (e.g. from client history),
+    replace with region-specific name (e.g. "Terea Teak ME").
+    """
+    from db.region_family import CATEGORY_REGION_SUFFIX
+    try:
+        from db.catalog import get_catalog_products
+        for entry in get_catalog_products():
+            if entry["id"] == variant_id:
+                region = CATEGORY_REGION_SUFFIX.get(entry["category"])
+                if region and not display_name.rstrip().endswith(region):
+                    from db.catalog import get_display_name
+                    return get_display_name(entry["stock_name"], entry["category"])
+                return display_name
+    except Exception:
+        pass
+    return display_name
+
+
 # ---------------------------------------------------------------------------
 # process_classified_email (moved from agents/reply_templates.py)
 # ---------------------------------------------------------------------------
@@ -207,7 +229,7 @@ def process_classified_email(classification) -> dict:
             # Prefer resolved display_name (region-aware) over entries[0].category
             from db.catalog import get_display_name
             summary_parts = []
-            for item in stock_result["items"]:
+            for idx, item in enumerate(stock_result["items"]):
                 display = item.get("display_name")
                 if not display:
                     cat = ""
@@ -216,6 +238,15 @@ def process_classified_email(classification) -> dict:
                         cat = entries[0].get("category", "")
                     name = item.get("product_name") or item.get("base_flavor", "")
                     display = get_display_name(name, cat)
+                # If display_name has no region, try to resolve via variant_id
+                sci = items_for_check[idx] if idx < len(items_for_check) else None
+                if sci and sci.get("product_ids"):
+                    vid = extract_variant_id(
+                        sci["product_ids"],
+                        client_email=classification.client_email,
+                    )
+                    if vid:
+                        display = _enrich_display_name_with_region(vid, display)
                 summary_parts.append(f"{item['ordered_qty']} x {display}")
             result["order_summary"] = ", ".join(summary_parts)
             result["_stock_check_items"] = items_for_check
@@ -417,15 +448,23 @@ def _persist_results(
         for i, oi in enumerate(classification.order_items):
             if use_resolved:
                 sci = stock_check_items[i]
+                variant_id = extract_variant_id(
+                    sci.get("product_ids"),
+                    client_email=classification.client_email,
+                )
+                display_name = sci.get("display_name")
+                # If variant resolved but display_name has no region,
+                # recalculate with the resolved category
+                if variant_id and display_name:
+                    display_name = _enrich_display_name_with_region(
+                        variant_id, display_name,
+                    )
                 item = {
                     "product_name": sci.get("product_name", oi.product_name),
                     "base_flavor": sci.get("base_flavor", oi.base_flavor),
                     "quantity": sci.get("quantity", oi.quantity),
-                    "variant_id": extract_variant_id(
-                        sci.get("product_ids"),
-                        client_email=classification.client_email,
-                    ),
-                    "display_name_snapshot": sci.get("display_name"),
+                    "variant_id": variant_id,
+                    "display_name_snapshot": display_name,
                 }
             else:
                 item = {
@@ -458,13 +497,17 @@ def _persist_results(
                     }
                     if i < len(oos_stock_check):
                         sci = oos_stock_check[i]
-                        entry["variant_id"] = extract_variant_id(
+                        oos_variant = extract_variant_id(
                             sci.get("product_ids"),
                             client_email=classification.client_email,
                         )
-                        entry["display_name_snapshot"] = (
-                            sci.get("display_name") or item.get("display_name")
-                        )
+                        entry["variant_id"] = oos_variant
+                        oos_display = sci.get("display_name") or item.get("display_name")
+                        if oos_variant and oos_display:
+                            oos_display = _enrich_display_name_with_region(
+                                oos_variant, oos_display,
+                            )
+                        entry["display_name_snapshot"] = oos_display
                     oos_items_for_replace.append(entry)
                 replace_order_items(
                     client_email=classification.client_email,
