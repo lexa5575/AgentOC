@@ -78,6 +78,8 @@ we must confirm the order details. These are NOT simple acknowledgments.
     "Can I get 4 cartons of Y?", "Could you send 1 box of Z?"
   KEY RULE: if the customer specifies both a product name AND a quantity (number of boxes/cartons/units),
   classify as new_order — not price_question. Specific quantities = purchase intent.
+  NOT new_order: "hold for me", "reserve", "save", "set aside", "keep for me", "hold on to" —
+  these are requests to reserve product for a FUTURE order, not an actual order. Classify as "other".
 - "tracking" — asks about delivery status, tracking number, "where is my order?"
 - "price_question" — asks HOW MUCH something costs WITHOUT specifying quantity, requests a price quote
   ("how much for Green?", "what's the price of Blue?", "can you give me a price?")
