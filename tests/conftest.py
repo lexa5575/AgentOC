@@ -36,6 +36,7 @@ def db_session(monkeypatch):
         "db.product_resolver",
         "db.fulfillment",
         "db.catalog",
+        "db.shipping",
     ):
         try:
             module = importlib.import_module(module_name)

@@ -58,6 +58,8 @@ services:
       - STOCK_WAREHOUSES=${STOCK_WAREHOUSES:-}
       - STOCK_SYNC_INTERVAL=${STOCK_SYNC_INTERVAL:-300}
       - STOCK_WAREHOUSE_NAME=${STOCK_WAREHOUSE_NAME:-}
+      # Shipping (PirateShip auto-fill)
+      - SHIPPING_API_TOKEN=${SHIPPING_API_TOKEN:-}
     depends_on:
       - agentos-db
     networks:

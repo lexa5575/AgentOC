@@ -54,6 +54,8 @@ services:
       - GMAIL_REFRESH_TOKEN=${GMAIL_REFRESH_TOKEN:-}
       - GMAIL_REFRESH_TOKEN_TILDA=${GMAIL_REFRESH_TOKEN_TILDA:-}
       - STOCK_WAREHOUSES=${STOCK_WAREHOUSES:-}
+      # Shipping (PirateShip auto-fill)
+      - SHIPPING_API_TOKEN=${SHIPPING_API_TOKEN:-}
     depends_on:
       - agentos-db
     networks:

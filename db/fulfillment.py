@@ -356,6 +356,15 @@ def increment_maks_sales(warehouse: str, matched_items: list[dict]) -> dict:
 
 # ── Deterministic order-item source for payment_received ─────────────
 
+class _ItemList(list):
+    """List subclass that carries resolved_order_id attribute.
+
+    Non-breaking: existing callers unpack 2-tuple normally.
+    Shipping hook reads resolved_order_id via getattr().
+    """
+    resolved_order_id: str | None = None
+
+
 def get_order_items_for_fulfillment(
     client_email: str,
     order_id: str | None = None,
@@ -393,6 +402,7 @@ def get_order_items_for_fulfillment(
         email = client_email.lower().strip()
         q = session.query(ClientOrderItem).filter_by(client_email=email)
 
+        actual_order_id = order_id  # tracks resolved order_id for shipping
         if order_id:
             items = q.filter_by(order_id=order_id).all()
         else:
@@ -400,12 +410,13 @@ def get_order_items_for_fulfillment(
             latest = q.order_by(ClientOrderItem.created_at.desc()).first()
             if not latest or not latest.order_id:
                 return [], []
+            actual_order_id = latest.order_id
             items = q.filter_by(order_id=latest.order_id).all()
 
         if not items:
             return [], []
 
-        ready = []
+        ready = _ItemList()
         skipped = []
         catalog_entries = None  # lazy-loaded for legacy re-resolve
 
@@ -531,6 +542,7 @@ def get_order_items_for_fulfillment(
             )
             return [], skipped
 
+        ready.resolved_order_id = actual_order_id
         return ready, skipped
     finally:
         session.close()

@@ -17,6 +17,7 @@ Claim lifecycle:
 """
 
 import logging
+from os import getenv
 
 from db.fulfillment import (
     STATUS_BLOCKED_AMBIGUOUS,
@@ -89,6 +90,7 @@ def try_fulfillment(
         # Normalize IDs: empty/whitespace-only -> None
         raw_order_id = getattr(classification, "order_id", None) or ""
         order_id = raw_order_id.strip() or None
+        _resolved_oid = order_id  # default; overwritten only in Branch 3
         msg_id = gmail_message_id or None
         client_email = classification.client_email
 
@@ -158,6 +160,7 @@ def try_fulfillment(
                 stock_items, skipped_items = get_order_items_for_fulfillment(
                     client_email, order_id,
                 )
+                _resolved_oid = getattr(stock_items, "resolved_order_id", None) or order_id
                 # Fallback to latest order ONLY when order_id is NOT explicit.
                 # Explicit order_id not found → don't touch wrong order.
                 if not stock_items and not skipped_items and order_id is not None:
@@ -177,6 +180,7 @@ def try_fulfillment(
                         stock_items, skipped_items = get_order_items_for_fulfillment(
                             client_email, None,
                         )
+                        _resolved_oid = getattr(stock_items, "resolved_order_id", None) or order_id
 
         # 1.1 Phase 4 + 4.2: skipped_items gate (payment_received path)
         # If get_order_items_for_fulfillment returned skipped items,
@@ -386,6 +390,59 @@ def try_fulfillment(
                     result["fulfillment"].get("error", "")
                     + "; finalize_fulfillment_event failed"
                 ).lstrip("; ")
+
+            # Shipping job hook: create PirateShip auto-fill job
+            if finalized and final_status == STATUS_UPDATED and bool(getenv("SHIPPING_API_TOKEN", "")):
+                _saved_event_id = event_id  # capture before zeroing
+                try:
+                    from db.clients import get_client as _get_client
+                    from db.shipping import create_shipping_job, get_order_shipping_address
+                    from db.stock import get_product_type
+
+                    # Address source chain:
+                    # 1. OrderShippingAddress by resolved_order_id (preferred)
+                    # 2. Client record (both street + csz must be non-empty)
+                    # 3. Skip + Telegram alert
+                    _addr = get_order_shipping_address(client_email, _resolved_oid)
+                    _addr_source = "order_snapshot"
+
+                    if not _addr:
+                        _fresh = _get_client(client_email) or {}
+                        _s = _fresh.get("street", "")
+                        _c = _fresh.get("city_state_zip", "")
+                        _n = _fresh.get("name", "")
+                        if _s and _c and _n:
+                            _addr = {"client_name": _n, "street": _s, "city_state_zip": _c}
+                            _addr_source = "client_record"
+
+                    if _addr:
+                        ps_items = [{
+                            "base_flavor": m["base_flavor"],
+                            "quantity": m["ordered_qty"],
+                            "product_type": get_product_type(m["base_flavor"]),
+                        } for m in fulfillment["matched_items"]]
+
+                        create_shipping_job(
+                            fulfillment_event_id=_saved_event_id,
+                            client_email=client_email,
+                            order_id=_resolved_oid,
+                            client_name=_addr["client_name"],
+                            street=_addr["street"],
+                            city_state_zip=_addr["city_state_zip"],
+                            address_source=_addr_source,
+                            warehouse=wh,
+                            items=ps_items,
+                        )
+                    else:
+                        from utils.telegram import send_telegram
+                        logger.warning("No address for shipping job: %s order=%s", client_email, _resolved_oid)
+                        send_telegram(
+                            f"⚠️ <b>Shipping job skipped</b>\n"
+                            f"Client: {client_email}\nOrder: {_resolved_oid}\n"
+                            f"No address found. Fill PirateShip manually.",
+                        )
+                except Exception:
+                    logger.exception("Failed to create shipping job for %s", client_email)
 
             # Clear event_id — finalized successfully, no cleanup needed
             event_id = None

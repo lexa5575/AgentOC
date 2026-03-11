@@ -172,6 +172,70 @@ async def trigger_stock_reanalyze():
     return {"reanalyzed": len(configs), "sync_result": result}
 
 
+# ---------------------------------------------------------------------------
+# Shipping Job API — fail-closed (endpoints only registered if token set)
+# ---------------------------------------------------------------------------
+
+_SHIPPING_TOKEN = getenv("SHIPPING_API_TOKEN", "").strip()
+
+if _SHIPPING_TOKEN:
+    from fastapi import Header, HTTPException
+
+    def _check_shipping_token(x_shipping_token: str = Header(...)) -> None:
+        if x_shipping_token != _SHIPPING_TOKEN:
+            raise HTTPException(status_code=403, detail="invalid token")
+
+    @app.post("/api/shipping/claim")
+    async def shipping_claim(x_shipping_token: str = Header(...)):
+        """Claim the next pending shipping job."""
+        _check_shipping_token(x_shipping_token)
+        from db.shipping import claim_next_shipping_job
+
+        job = claim_next_shipping_job()
+        if not job:
+            return {"status": "empty"}
+        return {"status": "ok", "job": job}
+
+    @app.post("/api/shipping/{job_id}/complete")
+    async def shipping_complete(
+        job_id: int,
+        body: dict,
+        x_shipping_token: str = Header(...),
+    ):
+        """Mark a claimed job as filled."""
+        _check_shipping_token(x_shipping_token)
+        from db.shipping import complete_shipping_job
+
+        claim_token = body.get("claim_token", "")
+        ok = complete_shipping_job(job_id, claim_token)
+        if ok:
+            return {"status": "ok"}
+        return {"status": "invalid_token_or_state"}
+
+    @app.post("/api/shipping/{job_id}/fail")
+    async def shipping_fail(
+        job_id: int,
+        body: dict,
+        x_shipping_token: str = Header(...),
+    ):
+        """Fail or requeue a claimed job."""
+        _check_shipping_token(x_shipping_token)
+        from db.shipping import fail_shipping_job
+
+        claim_token = body.get("claim_token", "")
+        error = body.get("error", "unknown")
+        permanent = body.get("permanent", False)
+        reset_retry = body.get("reset_retry", False)
+        ok = fail_shipping_job(job_id, claim_token, error, permanent=permanent, reset_retry=reset_retry)
+        if ok:
+            return {"status": "ok"}
+        return {"status": "invalid_token_or_state"}
+
+    logger.info("Shipping API endpoints registered (token configured)")
+else:
+    logger.info("Shipping API endpoints NOT registered (SHIPPING_API_TOKEN empty)")
+
+
 if __name__ == "__main__":
     agent_os.serve(
         app="main:app",

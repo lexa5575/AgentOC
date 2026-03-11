@@ -639,6 +639,30 @@ def _persist_results(
         except Exception as e:
             logger.warning("Failed to auto-save address: %s", e)
 
+    # Step 6.6: Save OrderShippingAddress for trusted situations
+    _oid = (getattr(classification, "order_id", None) or "").strip()
+    _is_trusted_snapshot_source = (
+        classification.situation == "new_order"
+        or (classification.situation == "payment_received" and _oid.startswith("PAY-"))
+    )
+    if (
+        _oid
+        and classification.customer_street
+        and classification.customer_city_state_zip
+        and _is_trusted_snapshot_source
+    ):
+        try:
+            from db.shipping import save_order_shipping_address
+            save_order_shipping_address(
+                email=classification.client_email,
+                order_id=_oid,
+                name=getattr(classification, "client_name", "") or client.get("name", ""),
+                street=classification.customer_street,
+                csz=classification.customer_city_state_zip,
+            )
+        except Exception as e:
+            logger.warning("Failed to save shipping address snapshot: %s", e)
+
     # Step 7: Auto-refresh client summary if stale
     if result["client_found"]:
         try:

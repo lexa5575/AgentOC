@@ -254,6 +254,56 @@ class FulfillmentEvent(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class OrderShippingAddress(Base):
+    """Shipping address snapshot, keyed to order. UPSERT on new_order emails.
+    Address is copied into ShippingJob at creation and frozen there."""
+
+    __tablename__ = "order_shipping_addresses"
+    __table_args__ = (
+        UniqueConstraint("client_email", "order_id", name="uq_order_shipping_addr"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    client_email = Column(String, nullable=False, index=True)
+    order_id = Column(String, nullable=False)
+    client_name = Column(String, nullable=False)
+    street = Column(String, nullable=False)
+    city_state_zip = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ShippingJob(Base):
+    """Auto-fill job for PirateShip. Created after successful fulfillment."""
+
+    __tablename__ = "shipping_jobs"
+    __table_args__ = (
+        UniqueConstraint("fulfillment_event_id", name="uq_shipping_fulfillment"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    fulfillment_event_id = Column(Integer, ForeignKey("fulfillment_events.id"), nullable=False)
+    client_email = Column(String, nullable=False, index=True)
+    order_id = Column(String, nullable=True)
+    client_name = Column(String, nullable=False)
+    street = Column(String, nullable=False)
+    city = Column(String, nullable=False)
+    state = Column(String, nullable=False)
+    zipcode = Column(String, nullable=False)
+    address_source = Column(String, nullable=False)  # "order_snapshot" or "client_record"
+    warehouse = Column(String, nullable=False)
+    items_json = Column(Text, nullable=False)
+    package_type = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="pending")  # pending/claimed/filled/failed
+    claim_token = Column(String, nullable=True)
+    claimed_until = Column(DateTime, nullable=True)
+    retry_count = Column(Integer, nullable=False, default=0)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    claimed_at = Column(DateTime, nullable=True)
+    filled_at = Column(DateTime, nullable=True)
+
+
 def get_session() -> Session:
     """Create a new database session."""
     return Session(engine)
