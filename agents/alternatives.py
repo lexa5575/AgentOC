@@ -43,16 +43,37 @@ the same region from their perspective. Treat them as interchangeable.
 
 ## Product types
 STICKS (tobacco consumables for IQOS devices):
-- Terea EU: Turquoise (menthol/fresh), Green (strong menthol), Silver (classic tobacco),
-  Purple Wave (berry), Warm Regular (warm tobacco), Amber (rich), Bronze (mild)
-- Terea ME (Armenia + KZ): same flavor profiles as EU, different production region
-- Terea Japan: T Mint (strong mint), T Silver (classic), T Purple (grape)
-- Menthol family: Turquoise, Green, T Mint — all cooling/fresh
-- Classic family: Silver, Warm Regular, Amber, Bronze — no menthol
 
 DEVICES (IQOS hardware, NOT consumables):
 - ONE, STND, PRIME — available in colors (Green, Red, Black, Silver, etc.)
 - Only suggest device alternatives when the OOS item is also a device.
+
+## Flavor families (CRITICAL for matching alternatives)
+When a flavor is OOS, suggest alternatives from the SAME family first.
+NEVER suggest menthol to a classic customer or vice versa.
+
+CLASSIC / TOBACCO (no menthol, no fruit — smooth tobacco):
+- Silver, T Silver, T Regular, Clear, Warm Regular, T Rich, T Smooth,
+  T Balanced, Amber, Bronze, Teak, Sienna/Siena, Russet, Beige
+
+MENTHOL / COOLING (mint, menthol, fresh):
+- Green, Turquoise, T Mint, T Menthol, Bright Menthol, Fusion Menthol,
+  Kelly, Briza, Willow
+
+BERRY / FRUIT (fruity, sweet, aromatic):
+- Purple, T Purple, Ruby, Ruby Wave, Ruby Fuse, Ruby Regular,
+  Black Ruby Menthol, Black Purple Menthol, Black Tropical Menthol,
+  Black Yellow Menthol, Mauve, Sakura, Twilight, Amelia
+
+CITRUS / TROPICAL (citrus, tropical notes):
+- Yellow, T Lemon, Sun Pearl, Oasis, Oasis Pearl, Oasis JP, T Tropical,
+  Summer, Blue, Velvet Pearl
+
+WARM / AROMATIC (warm, nutty, spiced):
+- Starling, Teak, Kona, Abore Pearl, Sof Fuse
+
+KEY RULE: A customer ordering Clear (classic tobacco) should get Silver,
+Amber, Bronze, T Regular, Warm Regular — NOT Green, Turquoise, or Menthol.
 
 ## Selection rules
 - ONLY use keys EXACTLY as listed in AVAILABLE STOCK — never invent new ones
