@@ -170,6 +170,24 @@ If the email contains a clear product list/table, extract:
   "yellow menthol" → "Yellow Menthol", "black purple menthol" → "Black Purple Menthol"
   Keep non-Tera brands intact: "ONE Green" → "ONE Green", "PRIME Black" → "PRIME Black"
 - quantity: number of units (default 1)
+- region_preference: ordered list of preferred region codes when customer
+  expresses a SOFT regional preference in conversational text.
+  Valid codes: "EU", "ME", "JAPAN". First element = most preferred.
+  null when no preference or when region is already in product_name.
+- strict_region: true if customer ONLY wants the specified region
+  (e.g. "EU only", "only Japan"), false if alternatives acceptable.
+
+  Examples:
+  - "Turquoise EU" → product_name="Turquoise EU", region_preference=null
+    (region IN name → resolver handles it, no preference needed)
+  - "Turquoise, ME is ok if no EU" → product_name="Turquoise",
+    region_preference=["EU","ME"], strict_region=false
+  - "Turquoise EU only" → product_name="Turquoise",
+    region_preference=["EU"], strict_region=true
+  - "Turquoise" (no region mention) → region_preference=null
+
+  IMPORTANT: Do NOT set region_preference when region is part of product_name
+  (e.g. "Turquoise EU", "Green made in Middle East"). Only for SOFT preferences.
 
 Extract order_items for new_order, payment_received, price_question, stock_question, AND oos_followup situations.
 For payment_received: if the customer mentions specific products in the same message
@@ -208,7 +226,8 @@ Return ONLY this JSON (no markdown, no code fences):
   "customer_city_state_zip": "Chicago, Illinois 60601",
   "items": "Tera Green made in Middle East x 2",
   "order_items": [
-    {"product_name": "Tera Green made in Middle East", "base_flavor": "Green", "quantity": 2}
+    {"product_name": "Tera Green made in Middle East", "base_flavor": "Green", "quantity": 2,
+     "region_preference": null, "strict_region": false}
   ]
 }
 
@@ -223,6 +242,8 @@ Field rules:
 - is_followup: true/false
 - followup_to: "oos_email" / "payment_info" / "tracking_info" / "order_confirmation" / null
 - dialog_intent: "agrees_to_alternative" / "declines_alternative" / "confirms_payment" / "asks_question" / "provides_info" / null
+- order_items[].region_preference: list of "EU"/"ME"/"JAPAN" or null. Only for soft preferences.
+- order_items[].strict_region: boolean, default false
 
 CRITICAL: Return a FLAT JSON object with exactly these field names. No extra nesting beyond order_items array.
 """
@@ -421,6 +442,8 @@ def run_classification(
                     product_name=item.get("product_name", ""),
                     base_flavor=item.get("base_flavor", ""),
                     quantity=item.get("quantity", 1),
+                    region_preference=item.get("region_preference"),
+                    strict_region=item.get("strict_region", False),
                 )
                 for item in raw_order_items
                 if item.get("base_flavor")

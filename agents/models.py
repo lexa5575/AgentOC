@@ -4,7 +4,7 @@ Data models for email classification and order items.
 
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class OrderItem(BaseModel):
@@ -13,6 +13,45 @@ class OrderItem(BaseModel):
     product_name: str = Field(description="Full product name as on order, e.g. 'Tera Green made in Middle East'")
     base_flavor: str = Field(description="Base flavor/color only, e.g. 'Green', 'Turquoise', 'Silver'")
     quantity: int = Field(default=1, description="Number of units ordered")
+    region_preference: list[str] | None = Field(
+        default=None,
+        description="Ordered list of preferred region families: 'EU', 'ME', 'JAPAN'. "
+                    "First = most preferred. None = no preference.",
+    )
+    strict_region: bool = Field(
+        default=False,
+        description="True = ONLY first region acceptable. "
+                    "False = try regions in order, use first with stock.",
+    )
+
+    @field_validator("region_preference", mode="before")
+    @classmethod
+    def normalize_region_preference(cls, v):
+        """Normalize LLM output: lowercase/alias → canonical codes."""
+        if v is None:
+            return None
+        # Guard: non-iterable garbage (int, bool, dict, etc.) → None
+        if not isinstance(v, (str, list, tuple)):
+            return None
+        # Handle string input (LLM may send "EU" instead of ["EU"])
+        if isinstance(v, str):
+            v = [v]
+        _ALIASES = {
+            "eu": "EU", "europe": "EU", "european": "EU",
+            "me": "ME", "middle east": "ME",
+            "japan": "JAPAN", "japanese": "JAPAN", "jp": "JAPAN",
+        }
+        _VALID = {"EU", "ME", "JAPAN"}
+        seen: set[str] = set()
+        result: list[str] = []
+        for code in v:
+            if not isinstance(code, str):
+                continue
+            normalized = _ALIASES.get(code.lower().strip(), code.upper().strip())
+            if normalized in _VALID and normalized not in seen:
+                seen.add(normalized)
+                result.append(normalized)
+        return result if result else None
 
 
 class EmailClassification(BaseModel):

@@ -41,6 +41,7 @@ from db.memory import (
     select_best_alternatives,
     update_client,
 )
+from db.region_preference import apply_region_preference
 from db.stock import extract_variant_id, has_ambiguous_variants
 from utils.telegram import send_telegram
 
@@ -125,6 +126,8 @@ def process_classified_email(classification, gmail_message_id: str | None = None
                     "base_flavor": oi.base_flavor,
                     "quantity": oi.quantity,
                     "original_product_name": oi.product_name,
+                    "region_preference": getattr(oi, "region_preference", None),
+                    "strict_region": getattr(oi, "strict_region", False),
                 }
                 for oi in classification.order_items
             ]
@@ -160,6 +163,9 @@ def process_classified_email(classification, gmail_message_id: str | None = None
                     "or escalate to the operator."
                 )
                 return result
+
+            # Apply region preference: narrow product_ids to one family
+            items_for_check = apply_region_preference(items_for_check)
 
             stock_result = check_stock_for_order(items_for_check)
 
@@ -294,6 +300,8 @@ def process_classified_email(classification, gmail_message_id: str | None = None
                     "base_flavor": oi.base_flavor,
                     "quantity": oi.quantity,
                     "original_product_name": oi.product_name,
+                    "region_preference": getattr(oi, "region_preference", None),
+                    "strict_region": getattr(oi, "strict_region", False),
                 }
                 for oi in classification.order_items
             ]
@@ -320,6 +328,8 @@ def process_classified_email(classification, gmail_message_id: str | None = None
                     )
                     result["payment_items_unresolved"] = True
                 else:
+                    # Apply region preference before ambiguity gate
+                    items_for_check = apply_region_preference(items_for_check)
                     result["_stock_check_items"] = items_for_check
 
                     # Generate PAY-* order_id (order_id guaranteed empty here)
