@@ -174,7 +174,7 @@ def _make_fulfillment_event(session_factory, email="test@example.com", order_id=
 
 class TestCreateShippingJob:
     def test_creates_pending_job(self, db_session, monkeypatch):
-        monkeypatch.setattr("utils.telegram.send_telegram", lambda *a, **kw: None)
+        monkeypatch.setattr("db.shipping.send_telegram", lambda *a, **kw: None)
         eid = _make_fulfillment_event(db_session)
 
         job_id = create_shipping_job(
@@ -204,7 +204,7 @@ class TestCreateShippingJob:
 
     def test_unparseable_address_returns_none(self, db_session, monkeypatch):
         sent = []
-        monkeypatch.setattr("utils.telegram.send_telegram", lambda msg, **kw: sent.append(msg))
+        monkeypatch.setattr("db.shipping.send_telegram", lambda msg, **kw: sent.append(msg))
         eid = _make_fulfillment_event(db_session)
 
         result = create_shipping_job(
@@ -223,7 +223,7 @@ class TestCreateShippingJob:
 
     def test_over_12_items_returns_none(self, db_session, monkeypatch):
         sent = []
-        monkeypatch.setattr("utils.telegram.send_telegram", lambda msg, **kw: sent.append(msg))
+        monkeypatch.setattr("db.shipping.send_telegram", lambda msg, **kw: sent.append(msg))
         eid = _make_fulfillment_event(db_session)
 
         result = create_shipping_job(
@@ -241,7 +241,7 @@ class TestCreateShippingJob:
         assert len(sent) == 1
 
     def test_duplicate_fulfillment_event_id(self, db_session, monkeypatch):
-        monkeypatch.setattr("utils.telegram.send_telegram", lambda *a, **kw: None)
+        monkeypatch.setattr("db.shipping.send_telegram", lambda *a, **kw: None)
         eid = _make_fulfillment_event(db_session)
 
         items = [{"base_flavor": "Green", "quantity": 1, "product_type": "stick"}]
@@ -260,7 +260,7 @@ class TestCreateShippingJob:
 
     def test_client_record_source_sends_telegram(self, db_session, monkeypatch):
         sent = []
-        monkeypatch.setattr("utils.telegram.send_telegram", lambda msg, **kw: sent.append(msg))
+        monkeypatch.setattr("db.shipping.send_telegram", lambda msg, **kw: sent.append(msg))
         eid = _make_fulfillment_event(db_session)
 
         create_shipping_job(
@@ -274,7 +274,7 @@ class TestCreateShippingJob:
 
 class TestJobQueue:
     def _create_job(self, db_session, monkeypatch, email="t@x.com", order_id="ORD-1"):
-        monkeypatch.setattr("utils.telegram.send_telegram", lambda *a, **kw: None)
+        monkeypatch.setattr("db.shipping.send_telegram", lambda *a, **kw: None)
         eid = _make_fulfillment_event(db_session, email=email, order_id=order_id)
         return create_shipping_job(
             fulfillment_event_id=eid, client_email=email, order_id=order_id,

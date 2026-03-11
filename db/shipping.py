@@ -17,6 +17,7 @@ from sqlalchemy.exc import IntegrityError
 
 from db.models import OrderShippingAddress, ShippingJob, get_session
 from db.warehouse_geo import STATE_NAME_TO_CODE, STATE_TO_WAREHOUSE
+from utils.telegram import send_telegram
 
 logger = logging.getLogger(__name__)
 
@@ -204,8 +205,6 @@ def create_shipping_job(
     Parses city_state_zip, computes package_type, inserts job.
     Returns job ID or None on failure.
     """
-    from utils.telegram import send_telegram
-
     parsed = parse_city_state_zip(city_state_zip)
     if not parsed:
         logger.error(
