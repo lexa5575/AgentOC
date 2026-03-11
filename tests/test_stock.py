@@ -1018,3 +1018,44 @@ def test_search_stock_still_uses_ilike():
     assert len(results) >= 1
     names = [r["product_name"] for r in results]
     assert any("Green" in n for n in names)
+
+
+# ---------------------------------------------------------------------------
+# Same-family dedup in select_best_alternatives Priority 0
+# ---------------------------------------------------------------------------
+
+@patch("db.stock.get_client_flavor_history", return_value=[])
+@patch("db.stock.get_product_type", return_value="STICK")
+@patch("db.stock._get_allowed_categories", return_value={"ARMENIA", "KZ_TEREA", "TEREA_EUROPE"})
+@patch("db.stock._get_available_items")
+@patch("db.product_resolver.resolve_product_to_catalog")
+@patch("db.catalog.get_equivalent_norms", return_value={"silver"})
+@patch("agents.alternatives.get_llm_alternatives", return_value=[])
+def test_same_flavor_deduped_by_family(
+    _llm, _equiv, mock_resolve, mock_available, _cats, _type, _history,
+):
+    """ARMENIA Silver + KZ_TEREA Silver are both ME → only ONE 'same_flavor' alternative."""
+    from types import SimpleNamespace
+
+    mock_resolve.return_value = SimpleNamespace(product_ids=[71])  # EU Silver
+
+    # Available stock: Silver in ARMENIA (68) and KZ_TEREA (28)
+    mock_available.return_value = [
+        {"product_name": "T Silver", "category": "ARMENIA", "quantity": 68, "product_id": 17},
+        {"product_name": "T Silver", "category": "KZ_TEREA", "quantity": 28, "product_id": 24},
+        {"product_name": "T Amber", "category": "ARMENIA", "quantity": 70, "product_id": 10},
+    ]
+
+    result = select_best_alternatives(
+        client_email="test@example.com",
+        base_flavor="Silver",
+        original_product_name="Silver EU",
+    )
+
+    same_flavor_alts = [
+        a for a in result["alternatives"] if a["reason"] == "same_flavor"
+    ]
+    # Should be exactly 1 (deduped by ME family), not 2
+    assert len(same_flavor_alts) == 1
+    # Should pick ARMENIA (highest stock: 68 > 28)
+    assert same_flavor_alts[0]["alternative"]["category"] == "ARMENIA"

@@ -834,13 +834,29 @@ def select_best_alternatives(
     # If region was detected, find the same flavor in OTHER regions
     # Uses spelling equivalents (e.g. "sienna" matches "siena")
     if oos_region_cats:
+        from db.region_family import get_family
+
+        # Collect all same-flavor items from other regions
+        _raw_same_flavor: list[dict] = []
         for item in available:
             if (
                 _resolver_normalize(item["product_name"]).lower() in oos_equivalents
                 and item["category"] not in oos_region_cats
             ):
-                same_flavor_items.append(item)
-                same_flavor_names.add(item["product_name"])
+                _raw_same_flavor.append(item)
+
+        # Dedup by family: ARMENIA Silver + KZ_TEREA Silver are both ME →
+        # show only one "Terea Silver ME", pick the entry with highest stock.
+        _best_by_family: dict[str | None, dict] = {}
+        for item in _raw_same_flavor:
+            family = get_family(item.get("category", ""))
+            existing = _best_by_family.get(family)
+            if existing is None or item.get("quantity", 0) > existing.get("quantity", 0):
+                _best_by_family[family] = item
+        same_flavor_items = list(_best_by_family.values())
+
+        for item in same_flavor_items:
+            same_flavor_names.add(item["product_name"])
         if same_flavor_items:
             logger.info(
                 "Priority 0: same flavor '%s' found in other regions: %s",
