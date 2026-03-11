@@ -8,7 +8,8 @@ Covers:
 - OrderItem validator normalization (string, list, dedup, garbage)
 """
 
-from unittest.mock import patch
+import json
+from unittest.mock import patch, MagicMock
 
 from agents.models import OrderItem
 from db.region_preference import apply_region_preference
@@ -77,6 +78,14 @@ class TestApplyRegionPreferenceNoOp:
         items = [_item(product_ids=[71], pref=None)]
         result = apply_region_preference(items, catalog_entries=CATALOG)
         assert result[0]["product_ids"] == [71]
+
+    def test_single_pid_with_pref_no_metadata_overwrite(self):
+        """Single pid already resolved → don't overwrite metadata even with pref."""
+        item = _item(product_ids=[71], pref=["EU"])
+        original_name = item["product_name"]
+        result = apply_region_preference([item], catalog_entries=CATALOG)
+        assert result[0]["product_ids"] == [71]
+        assert result[0]["product_name"] == original_name  # unchanged
 
     def test_same_family_no_preference(self):
         items = [_item(product_ids=[18, 39], pref=None)]
@@ -178,6 +187,23 @@ class TestMetadataUpdate:
         assert result[0]["display_name"] == "Terea Turquoise Japan"
         assert result[0]["original_product_name"] == "Turquoise Japan"
 
+    def test_non_terea_brand_preserved(self):
+        """Non-Terea brand (e.g. ONE Green) keeps brand prefix in fallback."""
+        item = {
+            "product_name": "ONE Green",
+            "base_flavor": "Green",
+            "quantity": 5,
+            "original_product_name": "ONE Green",
+            "product_ids": [18, 39, 71],  # cross-family
+            "region_preference": ["JAPAN"],
+            "strict_region": True,
+        }
+        result = apply_region_preference([item], catalog_entries=CATALOG)
+        # JAPAN has no pids → fallback synthesis from "ONE Green" + " Japan"
+        assert result[0]["product_ids"] == []
+        assert result[0]["product_name"] == "ONE Green Japan"
+        assert "Terea" not in result[0]["product_name"]
+
     def test_stale_display_name_overwritten(self):
         """Old generic display_name gets overwritten after apply."""
         item = _item(product_ids=[18, 39, 71], pref=["ME"], strict=True)
@@ -245,3 +271,95 @@ class TestRegionPreferenceValidator:
     def test_order_preserved(self):
         oi = OrderItem(product_name="X", base_flavor="X", region_preference=["me", "eu", "japan"])
         assert oi.region_preference == ["ME", "EU", "JAPAN"]
+
+
+# ===================================================================
+# C. Classifier parsing test — run_classification → OrderItem with region fields
+# ===================================================================
+
+class TestClassifierParsingRegionFields:
+    """Verify that run_classification() correctly parses region_preference
+    and strict_region from LLM JSON output into OrderItem fields."""
+
+    @patch("agents.classifier.classifier_agent")
+    @patch("agents.classifier.try_parse_order", return_value=None)
+    @patch("agents.classifier.clean_email_body", side_effect=lambda x: x)
+    def test_region_fields_parsed_from_llm_json(self, _clean, _parse, mock_agent):
+        """LLM returns JSON with region_preference → OrderItem has normalized fields."""
+        llm_json = json.dumps({
+            "needs_reply": True,
+            "situation": "new_order",
+            "client_email": "test@example.com",
+            "order_items": [
+                {
+                    "product_name": "Turquoise",
+                    "base_flavor": "Turquoise",
+                    "quantity": 10,
+                    "region_preference": ["eu", "me"],
+                    "strict_region": False,
+                }
+            ],
+        })
+        mock_agent.run.return_value = MagicMock(content=llm_json)
+
+        from agents.classifier import run_classification
+        result = run_classification("fake email", "")
+
+        assert result.order_items is not None
+        assert len(result.order_items) == 1
+        oi = result.order_items[0]
+        assert oi.region_preference == ["EU", "ME"]
+        assert oi.strict_region is False
+
+    @patch("agents.classifier.classifier_agent")
+    @patch("agents.classifier.try_parse_order", return_value=None)
+    @patch("agents.classifier.clean_email_body", side_effect=lambda x: x)
+    def test_null_region_fields_parsed(self, _clean, _parse, mock_agent):
+        """LLM returns null region_preference → OrderItem has None."""
+        llm_json = json.dumps({
+            "needs_reply": True,
+            "situation": "new_order",
+            "client_email": "test@example.com",
+            "order_items": [
+                {
+                    "product_name": "Silver",
+                    "base_flavor": "Silver",
+                    "quantity": 5,
+                    "region_preference": None,
+                }
+            ],
+        })
+        mock_agent.run.return_value = MagicMock(content=llm_json)
+
+        from agents.classifier import run_classification
+        result = run_classification("fake email", "")
+
+        oi = result.order_items[0]
+        assert oi.region_preference is None
+        assert oi.strict_region is False  # default
+
+    @patch("agents.classifier.classifier_agent")
+    @patch("agents.classifier.try_parse_order", return_value=None)
+    @patch("agents.classifier.clean_email_body", side_effect=lambda x: x)
+    def test_missing_region_fields_use_defaults(self, _clean, _parse, mock_agent):
+        """LLM omits region fields entirely → defaults (None, False)."""
+        llm_json = json.dumps({
+            "needs_reply": True,
+            "situation": "new_order",
+            "client_email": "test@example.com",
+            "order_items": [
+                {
+                    "product_name": "Green",
+                    "base_flavor": "Green",
+                    "quantity": 2,
+                }
+            ],
+        })
+        mock_agent.run.return_value = MagicMock(content=llm_json)
+
+        from agents.classifier import run_classification
+        result = run_classification("fake email", "")
+
+        oi = result.order_items[0]
+        assert oi.region_preference is None
+        assert oi.strict_region is False

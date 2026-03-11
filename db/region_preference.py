@@ -48,15 +48,10 @@ def apply_region_preference(
 
         product_ids = item.get("product_ids") or []
         if len(product_ids) <= 1:
-            # Already resolved to single product — no narrowing needed,
-            # but still update metadata for region context
-            if product_ids and pref:
-                _update_region_metadata(
-                    item,
-                    chosen_family=pref[0],
-                    chosen_pids=product_ids,
-                    catalog_entries=catalog_entries,
-                )
+            # Already resolved to single product — don't touch metadata.
+            # The resolver already set correct names for this single pid.
+            # Using pref[0] here could mismatch if resolver picked a different
+            # family than the preference suggests.
             continue
 
         # Lazy-load catalog if needed
@@ -176,6 +171,17 @@ def _update_region_metadata(
     # ALWAYS overwrite to canonical region-aware form
     item["original_product_name"] = f"{base}{suffix}".strip()
 
+    # Synthesize fallback from existing product_name (preserves brand prefix,
+    # e.g. "ONE Green" stays "ONE Green ME", not "Terea Green ME")
+    existing_name = item.get("product_name", "") or base
+    # Strip old region suffixes before appending new one
+    _fallback_name = existing_name
+    for _s in _FAMILY_SUFFIX.values():
+        if _fallback_name.endswith(_s):
+            _fallback_name = _fallback_name[: -len(_s)].rstrip()
+            break
+    fallback = f"{_fallback_name}{suffix}".strip()
+
     # Update display_name + product_name from catalog or synthesize
     if chosen_pids and catalog_entries:
         pid_set = set(chosen_pids)
@@ -187,10 +193,8 @@ def _update_region_metadata(
             item["display_name"] = display
             item["product_name"] = display
         else:
-            synthesized = f"Terea {base}{suffix}".strip()
-            item["product_name"] = synthesized
-            item["display_name"] = synthesized
+            item["product_name"] = fallback
+            item["display_name"] = fallback
     else:
-        synthesized = f"Terea {base}{suffix}".strip()
-        item["product_name"] = synthesized
-        item["display_name"] = synthesized
+        item["product_name"] = fallback
+        item["display_name"] = fallback
