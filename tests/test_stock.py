@@ -407,7 +407,7 @@ def test_alternatives_llm_picks_used():
     green = _llm_item("Green", "TEREA_EUROPE")
     with patch(_PATCH_LLM, return_value=[green]):
         result = select_best_alternatives("buyer@example.com", "Turquoise")
-    assert len(result["alternatives"]) == 1
+    assert len(result["alternatives"]) >= 1
     assert result["alternatives"][0]["reason"] == "llm"
     assert result["alternatives"][0]["alternative"]["product_name"] == "Green"
     assert result["reason"] == "llm"
@@ -1059,3 +1059,11 @@ def test_same_flavor_deduped_by_family(
     assert len(same_flavor_alts) == 1
     # Should pick ARMENIA (highest stock: 68 > 28)
     assert same_flavor_alts[0]["alternative"]["category"] == "ARMENIA"
+
+    # Fallback should fill remaining slots (max_options=3, same_flavor=1, LLM=0 → 2 fallback)
+    fallback_alts = [a for a in result["alternatives"] if a["reason"] == "fallback"]
+    assert len(fallback_alts) >= 1
+    # Total should be up to max_options (3)
+    assert len(result["alternatives"]) <= 3
+    # Amber should be in fallback
+    assert any(a["alternative"]["product_name"] == "T Amber" for a in fallback_alts)
