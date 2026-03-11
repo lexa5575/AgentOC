@@ -202,6 +202,7 @@ class ProductCatalog(Base):
     category = Column(String, nullable=False, index=True)    # "TEREA_JAPAN"
     name_norm = Column(String, nullable=False)                # "t purple" (lower, trimmed)
     stock_name = Column(String, nullable=False)               # "T Purple" (original from sheet)
+    flavor_family = Column(String, nullable=True)             # "classic", "menthol", "berry", etc.
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -211,6 +212,7 @@ class ProductCatalog(Base):
             "category": self.category,
             "name_norm": self.name_norm,
             "stock_name": self.stock_name,
+            "flavor_family": self.flavor_family,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }

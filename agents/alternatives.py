@@ -28,74 +28,41 @@ logger = logging.getLogger(__name__)
 _INSTRUCTIONS = """\
 You are a product recommendation specialist for an IQOS tobacco product store.
 
-## Product regions and customer-facing names
-We have sticks from different production regions. The INTERNAL category names
-in the stock list map to CUSTOMER-FACING region labels as follows:
-- TEREA_EUROPE → "EU" (made in Europe)
-- ARMENIA → "ME" (Middle East)
-- KZ_TEREA → "ME" (Middle East)
-- TEREA_JAPAN → "made in Japan"
-- УНИКАЛЬНАЯ_ТЕРЕА → "made in Japan" (unique Japan flavors)
+## Product regions
+- TEREA_EUROPE → "EU"
+- ARMENIA, KZ_TEREA → "ME" (Middle East) — interchangeable for the customer
+- TEREA_JAPAN, УНИКАЛЬНАЯ_ТЕРЕА → "made in Japan"
 
-IMPORTANT: ARMENIA and KZ_TEREA are BOTH "Middle East" (ME) for the customer.
-The customer sees NO difference between Armenia and KZ products — they are
-the same region from their perspective. Treat them as interchangeable.
+## Available stock format
+Each item in the stock list includes its flavor family in parentheses:
+  CATEGORY|PRODUCT_NAME (flavor_family)  qty: N
+
+The flavor_family tag tells you the taste profile of each product.
+Use it to match alternatives — suggest products from the SAME flavor family.
 
 ## Product types
-STICKS (tobacco consumables for IQOS devices):
-
-DEVICES (IQOS hardware, NOT consumables):
-- ONE, STND, PRIME — available in colors (Green, Red, Black, Silver, etc.)
-- Only suggest device alternatives when the OOS item is also a device.
-
-## Flavor families (CRITICAL for matching alternatives)
-When a flavor is OOS, suggest alternatives from the SAME family first.
-NEVER suggest menthol to a classic customer or vice versa.
-
-CLASSIC / TOBACCO (no menthol, no fruit — smooth tobacco):
-- Silver, T Silver, T Regular, Clear, Warm Regular, T Rich, T Smooth,
-  T Balanced, Amber, Bronze, Teak, Sienna/Siena, Russet, Beige
-
-MENTHOL / COOLING (mint, menthol, fresh):
-- Green, Turquoise, T Mint, T Menthol, Bright Menthol, Fusion Menthol,
-  Kelly, Briza, Willow
-
-BERRY / FRUIT (fruity, sweet, aromatic):
-- Purple, T Purple, Ruby, Ruby Wave, Ruby Fuse, Ruby Regular,
-  Black Ruby Menthol, Black Purple Menthol, Black Tropical Menthol,
-  Black Yellow Menthol, Mauve, Sakura, Twilight, Amelia
-
-CITRUS / TROPICAL (citrus, tropical notes):
-- Yellow, T Lemon, Sun Pearl, Oasis, Oasis Pearl, Oasis JP, T Tropical,
-  Summer, Blue, Velvet Pearl
-
-WARM / AROMATIC (warm, nutty, spiced):
-- Starling, Teak, Kona, Abore Pearl, Sof Fuse
-
-KEY RULE: A customer ordering Clear (classic tobacco) should get Silver,
-Amber, Bronze, T Regular, Warm Regular — NOT Green, Turquoise, or Menthol.
+DEVICES (IQOS hardware): ONE, STND, PRIME — only suggest devices for devices.
+All other items are STICKS (tobacco consumables).
 
 ## Selection rules
 - ONLY use keys EXACTLY as listed in AVAILABLE STOCK — never invent new ones
 - Never suggest the out-of-stock flavor itself
 - Never suggest keys listed in EXCLUDED
 - Priority order:
-  1) SAME FLAVOR from a different region (e.g. if Amber EU is OOS, suggest
-     Amber from ARMENIA or KZ_TEREA first — it's the same taste, just
-     different production origin)
-  2) Items the customer has ordered before
-  3) Items matching the customer's taste profile (same flavor family)
+  1) SAME FLAVOR from a different region (e.g. Amber EU OOS → Amber ME)
+  2) Items the customer has ordered before (see history)
+  3) Items from the SAME flavor family as the OOS item (use the flavor_family tag)
   4) Popular available items by quantity
-- For customers with no history or profile: prefer the same flavor family
-  (menthol → menthol, classic → classic)
+- For customers with no history: prefer the same flavor family
+- NEVER cross flavor families (e.g. don't suggest menthol for classic tobacco)
 - Return up to {max_options} choices
 """
 
 _PROMPT_TEMPLATE = """\
 ## OOS flavor
-{oos_flavor}
+{oos_flavor} (flavor family: {oos_family})
 
-## Available stock  (format: "CATEGORY|PRODUCT_NAME  qty: N")
+## Available stock  (format: "CATEGORY|PRODUCT_NAME (flavor_family)  qty: N")
 {stock_lines}
 
 ## Customer order history  (most ordered first)
@@ -122,6 +89,7 @@ def get_llm_alternatives(
     client_summary: str,
     max_options: int = 3,
     excluded_products: set[str] | None = None,
+    oos_flavor_family: str | None = None,
 ) -> list[dict]:
     """Return up to max_options stock item dicts chosen by LLM.
 
@@ -133,6 +101,7 @@ def get_llm_alternatives(
         max_options: Maximum number of alternatives to return.
         excluded_products: Product names already suggested for other OOS flavors
             in the same order. Prevents identical suggestions across multiple flavors.
+        oos_flavor_family: Flavor family of the OOS product (e.g. "classic", "menthol").
 
     Returns:
         List of stock item dicts (same shape as available_items entries).
@@ -151,9 +120,9 @@ def get_llm_alternatives(
             for it in available_items
         }
 
-        # Format stock list for prompt
+        # Format stock list for prompt (include flavor_family tag)
         stock_lines = "\n".join(
-            f"  {key}  qty: {it['quantity']}"
+            f"  {key} ({it.get('flavor_family') or 'unknown'})  qty: {it['quantity']}"
             for key, it in key_to_item.items()
         )
 
@@ -173,6 +142,7 @@ def get_llm_alternatives(
 
         prompt = _PROMPT_TEMPLATE.format(
             oos_flavor=oos_flavor,
+            oos_family=oos_flavor_family or "unknown",
             stock_lines=stock_lines,
             history_text=history_text,
             profile_text=profile_text,

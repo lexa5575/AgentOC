@@ -12,7 +12,7 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 
 from db.catalog import ensure_catalog_entry
-from db.models import ClientOrderItem, StockBackup, StockItem, get_session
+from db.models import ClientOrderItem, ProductCatalog, StockBackup, StockItem, get_session
 
 logger = logging.getLogger(__name__)
 
@@ -735,15 +735,22 @@ def _get_available_items(
     """
     session = get_session()
     try:
-        q = session.query(StockItem).filter(
+        q = session.query(StockItem, ProductCatalog.flavor_family).outerjoin(
+            ProductCatalog, StockItem.product_id == ProductCatalog.id,
+        ).filter(
             StockItem.category.in_(allowed_cats),
             StockItem.quantity > 0,
         )
         if exclude_product_ids:
             q = q.filter(~StockItem.product_id.in_(exclude_product_ids))
         if warehouse:
-            q = q.filter_by(warehouse=warehouse)
-        return [item.to_dict() for item in q.order_by(StockItem.quantity.desc()).all()]
+            q = q.filter(StockItem.warehouse == warehouse)
+        results = []
+        for item, flavor_family in q.order_by(StockItem.quantity.desc()).all():
+            d = item.to_dict()
+            d["flavor_family"] = flavor_family
+            results.append(d)
+        return results
     finally:
         session.close()
 
@@ -867,6 +874,21 @@ def select_best_alternatives(
     # 3. Ask LLM to pick remaining alternatives — fallback on any failure
     llm_slots = max(1, max_options - len(same_flavor_items))
     llm_excluded = _excluded | same_flavor_names
+
+    # Look up OOS item's flavor_family from catalog
+    oos_flavor_family = None
+    if oos_product_ids:
+        session = get_session()
+        try:
+            cat_entry = session.query(ProductCatalog.flavor_family).filter(
+                ProductCatalog.id.in_(oos_product_ids),
+                ProductCatalog.flavor_family.isnot(None),
+            ).first()
+            if cat_entry:
+                oos_flavor_family = cat_entry[0]
+        finally:
+            session.close()
+
     try:
         from agents.alternatives import get_llm_alternatives
         llm_items = get_llm_alternatives(
@@ -876,6 +898,7 @@ def select_best_alternatives(
             client_summary=client_summary,
             max_options=llm_slots,
             excluded_products=llm_excluded,
+            oos_flavor_family=oos_flavor_family,
         )
     except Exception as exc:
         logger.warning("LLM alternatives unavailable for '%s': %s", base_flavor, exc)
