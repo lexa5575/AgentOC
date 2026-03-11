@@ -851,6 +851,30 @@ def classify_and_process(
 
         # Step 3.95: Fulfillment — maks_sales increment (after successful draft)
         if result.get("gmail_draft_id"):
+            # Save address snapshot before fulfillment so shipping job can find it
+            _oid_pre = (getattr(classification, "order_id", None) or "").strip()
+            _is_trusted_pre = (
+                classification.situation == "new_order"
+                or (classification.situation == "payment_received" and _oid_pre.startswith("PAY-"))
+            )
+            if (
+                _oid_pre
+                and classification.customer_street
+                and classification.customer_city_state_zip
+                and _is_trusted_pre
+            ):
+                try:
+                    from db.shipping import save_order_shipping_address as _save_addr
+                    _save_addr(
+                        email=classification.client_email,
+                        order_id=_oid_pre,
+                        name=getattr(classification, "client_name", "") or client.get("name", ""),
+                        street=classification.customer_street,
+                        csz=classification.customer_city_state_zip,
+                    )
+                except Exception as _e:
+                    logger.warning("Pre-fulfillment address save failed: %s", _e)
+
             from agents.handlers.fulfillment_trigger import try_fulfillment
             try_fulfillment(classification, result, gmail_message_id)
 
