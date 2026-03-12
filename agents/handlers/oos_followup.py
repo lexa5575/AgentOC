@@ -1000,6 +1000,8 @@ def handle_oos_followup(
 
     # Inject live stock data if customer is asking about a specific product.
     # Uses classifier-extracted order_items (deterministic, no regex needed).
+    # Fallback: if no order_items, inject stock for all offered_alternatives from
+    # conversation state so LLM never hallucinates about availability.
     stock_context = ""
     order_items = getattr(classification, "order_items", None) or []
     if order_items:
@@ -1011,6 +1013,21 @@ def handle_oos_followup(
             logger.info(
                 "OOS Followup: injected live stock data for flavor=%s, client=%s",
                 asked_flavor, result["client_email"],
+            )
+    else:
+        # No order_items extracted — inject stock for previously offered alternatives
+        # so the LLM has accurate availability instead of guessing.
+        _state = result.get("conversation_state") or {}
+        _alts = (_state.get("facts") or {}).get("offered_alternatives") or []
+        if _alts:
+            stock_lines = []
+            for _alt in _alts:
+                _base = _alt.replace(" ME", "").replace(" EU", "").strip()
+                stock_lines.append(search_stock_tool(_base))
+            stock_context = "\n\n=== LIVE STOCK CHECK (offered alternatives) ===\n" + "\n---\n".join(stock_lines)
+            logger.info(
+                "OOS Followup: injected stock for %d alternatives, client=%s",
+                len(_alts), result["client_email"],
             )
 
     intent_info = ""
