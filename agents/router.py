@@ -87,16 +87,3 @@ def route_to_handler(
     
     # Call handler
     return handler(classification, result, email_text)
-
-
-def get_handler_for_situation(situation: str) -> Callable:
-    """Get the handler function for a given situation.
-    
-    Useful for testing individual handlers.
-    """
-    return SITUATION_HANDLERS.get(situation, handle_general)
-
-
-def list_available_handlers() -> list[str]:
-    """List all registered situation handlers."""
-    return list(SITUATION_HANDLERS.keys())

@@ -48,31 +48,12 @@ from utils.telegram import send_telegram
 logger = logging.getLogger(__name__)
 
 
-def _enrich_display_name_with_region(variant_id: int, display_name: str) -> str:
-    """Add region suffix to display_name if variant_id maps to a known category.
-
-    When resolver returns a generic name (e.g. "Terea Teak") because multiple
-    regions exist, but variant_id is resolved (e.g. from client history),
-    replace with region-specific name (e.g. "Terea Teak ME").
-    """
-    from db.region_family import CATEGORY_REGION_SUFFIX
-    try:
-        from db.catalog import get_catalog_products
-        for entry in get_catalog_products():
-            if entry["id"] == variant_id:
-                region = CATEGORY_REGION_SUFFIX.get(entry["category"])
-                if region and not display_name.rstrip().endswith(region):
-                    from db.catalog import get_display_name
-                    return get_display_name(entry["stock_name"], entry["category"])
-                return display_name
-    except Exception:
-        pass
-    return display_name
+from db.memory import _enrich_display_name_with_region
 
 
-# ---------------------------------------------------------------------------
-# process_classified_email (moved from agents/reply_templates.py)
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
+# SECTION 1: Pre-processing — stock checks, price, order ID
+# ═══════════════════════════════════════════════════════════════════════════
 
 def process_classified_email(classification, gmail_message_id: str | None = None) -> dict:
     """Process a classified email: classify metadata and prepare router context.
@@ -357,9 +338,9 @@ def process_classified_email(classification, gmail_message_id: str | None = None
     return result
 
 
-# ---------------------------------------------------------------------------
-# Private helpers
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
+# SECTION 2: State management
+# ═══════════════════════════════════════════════════════════════════════════
 
 def _update_inbound_state(
     gmail_thread_id: str | None,
@@ -420,6 +401,10 @@ def _update_inbound_state(
         logger.error("Failed to update conversation state: %s", e, exc_info=True)
         return None
 
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SECTION 3: Persistence — all DB writes after processing
+# ═══════════════════════════════════════════════════════════════════════════
 
 def _persist_results(
     classification,
@@ -577,7 +562,7 @@ def _persist_results(
             )
 
     # Step 6.1: OOS canonical replace — trusted source persistence gate (plan §7.3)
-    _TRUSTED_PERSISTENCE_SOURCES = {"thread_extraction", "pending_oos"}
+    from agents.handlers.oos_constants import TRUSTED_SOURCES as _TRUSTED_PERSISTENCE_SOURCES
     if result.get("effective_situation") == "new_order":
         source = result.get("confirmation_source")
         if source in _TRUSTED_PERSISTENCE_SOURCES:
@@ -682,9 +667,9 @@ def _persist_results(
             logger.error("Auto-refresh summary failed: %s", e)
 
 
-# ---------------------------------------------------------------------------
-# Top-level orchestrator (moved from agents/email_agent.py)
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
+# SECTION 4: Main orchestrator
+# ═══════════════════════════════════════════════════════════════════════════
 
 def classify_and_process(
     email_text: str,

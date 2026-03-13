@@ -10,6 +10,7 @@ All business logic lives in domain modules:
 """
 
 from db.catalog import (
+    _enrich_display_name_with_region,
     ensure_catalog_entry,
     get_base_display_name,
     get_catalog_products,

@@ -283,3 +283,23 @@ def get_base_display_name(stock_name: str) -> str:
 
     core = _strip_decorations(stock_name)
     return f"Terea {core}"
+
+
+def _enrich_display_name_with_region(variant_id: int, display_name: str) -> str:
+    """Add region suffix to display_name if variant_id maps to a known category.
+
+    When resolver returns a generic name (e.g. "Terea Teak") because multiple
+    regions exist, but variant_id is resolved (e.g. from client history),
+    replace with region-specific name (e.g. "Terea Teak ME").
+    """
+    from db.region_family import CATEGORY_REGION_SUFFIX
+    try:
+        for entry in get_catalog_products():
+            if entry["id"] == variant_id:
+                region = CATEGORY_REGION_SUFFIX.get(entry["category"])
+                if region and not display_name.rstrip().endswith(region):
+                    return get_display_name(entry["stock_name"], entry["category"])
+                return display_name
+    except Exception:
+        pass
+    return display_name
