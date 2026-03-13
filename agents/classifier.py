@@ -209,6 +209,11 @@ Example: "any European? and japan regular?" →
   [{"base_flavor": "Europe", ...}, {"base_flavor": "Regular", ...}]
   (Europe = region query; Regular = specific product, NOT "Japan")
 For region queries, use the region name as base_flavor (e.g. "Europe", "Japan").
+IMPORTANT: If the customer asks a GENERAL availability question without naming any specific
+product or region ("What do you have?", "What's available?", "What Terea sticks do you have?",
+"Looking to place an order, what's in stock?"), set order_items to null.
+"Terea sticks" or "Terea" alone is NOT a product — it's the brand. Do not invent a base_flavor
+from it. The handler will list available categories when order_items is null.
 For oos_followup with dialog_intent=agrees_to_alternative: extract the items the customer
 is confirming as order_items. Look at CONVERSATION STATE and previous emails to identify
 what products and quantities were offered as alternatives — those are the confirmed items.

@@ -73,6 +73,49 @@ _oos_agent = Agent(
 # Helpers
 # ---------------------------------------------------------------------------
 
+_GENERAL_REGIONS = [
+    ("Middle East (ME)", ["ARMENIA", "KZ_TEREA"], 110),
+    ("European (EU)", ["TEREA_EUROPE"], 110),
+    ("Japanese", ["TEREA_JAPAN", "УНИКАЛЬНАЯ_ТЕРЕА"], 115),
+]
+
+
+def _handle_general_availability(
+    result: dict,
+    client_name: str | None,
+    warehouse: str | None,
+) -> dict:
+    """Deterministic reply listing available products by region (0 LLM tokens)."""
+    from db.stock import get_available_by_category
+
+    greeting = f"Hi {client_name}," if client_name else "Hi,"
+    parts = [f"{greeting} here's what we currently have available:\n"]
+
+    for region_label, categories, price in _GENERAL_REGIONS:
+        names = set()
+        for cat in categories:
+            for item in get_available_by_category(cat, warehouse=warehouse):
+                dn = get_display_name(item["product_name"], item["category"])
+                names.add(dn)
+        if names:
+            product_list = ", ".join(sorted(names))
+            parts.append(f"{region_label} — ${price}/box:\n{product_list}\n")
+
+    if len(parts) == 1:
+        parts.append("Unfortunately nothing is in stock at the moment.")
+
+    parts.append("Let us know what you'd like to order! Thank you!")
+    result["draft_reply"] = "\n".join(parts)
+    result["template_used"] = True
+    result["needs_routing"] = False
+
+    logger.info(
+        "Stock question: general availability reply for %s (0 tokens)",
+        result["client_email"],
+    )
+    return result
+
+
 def _extract_flavors(classification, result: dict) -> list[str]:
     """Extract ALL products being asked about.
 
@@ -264,12 +307,15 @@ def handle_stock_question(
     flavors = _extract_flavors(classification, result)
 
     if not flavors:
-        logger.warning(
-            "Stock question: could not extract flavor for %s — general fallback",
+        logger.info(
+            "Stock question: general availability query for %s",
             result["client_email"],
         )
-        from agents.handlers.general import handle_general
-        return handle_general(classification, result, email_text)
+        warehouse = resolve_warehouse(email_text)
+        client_name = result.get("client_name") or (
+            result.get("client_data") or {}
+        ).get("name")
+        return _handle_general_availability(result, client_name, warehouse)
 
     # Optional warehouse filter (e.g. "from CA" → LA_MAKS)
     warehouse = resolve_warehouse(email_text)
