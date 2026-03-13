@@ -89,8 +89,9 @@ def _handle_general_availability(
     from db.stock import get_available_by_category
 
     greeting = f"Hi {client_name}," if client_name else "Hi,"
-    parts = [f"{greeting} here's what we currently have available:\n"]
+    parts = [f"{greeting} here's what we currently have in stock:"]
 
+    any_available = False
     for region_label, categories, price in _GENERAL_REGIONS:
         names = set()
         for cat in categories:
@@ -98,13 +99,13 @@ def _handle_general_availability(
                 dn = get_display_name(item["product_name"], item["category"])
                 names.add(dn)
         if names:
-            product_list = ", ".join(sorted(names))
-            parts.append(f"{region_label} — ${price}/box:\n{product_list}\n")
+            any_available = True
+            parts.append(f"- {region_label} — ${price}/box ({len(names)} flavors)")
 
-    if len(parts) == 1:
+    if not any_available:
         parts.append("Unfortunately nothing is in stock at the moment.")
-
-    parts.append("Let us know what you'd like to order! Thank you!")
+    else:
+        parts.append("\nWhich region are you interested in? We'll send you the full list! Thank you!")
     result["draft_reply"] = "\n".join(parts)
     result["template_used"] = True
     result["needs_routing"] = False
