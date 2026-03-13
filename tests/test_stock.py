@@ -609,7 +609,9 @@ def test_replace_atomic_on_error(monkeypatch):
         session.add = failing_add
         return session
 
+    import db.order_items as order_items_module
     monkeypatch.setattr(stock_module, "get_session", patched_get_session)
+    monkeypatch.setattr(order_items_module, "get_session", patched_get_session)
 
     result = replace_order_items("atomic@example.com", "R3", [
         {"product_name": "Tera Silver", "base_flavor": "Silver", "quantity": 1},
@@ -619,6 +621,7 @@ def test_replace_atomic_on_error(monkeypatch):
 
     # Restore original get_session to verify old data
     monkeypatch.setattr(stock_module, "get_session", original_get_session)
+    monkeypatch.setattr(order_items_module, "get_session", original_get_session)
 
     history = get_client_flavor_history("atomic@example.com")
     flavors = {h["base_flavor"] for h in history}
@@ -1024,10 +1027,10 @@ def test_search_stock_still_uses_ilike():
 # Same-family dedup in select_best_alternatives Priority 0
 # ---------------------------------------------------------------------------
 
-@patch("db.stock.get_client_flavor_history", return_value=[])
-@patch("db.stock.get_product_type", return_value="STICK")
-@patch("db.stock._get_allowed_categories", return_value={"ARMENIA", "KZ_TEREA", "TEREA_EUROPE"})
-@patch("db.stock._get_available_items")
+@patch("db.alternatives.get_client_flavor_history", return_value=[])
+@patch("db.alternatives.get_product_type", return_value="STICK")
+@patch("db.alternatives._get_allowed_categories", return_value={"ARMENIA", "KZ_TEREA", "TEREA_EUROPE"})
+@patch("db.alternatives._get_available_items")
 @patch("db.product_resolver.resolve_product_to_catalog")
 @patch("db.catalog.get_equivalent_norms", return_value={"silver"})
 @patch("agents.alternatives.get_llm_alternatives", return_value=[])
