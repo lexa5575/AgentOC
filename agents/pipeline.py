@@ -48,7 +48,7 @@ from utils.telegram import send_telegram
 logger = logging.getLogger(__name__)
 
 
-from db.memory import _enrich_display_name_with_region
+from db.catalog import _enrich_display_name_with_region
 
 
 # ═══════════════════════════════════════════════════════════════════════════
