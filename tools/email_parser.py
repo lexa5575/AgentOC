@@ -78,6 +78,11 @@ def _strip_quoted_text(body: str) -> str:
     return body.strip()
 
 
+def strip_quoted_text(body: str) -> str:
+    """Public wrapper for _strip_quoted_text(). Used by thread hint matching."""
+    return _strip_quoted_text(body)
+
+
 # ---------------------------------------------------------------------------
 # Base flavor extraction
 # ---------------------------------------------------------------------------

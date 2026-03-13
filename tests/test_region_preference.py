@@ -6,13 +6,14 @@ Covers:
 - _family_has_warehouse_stock() per-warehouse check
 - _update_region_metadata() deterministic name overwrite
 - OrderItem validator normalization (string, list, dedup, garbage)
+- apply_thread_hint() thread-backed canonical narrowing
 """
 
 import json
 from unittest.mock import patch, MagicMock
 
 from agents.models import OrderItem
-from db.region_preference import apply_region_preference
+from db.region_preference import apply_region_preference, apply_thread_hint
 
 
 # ---------------------------------------------------------------------------
@@ -363,3 +364,197 @@ class TestClassifierParsingRegionFields:
         oi = result.order_items[0]
         assert oi.region_preference is None
         assert oi.strict_region is False
+
+
+# ===================================================================
+# D. Thread hint tests — apply_thread_hint
+# ===================================================================
+
+# Cross-family catalog: Yellow in ARMENIA(16), KZ_TEREA(23), TEREA_EUROPE(69), TEREA_JAPAN(80)
+THREAD_CATALOG = [
+    {"id": 16, "category": "ARMENIA", "name_norm": "yellow", "stock_name": "Yellow"},
+    {"id": 23, "category": "KZ_TEREA", "name_norm": "yellow", "stock_name": "Yellow"},
+    {"id": 69, "category": "TEREA_EUROPE", "name_norm": "yellow", "stock_name": "Yellow"},
+    {"id": 80, "category": "TEREA_JAPAN", "name_norm": "yellow", "stock_name": "Yellow"},
+]
+
+# ME-only pids (same family)
+ME_ONLY_CATALOG = [
+    {"id": 16, "category": "ARMENIA", "name_norm": "yellow", "stock_name": "Yellow"},
+    {"id": 23, "category": "KZ_TEREA", "name_norm": "yellow", "stock_name": "Yellow"},
+]
+
+
+def _thread_item(base_flavor="Yellow", product_ids=None, pref=None):
+    """Helper to build an item dict for apply_thread_hint."""
+    return {
+        "product_name": f"Terea {base_flavor}",
+        "base_flavor": base_flavor,
+        "quantity": 2,
+        "original_product_name": base_flavor,
+        "product_ids": product_ids or [16, 23, 69],
+        "region_preference": pref,
+    }
+
+
+def _msg(body, direction="outbound"):
+    return {"body": body, "direction": direction}
+
+
+class TestThreadHintFullDisplay:
+    """Tier 1: full catalog display name matching."""
+
+    def test_terea_yellow_me(self):
+        items = [_thread_item()]
+        msgs = [_msg("Your order: 2 x Terea Yellow ME")]
+        result = apply_thread_hint(items, msgs, THREAD_CATALOG)
+        # Narrowed to ME family (ARMENIA + KZ_TEREA)
+        assert set(result[0]["product_ids"]) == {16, 23}
+
+    def test_terea_yellow_eu(self):
+        items = [_thread_item()]
+        msgs = [_msg("We have Terea Yellow EU in stock")]
+        result = apply_thread_hint(items, msgs, THREAD_CATALOG)
+        assert result[0]["product_ids"] == [69]
+
+    def test_terea_yellow_made_in_japan(self):
+        items = [_thread_item(product_ids=[16, 23, 69, 80])]
+        msgs = [_msg("Terea Yellow made in Japan is available")]
+        result = apply_thread_hint(items, msgs, THREAD_CATALOG)
+        assert result[0]["product_ids"] == [80]
+
+
+class TestThreadHintBroadAlias:
+    """Tier 2: broad alias matching."""
+
+    def test_yellow_middle_east(self):
+        items = [_thread_item()]
+        msgs = [_msg("Yellow Middle East version")]
+        result = apply_thread_hint(items, msgs, THREAD_CATALOG)
+        assert set(result[0]["product_ids"]) == {16, 23}
+
+
+class TestThreadHintConflict:
+    """Conflicting hints in same message → not narrowed."""
+
+    def test_both_me_and_eu_in_one_msg(self):
+        items = [_thread_item()]
+        msgs = [_msg("Terea Yellow ME or Terea Yellow EU?")]
+        result = apply_thread_hint(items, msgs, THREAD_CATALOG)
+        # Not narrowed — both ME and EU in same msg
+        assert set(result[0]["product_ids"]) == {16, 23, 69}
+
+
+class TestThreadHintNoMatch:
+    """No hints in thread → not narrowed."""
+
+    def test_no_region_hints(self):
+        items = [_thread_item()]
+        msgs = [_msg("Thanks for your order!"), _msg("Payment received")]
+        result = apply_thread_hint(items, msgs, THREAD_CATALOG)
+        assert set(result[0]["product_ids"]) == {16, 23, 69}
+
+
+class TestThreadHintSkips:
+    """Items that should be skipped by apply_thread_hint."""
+
+    def test_skip_when_region_preference_set(self):
+        items = [_thread_item(pref=["EU"])]
+        msgs = [_msg("2 x Terea Yellow ME")]
+        result = apply_thread_hint(items, msgs, THREAD_CATALOG)
+        # region_preference already set → no change
+        assert set(result[0]["product_ids"]) == {16, 23, 69}
+
+    def test_skip_single_product_id(self):
+        items = [_thread_item(product_ids=[16])]
+        msgs = [_msg("2 x Terea Yellow EU")]
+        result = apply_thread_hint(items, msgs, THREAD_CATALOG)
+        assert result[0]["product_ids"] == [16]
+
+    def test_skip_same_family_pids(self):
+        items = [_thread_item(product_ids=[16, 23])]  # both ME family
+        msgs = [_msg("2 x Terea Yellow EU")]
+        result = apply_thread_hint(items, msgs, ME_ONLY_CATALOG)
+        assert result[0]["product_ids"] == [16, 23]
+
+
+class TestThreadHintWordBoundary:
+    """Word boundary prevents false matches."""
+
+    def test_menthol_me_no_false_match(self):
+        """'Terea Yellow Menthol ME' should NOT match for base_flavor='Yellow'."""
+        items = [_thread_item()]
+        msgs = [_msg("2 x Terea Yellow Menthol ME")]
+        result = apply_thread_hint(items, msgs, THREAD_CATALOG)
+        # "terea yellow me" doesn't match "terea yellow menthol me" due to word boundary
+        assert set(result[0]["product_ids"]) == {16, 23, 69}
+
+
+class TestThreadHintTierPrecedence:
+    """Tier 1 (full display) beats Tier 3 (short) across messages."""
+
+    def test_tier1_in_older_beats_tier3_in_newer(self):
+        items = [_thread_item()]
+        # Older msg has Tier 1 ME match, newer msg has Tier 3 EU match
+        msgs = [
+            _msg("confirmed: 2 x Terea Yellow ME"),   # older (first in list)
+            _msg("yellow eu is also available"),        # newer (last in list)
+        ]
+        result = apply_thread_hint(items, msgs, THREAD_CATALOG)
+        # Tier 1 (full display) scans globally first → ME wins
+        assert set(result[0]["product_ids"]) == {16, 23}
+
+
+class TestThreadHintQuotedTextStripped:
+    """Quoted text is stripped before matching."""
+
+    def test_inbound_with_quoted_eu_resolves_me(self):
+        """Inbound body says 'Yellow Middle East' while quoted block has 'Terea Yellow EU'."""
+        items = [_thread_item()]
+        inbound_body = (
+            "Yes, yellow middle east please\n\n"
+            "On Mar 12, 2026 support@shop.com wrote:\n"
+            "> We have Terea Yellow EU and Terea Yellow ME available"
+        )
+        msgs = [_msg(inbound_body, direction="inbound")]
+        result = apply_thread_hint(items, msgs, THREAD_CATALOG)
+        # After stripping quoted text, only "yellow middle east" remains
+        # Broad alias "yellow middle east" matches ME
+        assert set(result[0]["product_ids"]) == {16, 23}
+
+
+class TestThreadHintPunctuationNormalization:
+    """Punctuation in messages is normalized to spaces before matching."""
+
+    def test_comma_separated_region(self):
+        """'yellow, middle east please' → comma stripped → broad alias matches."""
+        items = [_thread_item()]
+        msgs = [_msg("yellow, middle east please")]
+        result = apply_thread_hint(items, msgs, THREAD_CATALOG)
+        assert set(result[0]["product_ids"]) == {16, 23}
+
+    def test_dash_separated_short_form(self):
+        """'Terea Yellow - ME' → dash stripped → short form matches."""
+        items = [_thread_item()]
+        msgs = [_msg("Terea Yellow - ME")]
+        result = apply_thread_hint(items, msgs, THREAD_CATALOG)
+        assert set(result[0]["product_ids"]) == {16, 23}
+
+    def test_cross_flavor_region_no_false_match(self):
+        """'Green european is ok, not yellow' must NOT narrow Yellow to EU."""
+        items = [_thread_item()]  # Yellow item
+        msgs = [_msg("Green european is ok, not yellow")]
+        result = apply_thread_hint(items, msgs, THREAD_CATALOG)
+        # Not narrowed — "european" is about Green, not Yellow
+        assert set(result[0]["product_ids"]) == {16, 23, 69}
+
+
+class TestThreadHintMetadataUpdated:
+    """Metadata (product_name, display_name, original_product_name) updated after narrowing."""
+
+    def test_metadata_updated_on_narrow(self):
+        items = [_thread_item()]
+        msgs = [_msg("2 x Terea Yellow ME")]
+        result = apply_thread_hint(items, msgs, THREAD_CATALOG)
+        assert "ME" in result[0].get("original_product_name", "")
+        assert result[0].get("display_name") is not None

@@ -360,37 +360,69 @@ class _ItemList(list):
     resolved_order_id: str | None = None
 
 
+def _resolve_item_product_ids(item, catalog_entries):
+    """Re-resolve product_ids for a ClientOrderItem with variant_id=NULL.
+
+    Single source of truth for variant_id=NULL resolution:
+    - resolve_product_to_catalog(product_name or base_flavor)
+    - same-family multi-match → get_preferred_product_id() → [preferred]
+    - cross-family → return product_ids as-is (for thread hint)
+    - no match → []
+    """
+    from db.product_resolver import resolve_product_to_catalog
+    from db.region_family import is_same_family, get_preferred_product_id
+
+    pn = (item.product_name or "").strip()
+    bf = (item.base_flavor or "").strip()
+    resolved = resolve_product_to_catalog(pn or bf)
+    if resolved.confidence not in ("exact", "high") and pn and pn != bf:
+        resolved = resolve_product_to_catalog(bf)
+    if resolved.confidence not in ("exact", "high"):
+        return []
+    product_ids = resolved.product_ids
+
+    if len(product_ids) <= 1:
+        return product_ids
+
+    # Same-family → preferred
+    id_to_cat = {e["id"]: e["category"] for e in catalog_entries if e["id"] in set(product_ids)}
+    if len(id_to_cat) == len(product_ids) and is_same_family(set(id_to_cat.values())):
+        preferred = get_preferred_product_id(product_ids, catalog_entries)
+        return [preferred] if preferred else product_ids
+
+    # Cross-family → return as-is for thread hint
+    return product_ids
+
+
 def get_order_items_for_fulfillment(
     client_email: str,
     order_id: str | None = None,
+    gmail_thread_id: str | None = None,
+    gmail_account: str = "default",
 ) -> tuple[list[dict], list[dict]]:
     """Get order items from ClientOrderItem table for payment_received flow.
 
-    Phase 4 variant_id-first read path:
-    - If row has variant_id → use directly (product_ids=[variant_id]), no re-resolve.
-    - If variant_id is NULL and REQUIRE_VARIANT_ID=false → legacy re-resolve.
-    - If variant_id is NULL and REQUIRE_VARIANT_ID=true → add to skipped list.
-
-    Blocking rules (Phase 4.1+):
-    - Strict mode (REQUIRE_VARIANT_ID=true): ANY skipped → ([], skipped).
-      Skipped items have no product_ids_count field.
-    - Non-strict mode: legacy re-resolve with len(product_ids)!=1 → skipped.
-      Skipped items carry product_ids_count for diagnostics.
-    - In BOTH modes, any skipped items block the whole order.
+    Unified variant_id resolution path:
+    - If row has variant_id → use directly (product_ids=[variant_id]).
+    - If variant_id is NULL → re-resolve via _resolve_item_product_ids():
+      - Single match → ready.
+      - Same-family multi-match → preferred id → ready.
+      - Cross-family + thread hint available → apply_thread_hint → ready/skip.
+      - Otherwise → skip.
+    - Any skipped items block the whole order.
 
     Args:
         client_email: Client email.
         order_id: Optional order ID. If None, uses the most recent order.
+        gmail_thread_id: Optional thread ID for thread-backed disambiguation.
+        gmail_account: Gmail account label for thread history.
 
     Returns:
         Tuple of (ready_items, skipped_items).
         ready_items: dicts with base_flavor, product_name, quantity, product_ids.
-        skipped_items: dicts for items that could not be resolved.
-          Strict-mode skipped items: no product_ids_count field.
-          Legacy-ambiguous skipped items: product_ids_count field present.
+        skipped_items: dicts with reason and product_ids_count for diagnostics.
         Both empty if no matching order items found.
     """
-    strict = getenv("REQUIRE_VARIANT_ID", "").lower() in ("true", "1", "yes")
 
     session = get_session()
     try:
@@ -413,126 +445,87 @@ def get_order_items_for_fulfillment(
 
         ready = _ItemList()
         skipped = []
-        catalog_entries = None  # lazy-loaded for legacy re-resolve
+        catalog_entries = None  # lazy
+        thread_messages = None  # lazy — loaded once on first cross-family
 
         for item in items:
             if item.variant_id is not None:
-                # Phase 4: variant_id exists → direct lookup, no re-resolve
                 ready.append({
                     "base_flavor": item.base_flavor,
                     "product_name": item.product_name,
                     "quantity": item.quantity,
                     "product_ids": [item.variant_id],
                 })
-            elif strict:
-                # Strict mode: NULL variant_id → skip (do not re-resolve)
-                skipped.append({
+                continue
+
+            # --- variant_id=NULL: unified resolution path ---
+            if catalog_entries is None:
+                from db.catalog import get_catalog_products
+                catalog_entries = get_catalog_products()
+
+            product_ids = _resolve_item_product_ids(item, catalog_entries)
+
+            if len(product_ids) == 1:
+                ready.append({
                     "base_flavor": item.base_flavor,
                     "product_name": item.product_name,
                     "quantity": item.quantity,
-                    "product_ids": [],
+                    "product_ids": product_ids,
                 })
-                logger.warning(
-                    "Fulfillment read-path: variant_id NULL for %s/%s/%s "
-                    "(strict mode, skipped)",
-                    email, order_id, item.base_flavor,
-                )
-            else:
-                # Legacy path: re-resolve from text (temporary, REQUIRE_VARIANT_ID=false)
-                # Try product_name first (contains region), fallback to base_flavor
-                from db.product_resolver import resolve_product_to_catalog
+                continue
 
-                pn = (item.product_name or "").strip()
-                bf = (item.base_flavor or "").strip()
-                resolve_name = pn or bf
+            if len(product_ids) > 1 and gmail_thread_id:
+                # Cross-family: apply thread hint
+                if thread_messages is None:
+                    from db.email_history import get_full_thread_history
+                    thread_messages = get_full_thread_history(
+                        gmail_thread_id, gmail_account=gmail_account,
+                    )
+                from db.region_preference import apply_thread_hint
+                from db.region_family import get_preferred_product_id
+                temp = {
+                    "product_ids": list(product_ids),
+                    "base_flavor": (item.base_flavor or "").strip(),
+                }
+                apply_thread_hint([temp], thread_messages, catalog_entries)
+                narrowed = temp.get("product_ids", [])
 
-                resolved = resolve_product_to_catalog(resolve_name)
-                if resolved.confidence not in ("exact", "high") and pn and pn != bf:
-                    resolved = resolve_product_to_catalog(bf)
-
-                product_ids = (
-                    resolved.product_ids
-                    if resolved.confidence in ("exact", "high")
-                    else []
-                )
-
-                if len(product_ids) == 1:
+                if len(narrowed) < len(product_ids) and narrowed:
+                    preferred = get_preferred_product_id(narrowed, catalog_entries)
+                    vid = preferred or narrowed[0]
                     ready.append({
                         "base_flavor": item.base_flavor,
                         "product_name": item.product_name,
                         "quantity": item.quantity,
-                        "product_ids": product_ids,
+                        "product_ids": [vid],
                     })
-                elif len(product_ids) > 1:
-                    # Same-family multi-match → pick preferred, cross-family → skip
-                    from db.region_family import get_preferred_product_id, is_same_family
-
-                    if catalog_entries is None:
-                        from db.catalog import get_catalog_products
-                        catalog_entries = get_catalog_products()
-                    id_to_cat = {
-                        e["id"]: e["category"]
-                        for e in catalog_entries
-                        if e["id"] in set(product_ids)
-                    }
-                    # Fail-closed: not all pids found → skip
-                    if len(id_to_cat) != len(product_ids):
-                        skipped.append({
-                            "base_flavor": item.base_flavor,
-                            "product_name": item.product_name,
-                            "quantity": item.quantity,
-                            "product_ids": product_ids,
-                            "product_ids_count": len(product_ids),
-                        })
-                    elif is_same_family(set(id_to_cat.values())):
-                        preferred = get_preferred_product_id(product_ids, catalog_entries)
-                        ready.append({
-                            "base_flavor": item.base_flavor,
-                            "product_name": item.product_name,
-                            "quantity": item.quantity,
-                            "product_ids": [preferred] if preferred else product_ids,
-                        })
-                    else:
-                        skipped.append({
-                            "base_flavor": item.base_flavor,
-                            "product_name": item.product_name,
-                            "quantity": item.quantity,
-                            "product_ids": product_ids,
-                            "product_ids_count": len(product_ids),
-                        })
-                        logger.warning(
-                            "Fulfillment read-path: legacy re-resolve for %s/%s/%s "
-                            "cross-family %d product_ids (skipped)",
-                            email, order_id, item.base_flavor, len(product_ids),
-                        )
-                else:
-                    skipped.append({
-                        "base_flavor": item.base_flavor,
-                        "product_name": item.product_name,
-                        "quantity": item.quantity,
-                        "product_ids": product_ids,
-                        "product_ids_count": len(product_ids),
-                    })
-                    logger.warning(
-                        "Fulfillment read-path: legacy re-resolve for %s/%s/%s "
-                        "returned %d product_ids (skipped)",
-                        email, order_id, item.base_flavor, len(product_ids),
+                    logger.info(
+                        "Fulfillment: resolved from thread for %s/%s -> pid=%d",
+                        email, item.base_flavor, vid,
                     )
+                    continue
 
-        # Hard block: if strict mode and any skipped → block whole order (rule §4.4)
-        if strict and skipped:
+            # Not resolved → skip with structured reason
+            reason = "ambiguous_variant" if len(product_ids) > 1 else "no_match"
+            skipped.append({
+                "base_flavor": item.base_flavor,
+                "product_name": item.product_name,
+                "quantity": item.quantity,
+                "product_ids": product_ids,
+                "product_ids_count": len(product_ids),
+                "reason": reason,
+            })
             logger.warning(
-                "Fulfillment blocked: %d/%d items missing variant_id for %s "
-                "(strict mode, whole order blocked)",
-                len(skipped), len(ready) + len(skipped), email,
+                "Fulfillment read-path: variant_id NULL for %s/%s/%s "
+                "— %s (product_ids_count=%d, skipped)",
+                email, order_id, item.base_flavor, reason, len(product_ids),
             )
-            return [], skipped
 
-        # Phase 4.1: even in non-strict mode, ambiguous items block whole order (rule §4.3)
+        # Any skipped items block the whole order
         if skipped:
             logger.warning(
-                "Fulfillment blocked: %d/%d items ambiguous after legacy re-resolve "
-                "for %s (whole order blocked)",
+                "Fulfillment blocked: %d/%d items unresolved for %s "
+                "(whole order blocked)",
                 len(skipped), len(ready) + len(skipped), email,
             )
             return [], skipped

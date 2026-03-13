@@ -13,9 +13,10 @@ import agents.pipeline  # noqa: F401 — ensure initial load
 from agents.models import EmailClassification, OrderItem
 
 
-def _process(classification, gmail_message_id=None):
+def _process(classification, gmail_message_id=None, gmail_thread_id=None, gmail_account="default"):
     return sys.modules["agents.pipeline"].process_classified_email(
         classification, gmail_message_id=gmail_message_id,
+        gmail_thread_id=gmail_thread_id, gmail_account=gmail_account,
     )
 
 
@@ -286,3 +287,102 @@ class TestFakeOrderItemCompat:
         # Should not raise — getattr fallback handles missing fields
         result = _process(classification)
         assert result is not None
+
+
+# ── Thread hint pipeline tests ──────────────────────────────────────
+
+# Thread messages with ME hint
+_THREAD_MSGS_ME = [
+    {"body": "2 x Terea Turquoise ME confirmed", "direction": "outbound"},
+]
+
+# Thread catalog for thread hint
+_THREAD_CATALOG = [
+    {"id": 18, "category": "ARMENIA", "name_norm": "turquoise", "stock_name": "T Turquoise"},
+    {"id": 39, "category": "KZ_TEREA", "name_norm": "turquoise", "stock_name": "T Turquoise"},
+    {"id": 71, "category": "TEREA_EUROPE", "name_norm": "turquoise", "stock_name": "T Turquoise"},
+]
+
+
+@patch("agents.pipeline.get_client", return_value=_CLIENT)
+@patch("agents.pipeline.get_stock_summary", return_value={"total": 100})
+@patch("agents.pipeline.resolve_order_items", side_effect=_resolve_cross_family)
+@patch("agents.pipeline.check_stock_for_order", side_effect=_stock_all_in)
+@patch("agents.pipeline.has_ambiguous_variants", return_value=[])
+@patch("agents.pipeline.calculate_order_price", return_value=100.0)
+@patch("db.email_history.get_full_thread_history", return_value=_THREAD_MSGS_ME)
+@patch("db.catalog.get_catalog_products", return_value=_THREAD_CATALOG)
+class TestThreadHintPipeline:
+    """Thread hint narrows cross-family items in pipeline."""
+
+    def test_thread_hint_narrows_to_me(self, *mocks):
+        classification = _make_classification(
+            order_items=[OrderItem(
+                product_name="Turquoise",
+                base_flavor="Turquoise",
+                quantity=10,
+            )],
+        )
+        result = _process(classification, gmail_thread_id="thread123")
+        sci = result.get("_stock_check_items", [])
+        assert len(sci) == 1
+        # Narrowed to ME family
+        assert set(sci[0]["product_ids"]) == {18, 39}
+
+    def test_thread_hint_not_ambiguous(self, *mocks):
+        classification = _make_classification(
+            order_items=[OrderItem(
+                product_name="Turquoise",
+                base_flavor="Turquoise",
+                quantity=10,
+            )],
+        )
+        result = _process(classification, gmail_thread_id="thread123")
+        assert "fulfillment_blocked" not in result
+
+
+@patch("agents.pipeline.get_client", return_value=_CLIENT)
+@patch("agents.pipeline.get_stock_summary", return_value={"total": 100})
+@patch("agents.pipeline.resolve_order_items", side_effect=_resolve_cross_family)
+@patch("agents.pipeline.check_stock_for_order", side_effect=_stock_all_in)
+@patch("agents.pipeline.has_ambiguous_variants", return_value=["Turquoise"])
+@patch("agents.pipeline.calculate_order_price", return_value=100.0)
+class TestThreadHintNoThreadBlocked:
+    """No thread_id → cross-family stays ambiguous → blocked."""
+
+    def test_no_thread_still_blocked(self, *mocks):
+        classification = _make_classification(
+            order_items=[OrderItem(
+                product_name="Turquoise",
+                base_flavor="Turquoise",
+                quantity=10,
+            )],
+        )
+        result = _process(classification)  # no gmail_thread_id
+        assert result.get("fulfillment_blocked") is True
+
+
+@patch("agents.pipeline.get_client", return_value=_CLIENT)
+@patch("agents.pipeline.get_stock_summary", return_value={"total": 100})
+@patch("agents.pipeline.resolve_order_items", side_effect=_resolve_cross_family)
+@patch("agents.pipeline.check_stock_for_order", side_effect=_stock_all_in)
+@patch("agents.pipeline.has_ambiguous_variants", return_value=[])
+@patch("agents.pipeline.calculate_order_price", return_value=100.0)
+@patch("db.region_preference.search_stock_by_ids", side_effect=_mock_stock_eu_ok)
+@patch("db.region_preference.get_catalog_products", return_value=_CATALOG)
+class TestRegionPrefAlreadyNarrowedNoThreadFetch:
+    """If apply_region_preference already narrows → get_full_thread_history NOT called."""
+
+    @patch("db.email_history.get_full_thread_history")
+    def test_lazy_no_fetch(self, mock_thread_history, *mocks):
+        classification = _make_classification(
+            order_items=[OrderItem(
+                product_name="Turquoise",
+                base_flavor="Turquoise",
+                quantity=10,
+                region_preference=["EU"],
+            )],
+        )
+        result = _process(classification, gmail_thread_id="thread456")
+        # region_preference EU already narrowed → thread fetch not needed
+        mock_thread_history.assert_not_called()

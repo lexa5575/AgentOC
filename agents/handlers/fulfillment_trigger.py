@@ -157,8 +157,12 @@ def try_fulfillment(
 
             # Branch 3: Normal payment_received → read from ClientOrderItem table
             else:
+                gmail_thread_id = result.get("gmail_thread_id")
+                gmail_account = result.get("gmail_account", "default")
                 stock_items, skipped_items = get_order_items_for_fulfillment(
                     client_email, order_id,
+                    gmail_thread_id=gmail_thread_id,
+                    gmail_account=gmail_account,
                 )
                 _resolved_oid = getattr(stock_items, "resolved_order_id", None) or order_id
                 # Fallback to latest order ONLY when order_id is NOT explicit.
@@ -179,27 +183,23 @@ def try_fulfillment(
                     else:
                         stock_items, skipped_items = get_order_items_for_fulfillment(
                             client_email, None,
+                            gmail_thread_id=gmail_thread_id,
+                            gmail_account=gmail_account,
                         )
                         _resolved_oid = getattr(stock_items, "resolved_order_id", None) or order_id
 
-        # 1.1 Phase 4 + 4.2: skipped_items gate (payment_received path)
-        # If get_order_items_for_fulfillment returned skipped items,
+        # 1.1 Skipped items gate: if any items couldn't be resolved,
         # the whole order is blocked.
-        # Phase 4.2: reason is dynamic based on skipped item source:
-        #   - product_ids_count field present and != 0 → legacy ambiguous
-        #   - otherwise → strict mode unresolved variant_id
         if skipped_items:
             blocked_flavors = [s["base_flavor"] for s in skipped_items]
-            # Determine reason: if any skipped item has product_ids_count
-            # (set by legacy re-resolve path), it's ambiguous_variant;
-            # otherwise it's unresolved_variant_strict (missing variant_id).
-            has_legacy_ambiguous = any(
-                s.get("product_ids_count") is not None for s in skipped_items
+            # Read reason from skipped item (set by unified path).
+            # Fallback: product_ids_count for backward compat.
+            has_ambiguous = any(
+                s.get("reason") == "ambiguous_variant"
+                or (s.get("reason") is None and s.get("product_ids_count") is not None)
+                for s in skipped_items
             )
-            reason = (
-                "ambiguous_variant" if has_legacy_ambiguous
-                else "unresolved_variant_strict"
-            )
+            reason = "ambiguous_variant" if has_ambiguous else "unresolved_variant_strict"
             blocked_details = {
                 "v": 2,
                 "reason": reason,
@@ -207,6 +207,7 @@ def try_fulfillment(
                     {
                         "base_flavor": s["base_flavor"],
                         "product_ids_count": s.get("product_ids_count", 0),
+                        "reason": s.get("reason", "unknown"),
                     }
                     for s in skipped_items
                 ],

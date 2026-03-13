@@ -52,10 +52,48 @@ from db.catalog import _enrich_display_name_with_region
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Thread-backed narrowing helper
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _apply_thread_hint_if_needed(items, gmail_thread_id, gmail_account):
+    """Lazy-load catalog + thread and apply hint only if cross-family items remain."""
+    if not gmail_thread_id:
+        return items
+    from db.region_family import is_same_family
+    from db.catalog import get_catalog_products
+    catalog_entries = get_catalog_products()
+    cat_map = {e["id"]: e["category"] for e in catalog_entries}
+
+    def _is_cross_family(pids):
+        # Fail-closed: unknown pid → treat as cross-family
+        if any(p not in cat_map for p in pids):
+            return True
+        return not is_same_family({cat_map[p] for p in pids})
+
+    has_cross = any(
+        len(pids) > 1 and _is_cross_family(pids)
+        for item in items
+        if (pids := item.get("product_ids") or [])
+    )
+    if not has_cross:
+        return items
+    from db.email_history import get_full_thread_history
+    from db.region_preference import apply_thread_hint
+    thread_messages = get_full_thread_history(gmail_thread_id, gmail_account=gmail_account)
+    return apply_thread_hint(items, thread_messages, catalog_entries)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # SECTION 1: Pre-processing — stock checks, price, order ID
 # ═══════════════════════════════════════════════════════════════════════════
 
-def process_classified_email(classification, gmail_message_id: str | None = None) -> dict:
+def process_classified_email(
+    classification,
+    gmail_message_id: str | None = None,
+    gmail_thread_id: str | None = None,
+    gmail_account: str = "default",
+) -> dict:
     """Process a classified email: classify metadata and prepare router context.
 
     This function uses ZERO tokens and does not generate text replies.
@@ -147,6 +185,10 @@ def process_classified_email(classification, gmail_message_id: str | None = None
 
             # Apply region preference: narrow product_ids to one family
             items_for_check = apply_region_preference(items_for_check)
+            # Thread-backed narrowing for remaining cross-family items
+            items_for_check = _apply_thread_hint_if_needed(
+                items_for_check, gmail_thread_id, gmail_account,
+            )
 
             stock_result = check_stock_for_order(items_for_check)
 
@@ -311,6 +353,10 @@ def process_classified_email(classification, gmail_message_id: str | None = None
                 else:
                     # Apply region preference before ambiguity gate
                     items_for_check = apply_region_preference(items_for_check)
+                    # Thread-backed narrowing for remaining cross-family items
+                    items_for_check = _apply_thread_hint_if_needed(
+                        items_for_check, gmail_thread_id, gmail_account,
+                    )
                     result["_stock_check_items"] = items_for_check
 
                     # Generate PAY-* order_id (order_id guaranteed empty here)
@@ -740,7 +786,12 @@ def classify_and_process(
             )
 
         # Step 2: Python processes (0 tokens — pure logic)
-        result = process_classified_email(classification, gmail_message_id=gmail_message_id)
+        result = process_classified_email(
+            classification,
+            gmail_message_id=gmail_message_id,
+            gmail_thread_id=gmail_thread_id,
+            gmail_account=gmail_account,
+        )
 
         # Attach gmail_thread_id and gmail_account for downstream context building
         result["gmail_thread_id"] = gmail_thread_id

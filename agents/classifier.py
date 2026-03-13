@@ -185,13 +185,23 @@ If the email contains a clear product list/table, extract:
   - "Turquoise EU only" → product_name="Turquoise",
     region_preference=["EU"], strict_region=true
   - "Turquoise" (no region mention) → region_preference=null
+  - Thread context: if the customer doesn't specify a region but THREAD HISTORY
+    shows we previously quoted/offered a specific region variant (e.g. our reply
+    had "Terea Yellow ME"), use that region as region_preference.
+    Example: customer says "2 yellow again", thread shows "2 x Terea Yellow ME"
+    → region_preference=["ME"]
 
   IMPORTANT: Do NOT set region_preference when region is part of product_name
   (e.g. "Turquoise EU", "Green made in Middle East"). Only for SOFT preferences.
 
 Extract order_items for new_order, payment_received, price_question, stock_question, AND oos_followup situations.
-For payment_received: if the customer mentions specific products in the same message
-(e.g. "send me 1 Silver, I just paid"), extract them as order_items.
+For payment_received: ALWAYS extract order_items when the customer confirms payment.
+If the customer mentions specific products in the message, use those.
+Otherwise, look at CONVERSATION STATE (ordered_items, last_exchange) and THREAD HISTORY
+to identify what the customer is paying for — extract those as order_items.
+Example: customer says "Paid.", state has ordered_items=["Terea Yellow x2"],
+our previous reply had "2 x Terea Yellow ME" → extract
+[{"base_flavor": "Yellow", "quantity": 2, "region_preference": ["ME"]}]
 For stock_question: extract ALL products or regions being asked about as separate
 order_items (quantity defaults to 1). If the customer asks about multiple categories
 (e.g. "any European? and Japan regular?"), create one order_item per category/product.

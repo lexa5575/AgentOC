@@ -2628,3 +2628,125 @@ class TestDualIntentPaymentReceived:
         ff = result["fulfillment"]
         assert ff["status"] == STATUS_BLOCKED_AMBIGUOUS
         assert ff["reason"] == "ambiguous_variant"
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Thread hint in fulfillment read-path
+# ══════════════════════════════════════════════════════════════════════
+
+class TestFulfillmentThreadHint:
+    """Thread-backed disambiguation in get_order_items_for_fulfillment."""
+
+    def test_thread_hint_resolves_to_ready(self, db_session):
+        """variant_id=NULL + thread hint → ready (not skipped)."""
+        session = db_session()
+        # Create cross-family catalog entries
+        arm_id = _add_catalog(session, "ARMENIA", "yellow", "Yellow")
+        kz_id = _add_catalog(session, "KZ_TEREA", "yellow", "Yellow")
+        eu_id = _add_catalog(session, "TEREA_EUROPE", "yellow", "Yellow")
+        # Order item with no variant_id
+        _add_order_item(
+            session, "buyer@example.com", "#700", "Terea Yellow", "Yellow", qty=2,
+        )
+        session.commit()
+
+        # Mock resolver → cross-family [arm, kz, eu]
+        mock_resolved = MagicMock()
+        mock_resolved.product_ids = [arm_id, kz_id, eu_id]
+        mock_resolved.confidence = "exact"
+
+        # Thread messages with ME hint
+        thread_msgs = [{"body": "2 x Terea Yellow ME", "direction": "outbound"}]
+
+        with patch("db.product_resolver.resolve_product_to_catalog", return_value=mock_resolved), \
+             patch("db.email_history.get_full_thread_history", return_value=thread_msgs):
+            items, skipped = get_order_items_for_fulfillment(
+                "buyer@example.com", "#700",
+                gmail_thread_id="thread_700",
+            )
+
+        assert len(items) == 1
+        assert skipped == []
+        # Resolved to ARMENIA (preferred ME)
+        assert items[0]["product_ids"] == [arm_id]
+
+    def test_thread_hint_no_hint_skipped(self, db_session):
+        """variant_id=NULL + no thread hint → skipped."""
+        session = db_session()
+        arm_id = _add_catalog(session, "ARMENIA", "yellow", "Yellow")
+        kz_id = _add_catalog(session, "KZ_TEREA", "yellow", "Yellow")
+        eu_id = _add_catalog(session, "TEREA_EUROPE", "yellow", "Yellow")
+        _add_order_item(
+            session, "buyer@example.com", "#701", "Terea Yellow", "Yellow", qty=2,
+        )
+        session.commit()
+
+        mock_resolved = MagicMock()
+        mock_resolved.product_ids = [arm_id, kz_id, eu_id]
+        mock_resolved.confidence = "exact"
+
+        # No thread messages with region hint
+        thread_msgs = [{"body": "Payment sent!", "direction": "inbound"}]
+
+        with patch("db.product_resolver.resolve_product_to_catalog", return_value=mock_resolved), \
+             patch("db.email_history.get_full_thread_history", return_value=thread_msgs):
+            items, skipped = get_order_items_for_fulfillment(
+                "buyer@example.com", "#701",
+                gmail_thread_id="thread_701",
+            )
+
+        assert items == []
+        assert len(skipped) == 1
+        assert skipped[0]["reason"] == "ambiguous_variant"
+
+    def test_same_family_resolved_no_thread_needed(self, db_session):
+        """variant_id=NULL + region-aware product_name → same-family resolve → ready."""
+        session = db_session()
+        arm_id = _add_catalog(session, "ARMENIA", "yellow", "Yellow")
+        kz_id = _add_catalog(session, "KZ_TEREA", "yellow", "Yellow")
+        _add_order_item(
+            session, "buyer@example.com", "#702", "Terea Yellow ME", "Yellow", qty=2,
+        )
+        session.commit()
+
+        # Mock resolver → same-family [arm, kz]
+        mock_resolved = MagicMock()
+        mock_resolved.product_ids = [arm_id, kz_id]
+        mock_resolved.confidence = "exact"
+
+        with patch("db.product_resolver.resolve_product_to_catalog", return_value=mock_resolved):
+            items, skipped = get_order_items_for_fulfillment(
+                "buyer@example.com", "#702",
+            )
+
+        assert len(items) == 1
+        assert skipped == []
+        # Preferred ARMENIA
+        assert items[0]["product_ids"] == [arm_id]
+
+    def test_gmail_account_passed_to_thread_history(self, db_session):
+        """gmail_account is correctly forwarded to get_full_thread_history."""
+        session = db_session()
+        arm_id = _add_catalog(session, "ARMENIA", "yellow", "Yellow")
+        kz_id = _add_catalog(session, "KZ_TEREA", "yellow", "Yellow")
+        eu_id = _add_catalog(session, "TEREA_EUROPE", "yellow", "Yellow")
+        _add_order_item(
+            session, "buyer@example.com", "#703", "Terea Yellow", "Yellow", qty=2,
+        )
+        session.commit()
+
+        mock_resolved = MagicMock()
+        mock_resolved.product_ids = [arm_id, kz_id, eu_id]
+        mock_resolved.confidence = "exact"
+
+        thread_msgs = [{"body": "2 x Terea Yellow ME", "direction": "outbound"}]
+
+        with patch("db.product_resolver.resolve_product_to_catalog", return_value=mock_resolved), \
+             patch("db.email_history.get_full_thread_history", return_value=thread_msgs) as mock_thread:
+            get_order_items_for_fulfillment(
+                "buyer@example.com", "#703",
+                gmail_thread_id="thread_703",
+                gmail_account="tilda",
+            )
+
+        mock_thread.assert_called_once_with("thread_703", gmail_account="tilda")
