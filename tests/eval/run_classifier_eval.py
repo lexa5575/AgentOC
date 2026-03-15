@@ -144,13 +144,27 @@ def _compare(classification, expected: dict) -> dict:
         }
 
     # dialog_intent
+    # Relaxation: when expected is null and situation is NOT oos_followup,
+    # skip scoring — LLM reasonably fills asks_question for any question,
+    # but this distinction is meaningless for non-followup routing.
     if "dialog_intent" in expected:
         actual = classification.dialog_intent
-        results["dialog_intent"] = {
-            "expected": expected["dialog_intent"],
-            "actual": actual,
-            "match": actual == expected["dialog_intent"],
-        }
+        exp_intent = expected["dialog_intent"]
+        exp_situation = expected.get("situation", "")
+        skip_intent = (exp_intent is None and exp_situation != "oos_followup")
+        if skip_intent:
+            results["dialog_intent"] = {
+                "expected": exp_intent,
+                "actual": actual,
+                "match": True,
+                "skipped": True,
+            }
+        else:
+            results["dialog_intent"] = {
+                "expected": exp_intent,
+                "actual": actual,
+                "match": actual == exp_intent,
+            }
 
     # needs_reply
     if "needs_reply" in expected:

@@ -269,7 +269,7 @@ CRITICAL: Return a FLAT JSON object with exactly these field names. No extra nes
 classifier_agent = Agent(
     id="email-classifier",
     name="Email Classifier",
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=classifier_instructions,
 )
 
