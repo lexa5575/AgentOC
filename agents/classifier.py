@@ -52,61 +52,34 @@ of Silver" → this is new_order, NOT payment_received.
 
 ## Rules for needs_reply
 
-true: questions, complaints, payment confirmations, product requests, order-related messages
-false: simple acknowledgments with NO new question or request
+true: questions, complaints, payment confirmations, product requests, order-related messages.
+false: simple acknowledgments with NO new question or request (e.g. "Thanks!", "Got it", "OK").
 
-Examples of needs_reply=false:
-- "Thank you!" / "Thank you James." / "Thanks!"
-- "Got it" / "Perfect" / "OK" / "Sounds good"
-- "Great, thanks!" / "Appreciate it"
-- Marketing emails, spam, automated notifications
+If the message contains ANY question or request beyond acknowledgment → true.
+Example: "Thank you! When will it be shipped?" → true (has a question).
 
-Examples of needs_reply=true (even if starts with "thank you"):
-- "Thank you! When will it be shipped?" (has a question)
-- "Got it. Can I also add 2 boxes of Green?" (has a request)
-- "Yes pls. Ty" in an oos_followup thread (agreeing to alternative → need to confirm order)
-
-IMPORTANT: When situation is oos_followup and customer AGREES to an alternative
-("yes", "yes pls", "sounds good", "that works"), needs_reply is ALWAYS true —
-we must confirm the order details. These are NOT simple acknowledgments.
+EXCEPTION: oos_followup + customer AGREES ("yes", "yes pls", "sounds good") → ALWAYS true.
+We must confirm the order — this is NOT a simple acknowledgment.
 
 ## Rules for situation
 
-- "new_order" — customer wants to place an order. Use this when:
-  - Direct order: "I want to order X", "Please send me X", "I'll take X"
-  - Question with specific product AND quantity: "Is it possible to order 2 boxes of X?",
-    "Can I get 4 cartons of Y?", "Could you send 1 box of Z?"
-  KEY RULE: if the customer specifies both a product name AND a quantity (number of boxes/cartons/units),
-  classify as new_order — not price_question. Specific quantities = purchase intent.
-  NOT new_order: "hold for me", "reserve", "save", "set aside", "keep for me", "hold on to" —
-  these are requests to reserve product for a FUTURE order, not an actual order. Classify as "other".
+- "new_order" — customer wants to place an order.
+  KEY RULE: product name + quantity = new_order (NOT price_question).
+  NOT new_order: "hold/reserve/set aside" → classify as "other".
 - "tracking" — asks about delivery status, tracking number, "where is my order?"
-- "price_question" — asks HOW MUCH something costs WITHOUT specifying quantity, requests a price quote
-  ("how much for Green?", "what's the price of Blue?", "can you give me a price?")
-  Only use this when no specific quantity is mentioned. If quantity is present → use new_order instead.
-- "stock_question" — asks WHETHER a product or product region is available/in stock, WITHOUT ordering intent.
-  Specific product: "do you have Tropical?", "is Blue available?", "do you carry Silver?"
-  Region/category: "which Japan do you have?", "what terea japan ship from CA?",
-  "do you have EU?", "what's available from Armenia?", "any Japanese sticks?"
-  KEY: no quantity, no price query — pure availability question. If quantity is present → new_order.
-  If it's inside an oos_followup thread → use oos_followup instead.
-  For PURE region queries (no specific flavor), set base_flavor = region name (e.g. "Japan", "EU", "Armenia").
-  For specific product within a region (e.g. "japan regular", "EU silver"), set base_flavor = the FLAVOR
-  (e.g. "Regular", "Silver"), NOT the region. The region is context, the flavor is what they're asking about.
-  Examples:
-  - "what Japan do you have?" → base_flavor = "Japan" (pure region query, list everything)
-  - "do you have japan regular?" → base_flavor = "Regular" (specific product, not a region dump)
-  - "any European available?" → base_flavor = "Europe" (pure region query)
-  - "is EU silver in stock?" → base_flavor = "Silver" (specific product)
-- "payment_question" — asks WHERE or HOW to pay ("how do I pay?", "what's the Zelle?")
-- "payment_received" — confirms payment was sent ("I paid via Zelle", "sent CashApp")
-- "discount_request" — asks for discount or better price (NOT a price quote request)
-- "shipping_timeline" — asks WHEN order will be shipped ("when do you ship?")
-- "oos_followup" — reply in a thread where we discussed out-of-stock or alternatives.
-  Use when customer responds about product availability, alternatives, or substitutions.
-  Examples: "Yes, I'll take the green", "Do you have silver?", "That works for me",
-  "Yes, that is perfect", "Please send final total"
-- "other" — anything that doesn't fit above (general questions, complaints, etc.)
+- "price_question" — asks how much something costs WITHOUT quantity.
+  If quantity present → new_order instead.
+- "stock_question" — asks if a product/region is available, WITHOUT ordering intent.
+  No quantity, no price query — pure availability. If quantity → new_order.
+  In oos_followup thread → use oos_followup instead.
+  Region queries: base_flavor = region name ("Japan", "Europe").
+  Specific product in region ("japan regular"): base_flavor = "Regular" (the flavor, NOT region).
+- "payment_question" — asks WHERE or HOW to pay
+- "payment_received" — confirms payment was sent
+- "discount_request" — asks for discount (NOT a price quote)
+- "shipping_timeline" — asks WHEN order will be shipped
+- "oos_followup" — reply in thread where we discussed out-of-stock/alternatives
+- "other" — anything that doesn't fit above
 
 ## Multi-intent priority
 
@@ -121,106 +94,55 @@ When a message contains MULTIPLE intents, use this priority order:
 
 Use CONVERSATION STATE and THREAD HISTORY to detect followups.
 
-followup_to: what our message was about:
-  - "oos_email" — we told them something was out of stock or offered alternatives
-  - "payment_info" — we sent payment instructions
-  - "tracking_info" — we sent tracking number
-  - "order_confirmation" — we confirmed their order
-  - null — not a followup or unknown
+followup_to: what our previous message was about:
+  - "oos_email" / "payment_info" / "tracking_info" / "order_confirmation" / null
 
-dialog_intent: what the customer wants:
-  - "agrees_to_alternative" — accepts our suggestion OR confirms a specific order
-    in the context of an OOS discussion. Examples:
-    Simple agreement: "yes", "that works", "I'll take it", "sounds good"
-    Order confirmation: "ok send me 4 black menthol", "please send me the 4 boxes",
-      "I'll take 4 of those", "ok. Please send me the 4 black menthol please"
-    KEY RULE: In an OOS/alternatives thread, if the customer says "send me X" or
-    "I'll take X" with specific product+quantity, this is agrees_to_alternative
-    (NOT provides_info). The customer is confirming what they want shipped.
-  - "declines_alternative" — rejects our suggestion ("no thanks", "I'll pass", "cancel")
-  - "confirms_payment" — says they paid (overlaps with payment_received situation)
+dialog_intent (CRITICAL — controls routing for oos_followup):
+  - "agrees_to_alternative" — accepts our suggestion OR confirms order in OOS context.
+    Includes: "yes", "that works", "ok send me 4 black menthol", "I'll take X".
+    KEY: In OOS threads, "send me X" with product+quantity = agrees_to_alternative (NOT provides_info).
+  - "declines_alternative" — rejects suggestion ("no thanks", "I'll pass", "cancel")
+  - "confirms_payment" — says they paid
   - "asks_question" — asks about products, availability, pricing
-  - "provides_info" — gives us information we asked for (address, phone, etc.)
-    NOT for product/quantity choices — those are agrees_to_alternative.
+  - "provides_info" — gives non-product info (address, phone). NOT for product choices.
   - null — unclear or not a followup
 
-IMPORTANT: When CONVERSATION STATE mentions out-of-stock or alternatives,
-and the customer responds with agreement/product choice/question about products,
-use situation="oos_followup" (NOT "other").
-
-EXCEPTION: If CONVERSATION STATE Status is "shipped" or "completed",
-the previous order cycle is FINISHED. A new product request with specific
-product + quantity (e.g. "can I have 2 terea sienna") is a NEW ORDER,
-not a followup to the old OOS discussion. Classify as "new_order".
+When CONVERSATION STATE mentions out-of-stock/alternatives and customer responds
+about products → situation="oos_followup" (NOT "other").
+EXCEPTION: If Status is "shipped"/"completed", new product+qty = "new_order".
 
 ## Rules for order_items
 
-Most website orders are parsed automatically before reaching you.
-You only need to extract order_items for rare non-standard orders.
+Extract order_items for: new_order, payment_received, price_question, stock_question, oos_followup.
+Set order_items to null for other situations or when no clear product list exists.
 
-If the email contains a clear product list/table, extract:
-- product_name: full name (e.g. "Tera Green made in Middle East")
-- base_flavor: flavor/variant name — strip "Tera"/"Terea"/"Heets" prefix and
-  "EU"/"made in Middle East"/etc. region suffix. Keep compound flavor names INTACT:
-  "Yellow Menthol", "Purple Menthol", "Bright Menthol", "Fusion Menthol",
-  "Black Purple Menthol", "Black Ruby Menthol", "Black Tropical Menthol" — these are
-  SINGLE flavors, do NOT split them.
-  Examples: "Tera Green made in Middle East" → "Green", "Tera Turquoise EU" → "Turquoise",
-  "yellow menthol" → "Yellow Menthol", "black purple menthol" → "Black Purple Menthol"
-  Keep non-Tera brands intact: "ONE Green" → "ONE Green", "PRIME Black" → "PRIME Black"
+### Product name parsing
+- product_name: full name as stated (e.g. "Tera Green made in Middle East")
+- base_flavor: strip "Tera"/"Terea"/"Heets" prefix and region suffix.
+  Keep compound flavors INTACT: "Yellow Menthol", "Black Purple Menthol" (single flavors, do NOT split).
+  Non-Tera brands stay intact: "ONE Green" → "ONE Green".
 - quantity: number of units (default 1)
-- region_preference: ordered list of preferred region codes when customer
-  expresses a SOFT regional preference in conversational text.
-  Valid codes: "EU", "ME", "JAPAN". First element = most preferred.
+
+### Region preferences
+- region_preference: ordered list ["EU","ME","JAPAN"] for SOFT preferences only.
   null when no preference or when region is already in product_name.
-- strict_region: true if customer ONLY wants the specified region
-  (e.g. "EU only", "only Japan"), false if alternatives acceptable.
+  "Turquoise EU" → region_preference=null (region IN name).
+  "Turquoise, ME ok if no EU" → region_preference=["EU","ME"], strict_region=false.
+  "Turquoise EU only" → region_preference=["EU"], strict_region=true.
+- Thread hint: if no region stated but THREAD HISTORY shows a specific region
+  variant (e.g. "Terea Yellow ME"), use that as region_preference.
+- strict_region: true only for "only"/"exclusively" language, false otherwise.
 
-  Examples:
-  - "Turquoise EU" → product_name="Turquoise EU", region_preference=null
-    (region IN name → resolver handles it, no preference needed)
-  - "Turquoise, ME is ok if no EU" → product_name="Turquoise",
-    region_preference=["EU","ME"], strict_region=false
-  - "Turquoise EU only" → product_name="Turquoise",
-    region_preference=["EU"], strict_region=true
-  - "Turquoise" (no region mention) → region_preference=null
-  - Thread context: if the customer doesn't specify a region but THREAD HISTORY
-    shows we previously quoted/offered a specific region variant (e.g. our reply
-    had "Terea Yellow ME"), use that region as region_preference.
-    Example: customer says "2 yellow again", thread shows "2 x Terea Yellow ME"
-    → region_preference=["ME"]
-
-  IMPORTANT: Do NOT set region_preference when region is part of product_name
-  (e.g. "Turquoise EU", "Green made in Middle East"). Only for SOFT preferences.
-
-Extract order_items for new_order, payment_received, price_question, stock_question, AND oos_followup situations.
-For payment_received: ALWAYS extract order_items when the customer confirms payment.
-If the customer mentions specific products in the message, use those.
-Otherwise, look at CONVERSATION STATE (ordered_items, last_exchange) and THREAD HISTORY
-to identify what the customer is paying for — extract those as order_items.
-Example: customer says "Paid.", state has ordered_items=["Terea Yellow x2"],
-our previous reply had "2 x Terea Yellow ME" → extract
-[{"base_flavor": "Yellow", "quantity": 2, "region_preference": ["ME"]}]
-For stock_question: extract ALL products or regions being asked about as separate
-order_items (quantity defaults to 1). If the customer asks about multiple categories
-(e.g. "any European? and Japan regular?"), create one order_item per category/product.
-Example: "any European? and japan regular?" →
-  [{"base_flavor": "Europe", ...}, {"base_flavor": "Regular", ...}]
-  (Europe = region query; Regular = specific product, NOT "Japan")
-For region queries, use the region name as base_flavor (e.g. "Europe", "Japan").
-IMPORTANT: If the customer asks a GENERAL availability question without naming any specific
-product or region ("What do you have?", "What's available?", "What Terea sticks do you have?",
-"Looking to place an order, what's in stock?"), set order_items to null.
-"Terea sticks" or "Terea" alone is NOT a product — it's the brand. Do not invent a base_flavor
-from it. The handler will list available categories when order_items is null.
-For oos_followup with dialog_intent=agrees_to_alternative: extract the items the customer
-is confirming as order_items. Look at CONVERSATION STATE and previous emails to identify
-what products and quantities were offered as alternatives — those are the confirmed items.
-Example: if our previous email offered "2 Japanese Tropical + 1 Japanese Black" and customer
-says "Yes pls", extract:
-  [{"base_flavor": "Tropical", "product_name": "Japanese Tropical", "quantity": 2},
-   {"base_flavor": "Black", "product_name": "Japanese Black", "quantity": 1}]
-If no clear product list → set order_items to null.
+### Situation-specific rules
+- new_order: extract products, quantities, regions from the order.
+- payment_received: ALWAYS extract. Use current message first; if none,
+  extract from CONVERSATION STATE/THREAD HISTORY (what customer is paying for).
+- price_question: extract products being asked about.
+- stock_question: each product/region = separate OrderItem (qty=1).
+  Region queries → base_flavor = region name ("Japan", "Europe").
+  General queries ("What do you have?") → order_items=null.
+- oos_followup (agrees_to_alternative): extract confirmed items from
+  message + CONVERSATION STATE. If unclear → null.
 
 ## Output format
 
