@@ -16,13 +16,19 @@ from agents.formatters import format_conversation_state_for_classifier, format_t
 from agents.models import EmailClassification, OrderItem
 from db.conversation_state import get_client_states, get_state
 from db.memory import get_full_thread_history
-from tools.email_parser import clean_email_body, try_parse_order
+from tools.email_parser import clean_email_body, strip_quoted_text, try_parse_order
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Agent: Classifier (returns structured JSON, no free text)
 # ---------------------------------------------------------------------------
+# Responsibility split:
+#   Python (deterministic): client_email (_extract_sender_email — source of truth),
+#     items derivation (_derive_items_text), region_preference normalization
+#     (Pydantic validator), quoted text cleanup, website orders (try_parse_order).
+#   LLM (interpretation): situation, dialog_intent, followup_to, order_items,
+#     needs_reply, order_id, price, address, client_name, multi-intent resolution.
 classifier_instructions = """\
 You are an email classifier for shipmecarton.com.
 Analyze the email and return ONLY a flat JSON object. No text before or after.
@@ -290,12 +296,29 @@ def _find_value(data: dict, *keys: str):
 _EMAIL_RE = re.compile(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+')
 
 
-def _extract_sender_email(email_text: str) -> str | None:
-    """Extract real sender email from email headers.
+def _derive_items_text(order_items: list[OrderItem] | None) -> str | None:
+    """Derive free-text items summary from structured order_items.
 
-    Priority: Reply-To (real client in order notifications) > From.
-    Only parses headers (before 'Body:' line) to avoid matching
-    quoted/forwarded content.
+    Format matches email_parser.py try_parse_order output:
+    "product_name x quantity, product_name x quantity"
+    """
+    if not order_items:
+        return None
+    return ", ".join(f"{oi.product_name} x {oi.quantity}" for oi in order_items)
+
+
+_SYSTEM_SENDERS = ("noreply@", "no-reply@", "@shipmecarton.com")
+
+
+def _extract_sender_email(email_text: str) -> str | None:
+    """Extract real sender email from email text.
+
+    Priority:
+      1. Reply-To header (real client in order notifications)
+      2. From header (skip system addresses)
+      3. Body "Email:" field — ONLY when From/Reply-To are system senders.
+         Searched in unquoted body only (via strip_quoted_text) to avoid
+         matching quoted/forwarded "Email:" from old messages.
     """
     header_section = email_text.split("\nBody:", 1)[0] if "\nBody:" in email_text else email_text[:500]
 
@@ -307,13 +330,25 @@ def _extract_sender_email(email_text: str) -> str | None:
                 return match.group(0).lower()
 
     # Priority 2: From (skip system addresses)
+    from_email = None
     for line in header_section.splitlines():
         if line.lower().startswith("from:"):
             match = _EMAIL_RE.search(line)
             if match:
                 email = match.group(0).lower()
-                if not any(skip in email for skip in ("noreply@", "no-reply@", "@shipmecarton.com")):
+                if not any(skip in email for skip in _SYSTEM_SENDERS):
                     return email
+                from_email = email  # remember system sender for Priority 3
+
+    # Priority 3: Body "Email:" field — ONLY if From was a system sender
+    if from_email:
+        body_section = email_text.split("\nBody:", 1)[1] if "\nBody:" in email_text else ""
+        unquoted_body = strip_quoted_text(body_section)
+        m = re.search(r"(?:^|\n)\s*Email:\s*(.+)", unquoted_body)
+        if m:
+            match = _EMAIL_RE.search(m.group(1))
+            if match:
+                return match.group(0).lower()
 
     return None
 
@@ -474,6 +509,17 @@ def run_classification(
         followup_to=_find_value(data, "followup_to"),
         dialog_intent=_find_value(data, "dialog_intent"),
     )
+
+    # Python client_email is source of truth — always overrides LLM extraction.
+    # LLM may return wrong non-system email; Python uses deterministic header/body parsing.
+    python_email = _extract_sender_email(email_text)
+    if python_email:
+        classification.client_email = python_email
+
+    # Derive items text from order_items when LLM omitted it
+    # (used only by notifier.py for Telegram display).
+    if not classification.items and classification.order_items:
+        classification.items = _derive_items_text(classification.order_items)
 
     logger.info(
         "Classified: email=%s, situation=%s, needs_reply=%s",

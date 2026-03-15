@@ -104,6 +104,7 @@ def _ensure_stubs():
         except ImportError:
             tools_ep = types.ModuleType("tools.email_parser")
             tools_ep._strip_quoted_text = lambda body: body
+            tools_ep.strip_quoted_text = lambda body: body
             tools_ep.try_parse_order = lambda *a, **kw: None
             tools_ep.clean_email_body = lambda body: body
             sys.modules["tools.email_parser"] = tools_ep
@@ -136,9 +137,53 @@ def test_extract_sender_email_reply_to_priority():
     assert _extract_sender_email(text) == "customer@example.com"
 
 
-def test_extract_sender_email_skip_noreply():
+def test_extract_sender_email_system_sender_body_email():
+    """System sender + body 'Email:' → extract real client from body."""
     text = "From: noreply@shipmecarton.com\nSubject: Order\nBody: Email: real@example.com"
+    assert _extract_sender_email(text) == "real@example.com"
+
+
+def test_extract_sender_email_system_sender_no_body_email():
+    """System sender without body 'Email:' → None."""
+    text = "From: noreply@shipmecarton.com\nSubject: Order\nBody: Some order text"
     assert _extract_sender_email(text) is None
+
+
+def test_extract_sender_email_quoted_body_email_ignored():
+    """Customer reply with quoted 'Email:' inside citation → NOT extracted from body."""
+    text = (
+        "From: real_customer@example.com\n"
+        "Subject: Re: Order\n"
+        "Body: Thanks for the info!\n"
+        "\n"
+        "On Mar 10, 2026, noreply@shipmecarton.com wrote:\n"
+        "Email: old_customer@example.com\n"
+        "Order ID: 12345"
+    )
+    # From is not system, so body Email: is not even checked.
+    # Result should be the From: header customer.
+    assert _extract_sender_email(text) == "real_customer@example.com"
+
+
+def test_extract_sender_email_reply_to_over_body_email():
+    """Reply-To takes priority over body 'Email:' field."""
+    text = (
+        "From: noreply@shipmecarton.com\n"
+        "Reply-To: priority@example.com\n"
+        "Subject: New Order\n"
+        "Body: Email: body_email@example.com"
+    )
+    assert _extract_sender_email(text) == "priority@example.com"
+
+
+def test_extract_sender_email_direct_from_is_source_of_truth():
+    """Direct email (non-system From) → Python returns From email.
+
+    Even if LLM would return a different email, Python's extraction
+    from headers is the source of truth that overrides LLM.
+    """
+    text = "From: customer@example.com\nSubject: Hello\nBody: Some question"
+    assert _extract_sender_email(text) == "customer@example.com"
 
 
 def test_extract_sender_email_body_not_matched():
