@@ -119,8 +119,9 @@ def _ensure_stubs():
 _ensure_stubs()
 
 # Now safe to import production code
-from agents.classifier import _extract_sender_email, _format_other_threads
+from agents.classifier import _extract_sender_email
 from agents.context import EmailContext, format_context_for_prompt
+from agents.formatters import format_other_threads as _format_other_threads
 
 
 # ---------------------------------------------------------------------------

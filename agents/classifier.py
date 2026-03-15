@@ -12,7 +12,7 @@ import re
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
 
-from agents.formatters import format_conversation_state_for_classifier, format_thread_for_classifier
+from agents.formatters import compose_classifier_context, format_thread_for_classifier
 from agents.models import EmailClassification, OrderItem
 from db.conversation_state import get_client_states, get_state
 from db.memory import get_full_thread_history
@@ -353,24 +353,6 @@ def _extract_sender_email(email_text: str) -> str | None:
     return None
 
 
-def _format_other_threads(states: list[dict], exclude_thread_id: str | None) -> str:
-    """Format conversation states from other threads as context for classifier."""
-    other = [s for s in states if s.get("gmail_thread_id") != exclude_thread_id]
-    if not other:
-        return ""
-    lines = ["--- OTHER ACTIVE THREADS ---"]
-    for s in other[:3]:
-        state = s.get("state", {})
-        situation = s.get("last_situation", "unknown")
-        lines.append(f"Thread ({situation}):")
-        if state.get("facts"):
-            lines.append(f"  Facts: {json.dumps(state['facts'], ensure_ascii=False)}")
-        if state.get("summary"):
-            lines.append(f"  Summary: {state['summary']}")
-        lines.append("")
-    return "\n".join(lines)
-
-
 # ---------------------------------------------------------------------------
 # Context builder
 # ---------------------------------------------------------------------------
@@ -387,17 +369,16 @@ def build_classifier_context(
         email text for the classifier, and pre_state_record is reused in
         classify_and_process to avoid a duplicate DB query.
     """
-    conversation_context = ""
     pre_state_record = None
+    state_dict = None
+    thread_history = None
+    other_thread_states = None
 
     if gmail_thread_id:
         try:
             pre_state_record = get_state(gmail_thread_id)
-            state_record = pre_state_record
-            if state_record and state_record.get("state"):
-                conversation_context = format_conversation_state_for_classifier(
-                    state_record["state"]
-                )
+            if pre_state_record and pre_state_record.get("state"):
+                state_dict = pre_state_record["state"]
         except Exception as e:
             logger.warning("Failed to get conversation state for classifier: %s", e)
 
@@ -405,9 +386,7 @@ def build_classifier_context(
         try:
             thread_history = get_full_thread_history(
                 gmail_thread_id, max_results=15, gmail_account=gmail_account,
-            )
-            if thread_history:
-                conversation_context += format_thread_for_classifier(thread_history) + "\n\n"
+            ) or None
         except Exception as e:
             logger.warning("Failed to get thread history for classifier: %s", e)
 
@@ -418,12 +397,16 @@ def build_classifier_context(
 
     if sender_email:
         try:
-            all_client_states = get_client_states(sender_email, limit=4)
-            cross_thread = _format_other_threads(all_client_states, gmail_thread_id)
-            if cross_thread:
-                conversation_context += cross_thread + "\n\n"
+            other_thread_states = get_client_states(sender_email, limit=4) or None
         except Exception as e:
             logger.warning("Failed to get cross-thread context: %s", e)
+
+    conversation_context = compose_classifier_context(
+        conversation_state=state_dict,
+        thread_history=thread_history,
+        other_thread_states=other_thread_states,
+        exclude_thread_id=gmail_thread_id,
+    )
 
     return conversation_context, pre_state_record
 

@@ -129,11 +129,55 @@ def _install_import_stubs() -> None:
     db_stock.get_client_flavor_history = lambda *args, **kwargs: []
     db_stock.save_order_items = lambda *args, **kwargs: 0
 
+    # Stub db.region_preference (imported by pipeline.py)
+    db_region_preference = types.ModuleType("db.region_preference")
+    db_region_preference.apply_region_preference = lambda items: items
+    db_region_preference.apply_thread_hint = lambda items, thread_messages, catalog_entries: items
+
+    # Stub db.catalog (imported by pipeline.py, handlers)
+    # Minimal display name logic matching production db/catalog.py
+    db_catalog = types.ModuleType("db.catalog")
+    db_catalog._enrich_display_name_with_region = lambda vid, display: display
+    db_catalog.get_catalog_products = lambda: []
+
+    _DEVICE_PREFIXES = ("ONE", "STND", "PRIME")
+
+    def _stub_get_display_name(raw_name, category=None):
+        upper = raw_name.upper().strip()
+        for pfx in _DEVICE_PREFIXES:
+            if upper == pfx or upper.startswith(pfx + " "):
+                return raw_name
+        if category in ("TEREA_JAPAN", "УНИКАЛЬНАЯ_ТЕРЕА"):
+            return f"Terea {raw_name} made in Japan"
+        if category == "TEREA_EUROPE":
+            return f"Terea {raw_name} EU"
+        if category in ("ARMENIA", "KZ_TEREA"):
+            return f"Terea {raw_name} ME"
+        return raw_name
+
+    def _stub_get_base_display_name(raw_name, category=None):
+        upper = raw_name.upper().strip()
+        for pfx in _DEVICE_PREFIXES:
+            if upper == pfx or upper.startswith(pfx + " "):
+                return raw_name
+        return f"Terea {raw_name}"
+
+    db_catalog.get_display_name = _stub_get_display_name
+    db_catalog.get_base_display_name = _stub_get_base_display_name
+
+    # Stub db.region_family (imported by pipeline.py, tools/stock_tools.py)
+    db_region_family = types.ModuleType("db.region_family")
+    db_region_family.CATEGORY_REGION_SUFFIX = {}
+    db_region_family.is_same_family = lambda a, b: a == b
+
     sys.modules["db"] = db_mod
     sys.modules["db.memory"] = db_memory
     sys.modules["db.stock"] = db_stock
     sys.modules["db.clients"] = db_clients
     sys.modules["db.conversation_state"] = db_conversation_state
+    sys.modules["db.region_preference"] = db_region_preference
+    sys.modules["db.catalog"] = db_catalog
+    sys.modules["db.region_family"] = db_region_family
 
     # Only stub tools.web_search; preserve real tools package for stock_parser
     if "tools" not in sys.modules:
@@ -152,6 +196,7 @@ def _install_import_stubs() -> None:
         except ImportError:
             tools_ep = types.ModuleType("tools.email_parser")
             tools_ep._strip_quoted_text = lambda body: body
+            tools_ep.strip_quoted_text = lambda body: body
             tools_ep.try_parse_order = lambda *a, **kw: None
             tools_ep.clean_email_body = lambda body: body
             sys.modules["tools.email_parser"] = tools_ep

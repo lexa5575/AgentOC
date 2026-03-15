@@ -25,11 +25,10 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from agents.classifier import _format_other_threads, run_classification
+from agents.classifier import run_classification
 from agents.formatters import (
+    compose_classifier_context,
     format_combined_email_text,
-    format_conversation_state_for_classifier,
-    format_thread_for_classifier,
 )
 
 logger = logging.getLogger(__name__)
@@ -39,42 +38,40 @@ BASELINE_PATH = Path(__file__).parent / "baseline_results.json"
 
 
 # ---------------------------------------------------------------------------
-# Context assembly (mirrors build_classifier_context using shared formatters)
+# Context assembly — uses the same shared composer as production
 # ---------------------------------------------------------------------------
+
+def _convert_dates(history: list[dict]) -> list[dict]:
+    """Convert date strings in thread history to datetime objects."""
+    result = []
+    for msg in history:
+        entry = dict(msg)
+        if isinstance(entry.get("created_at"), str):
+            try:
+                entry["created_at"] = datetime.fromisoformat(entry["created_at"])
+            except (ValueError, TypeError):
+                entry["created_at"] = None
+        result.append(entry)
+    return result
+
 
 def _build_eval_context(case: dict) -> str:
     """Build classifier context string from eval case data.
 
-    Uses the same production formatters as build_classifier_context().
+    Uses compose_classifier_context() — the same shared composer
+    that build_classifier_context() uses in production.
+    Guarantees identical whitespace and ordering.
     """
-    parts: list[str] = []
-
-    # Conversation state
-    state = case.get("conversation_state")
-    if state:
-        parts.append(format_conversation_state_for_classifier(state))
-
-    # Thread history
     thread_history = case.get("thread_history")
     if thread_history:
-        # Convert date strings to datetime objects for formatter
-        formatted_history = []
-        for msg in thread_history:
-            entry = dict(msg)
-            if isinstance(entry.get("created_at"), str):
-                try:
-                    entry["created_at"] = datetime.fromisoformat(entry["created_at"])
-                except (ValueError, TypeError):
-                    entry["created_at"] = None
-            formatted_history.append(entry)
-        parts.append(format_thread_for_classifier(formatted_history))
+        thread_history = _convert_dates(thread_history)
 
-    # Other threads (cross-thread context)
-    other_threads = case.get("other_threads")
-    if other_threads:
-        parts.append(_format_other_threads(other_threads, exclude_thread_id=None))
-
-    return "\n\n".join(parts)
+    return compose_classifier_context(
+        conversation_state=case.get("conversation_state"),
+        thread_history=thread_history,
+        other_thread_states=case.get("other_threads"),
+        exclude_thread_id=None,
+    )
 
 
 def _build_eval_email_text(case: dict) -> str:

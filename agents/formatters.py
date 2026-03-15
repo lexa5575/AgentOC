@@ -70,6 +70,52 @@ def format_conversation_state_for_classifier(state: dict) -> str:
     )
 
 
+def format_other_threads(states: list[dict], exclude_thread_id: str | None = None) -> str:
+    """Format conversation states from other threads as context for classifier."""
+    other = [s for s in states if s.get("gmail_thread_id") != exclude_thread_id]
+    if not other:
+        return ""
+    lines = ["--- OTHER ACTIVE THREADS ---"]
+    for s in other[:3]:
+        state = s.get("state", {})
+        situation = s.get("last_situation", "unknown")
+        lines.append(f"Thread ({situation}):")
+        if state.get("facts"):
+            lines.append(f"  Facts: {json.dumps(state['facts'], ensure_ascii=False)}")
+        if state.get("summary"):
+            lines.append(f"  Summary: {state['summary']}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def compose_classifier_context(
+    conversation_state: dict | None = None,
+    thread_history: list[dict] | None = None,
+    other_thread_states: list[dict] | None = None,
+    exclude_thread_id: str | None = None,
+) -> str:
+    """Compose the full classifier context string from pre-fetched data.
+
+    Single source of truth for context layout — used by both
+    build_classifier_context() (production) and eval runner.
+    Ensures identical whitespace/ordering between production and eval.
+    """
+    context = ""
+
+    if conversation_state:
+        context = format_conversation_state_for_classifier(conversation_state)
+
+    if thread_history:
+        context += format_thread_for_classifier(thread_history) + "\n\n"
+
+    if other_thread_states:
+        cross_thread = format_other_threads(other_thread_states, exclude_thread_id)
+        if cross_thread:
+            context += cross_thread + "\n\n"
+
+    return context
+
+
 def format_combined_email_text(candidates: list[dict]) -> str:
     """Combine multiple same-thread messages into one text with dates.
 
