@@ -50,12 +50,6 @@ must reflect what the customer is saying in THIS message.
 Example: customer replies to "PAYMENT REMINDER" thread with "please send 4 cartons
 of Silver" → this is new_order, NOT payment_received.
 
-## Sender identification
-
-If the email is from @shipmecarton.com, noreply@, or no-reply@ — this is a system notification.
-The REAL customer is in: "Email:" field in body, or "Reply-To:" header, or "Firstname:" field.
-For all other emails, the From address IS the real customer.
-
 ## Rules for needs_reply
 
 true: questions, complaints, payment confirmations, product requests, order-related messages
@@ -251,7 +245,7 @@ Return ONLY this JSON (no markdown, no code fences):
 }
 
 Field rules:
-- client_email: ALWAYS the real customer email (never noreply@, never system email)
+- client_email: customer email from "From" or "Email" field (Python verifies; best effort)
 - client_name: customer full name or null
 - price: include $ sign, or null
 - customer_street: street address only, or null
