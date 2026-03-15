@@ -228,7 +228,10 @@ def run_eval(
         try:
             email_text = _build_eval_email_text(case)
             context_str = _build_eval_context(case)
-            classification = run_classification(email_text, context_str)
+            classification = run_classification(
+                email_text, context_str,
+                conversation_state=case.get("conversation_state"),
+            )
             comparison = _compare(classification, expected)
             error = None
         except Exception as e:

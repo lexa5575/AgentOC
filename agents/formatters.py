@@ -75,7 +75,7 @@ def format_other_threads(states: list[dict], exclude_thread_id: str | None = Non
     other = [s for s in states if s.get("gmail_thread_id") != exclude_thread_id]
     if not other:
         return ""
-    lines = ["--- OTHER ACTIVE THREADS ---"]
+    lines = ["--- OTHER ACTIVE THREADS (different conversations, reference only) ---"]
     for s in other[:3]:
         state = s.get("state", {})
         situation = s.get("last_situation", "unknown")

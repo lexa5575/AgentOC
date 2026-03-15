@@ -16,7 +16,13 @@ from agents.formatters import compose_classifier_context, format_thread_for_clas
 from agents.models import EmailClassification, OrderItem
 from db.conversation_state import get_client_states, get_state
 from db.memory import get_full_thread_history
-from tools.email_parser import clean_email_body, strip_quoted_text, try_parse_order
+from tools.email_parser import (
+    REGION_SUFFIXES,
+    _extract_base_flavor,
+    clean_email_body,
+    strip_quoted_text,
+    try_parse_order,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +78,9 @@ We must confirm the order — this is NOT a simple acknowledgment.
 - "stock_question" — asks if a product/region is available, WITHOUT ordering intent.
   No quantity, no price query — pure availability. If quantity → new_order.
   In oos_followup thread → use oos_followup instead.
+  IMPORTANT: "oos_followup thread" means the SAME thread where OOS was discussed.
+  A new email about a different product in a DIFFERENT thread is stock_question,
+  even if OTHER ACTIVE THREADS show OOS discussions.
   Region queries: base_flavor = region name ("Japan", "Europe").
   Specific product in region ("japan regular"): base_flavor = "Regular" (the flavor, NOT region).
 - "payment_question" — asks WHERE or HOW to pay
@@ -141,8 +150,8 @@ Set order_items to null for other situations or when no clear product list exist
 - stock_question: each product/region = separate OrderItem (qty=1).
   Region queries → base_flavor = region name ("Japan", "Europe").
   General queries ("What do you have?") → order_items=null.
-- oos_followup (agrees_to_alternative): extract confirmed items from
-  message + CONVERSATION STATE. If unclear → null.
+- oos_followup: extract order_items ONLY when dialog_intent=agrees_to_alternative
+  (confirmed items from message + CONVERSATION STATE). For declines/provides_info → null.
 
 ## Output format
 
@@ -221,6 +230,129 @@ def _derive_items_text(order_items: list[OrderItem] | None) -> str | None:
     if not order_items:
         return None
     return ", ".join(f"{oi.product_name} x {oi.quantity}" for oi in order_items)
+
+
+# Canonical mapping: region suffix (lowered) → region_preference code
+_SUFFIX_TO_REGION: dict[str, str] = {
+    " made in middle east": "ME",
+    " made in armenia": "ME",
+    " made in europe": "EU",
+    " eu": "EU",
+    " japan": "JAPAN",
+    " kz": "ME",
+}
+
+
+def _parse_region_from_product_string(s: str) -> tuple[str | None, str]:
+    """Parse a product string like "Terea Green EU x5" → (region_code, base_flavor).
+
+    Uses _extract_base_flavor from email_parser for core flavor extraction
+    and REGION_SUFFIXES for region detection. Handles "made in" forms.
+
+    Returns (region_code, base_flavor) where region_code is "EU"/"ME"/"JAPAN"/None.
+    """
+    # Strip " x5" quantity suffix
+    s_clean = re.sub(r"\s*x\s*\d+\s*$", "", s.strip())
+    if not s_clean:
+        return None, ""
+
+    # Detect region from suffix (check "made in X" first, then bare suffixes)
+    s_lower = s_clean.lower()
+    region_code = None
+    # Extended suffixes not in email_parser.REGION_SUFFIXES but common in state strings
+    _EXTENDED_SUFFIXES = {
+        " made in japan": "JAPAN",
+        " me": "ME",
+        **_SUFFIX_TO_REGION,
+    }
+    for suffix, code in sorted(_EXTENDED_SUFFIXES.items(), key=lambda x: -len(x[0])):
+        if s_lower.endswith(suffix):
+            region_code = code
+            break
+
+    # Extract base flavor (strips brand + region)
+    base_flavor = _extract_base_flavor(s_clean)
+
+    # Post-fix: strip region remnants that _extract_base_flavor didn't handle
+    # (e.g. "Silver ME" when REGION_SUFFIXES has " made in Middle East" but not " ME")
+    if region_code:
+        bf_lower = base_flavor.lower()
+        for suffix in _EXTENDED_SUFFIXES:
+            if bf_lower.endswith(suffix.strip()):
+                base_flavor = base_flavor[:len(base_flavor) - len(suffix.strip())].strip()
+                break
+        if bf_lower.endswith(" made in"):
+            base_flavor = base_flavor[:-len(" made in")].strip()
+
+    return region_code, base_flavor
+
+
+def _infer_region_from_state(classification, conversation_state: dict | None) -> None:
+    """Fill missing region_preference from conversation_state.facts.
+
+    Source-by-situation matrix (strict):
+    - payment_received → facts.ordered_items ONLY
+    - oos_followup + agrees_to_alternative → pending_oos_resolution.alternatives first,
+      then facts.offered_alternatives ONLY
+    - all other situations/intents → skip
+    """
+    if not classification.order_items or not conversation_state:
+        return
+
+    situation = classification.situation
+    intent = classification.dialog_intent
+
+    # Gate: strict situation+intent filter
+    if situation == "oos_followup" and intent != "agrees_to_alternative":
+        return
+    if situation not in ("payment_received", "oos_followup"):
+        return
+
+    facts = conversation_state.get("facts", {})
+    region_map: dict[str, str] = {}  # {"green": "EU", "bright menthol": "EU", ...}
+
+    # Priority 1 (oos_followup only): structured pending_oos_resolution
+    if situation == "oos_followup":
+        pending = facts.get("pending_oos_resolution", {})
+        alts = pending.get("alternatives") if isinstance(pending, dict) else None
+        if isinstance(alts, list):
+            for alt in alts:
+                if isinstance(alt, dict) and alt.get("base_flavor") and alt.get("region_preference"):
+                    rp = alt["region_preference"]
+                    if isinstance(rp, list) and rp:
+                        region_map[alt["base_flavor"].lower()] = rp[0]
+
+    # Priority 2: string parsing — situation-specific source keys
+    if not region_map:
+        if situation == "payment_received":
+            source_keys = ("ordered_items",)
+        else:  # oos_followup + agrees
+            source_keys = ("offered_alternatives",)
+
+        for key in source_keys:
+            val = facts.get(key)
+            strings = val if isinstance(val, list) else ([val] if isinstance(val, str) else [])
+            for s in strings:
+                region_code, base_flavor = _parse_region_from_product_string(s)
+                if region_code and base_flavor:
+                    region_map[base_flavor.lower()] = region_code
+
+    if not region_map:
+        return
+
+    for item in classification.order_items:
+        # Guard: don't override existing region_preference
+        if item.region_preference is not None:
+            continue
+        # Guard: don't fill if product_name already has region suffix
+        if item.product_name:
+            pn_lower = item.product_name.lower()
+            if any(pn_lower.endswith(s.lower()) for s in REGION_SUFFIXES):
+                continue
+        # Guard: don't touch strict_region
+        region = region_map.get(item.base_flavor.lower())
+        if region:
+            item.region_preference = [region]
 
 
 _SYSTEM_SENDERS = ("noreply@", "no-reply@", "@shipmecarton.com")
@@ -334,12 +466,15 @@ def build_classifier_context(
 def run_classification(
     email_text: str,
     context_str: str,
+    conversation_state: dict | None = None,
 ) -> EmailClassification:
     """Run deterministic parser or LLM classifier to produce an EmailClassification.
 
     Args:
         email_text: Original email text (used by deterministic parser).
         context_str: Classifier context prepended before the new email.
+        conversation_state: Structured state dict for Python post-corrections
+            (region inference). Optional — backwards compatible.
 
     Returns:
         Validated EmailClassification instance.
@@ -414,6 +549,9 @@ def run_classification(
     python_email = _extract_sender_email(email_text)
     if python_email:
         classification.client_email = python_email
+
+    # Python region inference from conversation state (fills null region_preference).
+    _infer_region_from_state(classification, conversation_state)
 
     # Derive items text from order_items when LLM omitted it
     # (used only by notifier.py for Telegram display).

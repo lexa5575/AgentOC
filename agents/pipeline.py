@@ -749,7 +749,8 @@ def classify_and_process(
         context_str, pre_state_record = build_classifier_context(gmail_thread_id, email_text, gmail_account=gmail_account)
 
         # Step 0.9 + 1: Deterministic parser or LLM classification
-        classification = run_classification(email_text, context_str)
+        state_dict = pre_state_record.get("state") if pre_state_record else None
+        classification = run_classification(email_text, context_str, conversation_state=state_dict)
 
         # Business rule: certain situations ALWAYS need a reply,
         # regardless of LLM decision (e.g. "I sent it thanks" looks

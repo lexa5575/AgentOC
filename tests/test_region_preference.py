@@ -558,3 +558,176 @@ class TestThreadHintMetadataUpdated:
         result = apply_thread_hint(items, msgs, THREAD_CATALOG)
         assert "ME" in result[0].get("original_product_name", "")
         assert result[0].get("display_name") is not None
+
+
+# ===================================================================
+# E. Post-classification region inference — _infer_region_from_state
+# ===================================================================
+
+from agents.classifier import _infer_region_from_state, _parse_region_from_product_string
+
+
+class TestParseRegionFromProductString:
+    """Unit tests for _parse_region_from_product_string helper."""
+
+    def test_eu_suffix(self):
+        assert _parse_region_from_product_string("Terea Green EU x5") == ("EU", "Green")
+
+    def test_me_suffix(self):
+        assert _parse_region_from_product_string("Terea Silver ME x3") == ("ME", "Silver")
+
+    def test_made_in_middle_east(self):
+        assert _parse_region_from_product_string("Terea Green made in Middle East x2") == ("ME", "Green")
+
+    def test_made_in_japan(self):
+        assert _parse_region_from_product_string("Terea Purple made in Japan x1") == ("JAPAN", "Purple")
+
+    def test_compound_flavor_eu(self):
+        assert _parse_region_from_product_string("Terea Black Ruby Menthol EU x2") == ("EU", "Black Ruby Menthol")
+
+    def test_compound_flavor_made_in_japan(self):
+        assert _parse_region_from_product_string("Terea Fusion Menthol made in Japan x3") == ("JAPAN", "Fusion Menthol")
+
+    def test_no_region(self):
+        assert _parse_region_from_product_string("Silver") == (None, "Silver")
+
+    def test_no_qty(self):
+        assert _parse_region_from_product_string("Terea Bright Menthol EU") == ("EU", "Bright Menthol")
+
+
+class TestInferRegionFromState:
+    """Unit tests for _infer_region_from_state post-correction."""
+
+    @staticmethod
+    def _make_cls(situation, intent=None, items=None):
+        """Create minimal classification-like object."""
+        from agents.models import OrderItem
+        order_items = [
+            OrderItem(product_name=i.get("product_name", i["base_flavor"]),
+                      base_flavor=i["base_flavor"], quantity=i.get("quantity", 1),
+                      region_preference=i.get("region_preference"),
+                      strict_region=i.get("strict_region", False))
+            for i in (items or [])
+        ]
+
+        class Cls:
+            pass
+
+        c = Cls()
+        c.situation = situation
+        c.dialog_intent = intent
+        c.order_items = order_items if order_items else None
+        return c
+
+    # --- Positive tests ---
+
+    def test_payment_received_ordered_items_eu(self):
+        cls = self._make_cls("payment_received", items=[{"base_flavor": "Green"}])
+        state = {"facts": {"ordered_items": ["Terea Green EU x5"]}}
+        _infer_region_from_state(cls, state)
+        assert cls.order_items[0].region_preference == ["EU"]
+
+    def test_payment_received_ordered_items_me(self):
+        cls = self._make_cls("payment_received", items=[{"base_flavor": "Silver"}])
+        state = {"facts": {"ordered_items": ["Terea Silver ME x3"]}}
+        _infer_region_from_state(cls, state)
+        assert cls.order_items[0].region_preference == ["ME"]
+
+    def test_oos_agrees_pending_structured(self):
+        cls = self._make_cls("oos_followup", "agrees_to_alternative",
+                             items=[{"base_flavor": "Bright Menthol"}])
+        state = {"facts": {"pending_oos_resolution": {
+            "alternatives": [{"base_flavor": "Bright Menthol", "region_preference": ["EU"]}]
+        }}}
+        _infer_region_from_state(cls, state)
+        assert cls.order_items[0].region_preference == ["EU"]
+
+    def test_oos_agrees_offered_alternatives_string_fallback(self):
+        cls = self._make_cls("oos_followup", "agrees_to_alternative",
+                             items=[{"base_flavor": "Amber"}])
+        state = {"facts": {"offered_alternatives": ["Terea Amber EU x3"]}}
+        _infer_region_from_state(cls, state)
+        assert cls.order_items[0].region_preference == ["EU"]
+
+    def test_two_items_different_regions(self):
+        cls = self._make_cls("payment_received", items=[
+            {"base_flavor": "Black Ruby Menthol"},
+            {"base_flavor": "Green"},
+        ])
+        state = {"facts": {"ordered_items": [
+            "Terea Black Ruby Menthol EU x2",
+            "Terea Green ME x1",
+        ]}}
+        _infer_region_from_state(cls, state)
+        assert cls.order_items[0].region_preference == ["EU"]
+        assert cls.order_items[1].region_preference == ["ME"]
+
+    def test_made_in_japan_string(self):
+        cls = self._make_cls("payment_received", items=[{"base_flavor": "Fusion Menthol"}])
+        state = {"facts": {"ordered_items": ["Terea Fusion Menthol made in Japan x3"]}}
+        _infer_region_from_state(cls, state)
+        assert cls.order_items[0].region_preference == ["JAPAN"]
+
+    # --- Negative tests ---
+
+    def test_oos_declines_skipped(self):
+        cls = self._make_cls("oos_followup", "declines_alternative",
+                             items=[{"base_flavor": "Green"}])
+        state = {"facts": {"offered_alternatives": ["Terea Green EU x3"]}}
+        _infer_region_from_state(cls, state)
+        assert cls.order_items[0].region_preference is None
+
+    def test_oos_provides_info_skipped(self):
+        cls = self._make_cls("oos_followup", "provides_info",
+                             items=[{"base_flavor": "Green"}])
+        state = {"facts": {"offered_alternatives": ["Terea Green EU x3"]}}
+        _infer_region_from_state(cls, state)
+        assert cls.order_items[0].region_preference is None
+
+    def test_new_order_skipped(self):
+        cls = self._make_cls("new_order", items=[{"base_flavor": "Green"}])
+        state = {"facts": {"ordered_items": ["Terea Green EU x5"]}}
+        _infer_region_from_state(cls, state)
+        assert cls.order_items[0].region_preference is None
+
+    def test_stock_question_skipped(self):
+        cls = self._make_cls("stock_question", items=[{"base_flavor": "Green"}])
+        state = {"facts": {"ordered_items": ["Terea Green EU x5"]}}
+        _infer_region_from_state(cls, state)
+        assert cls.order_items[0].region_preference is None
+
+    def test_existing_region_not_overridden(self):
+        cls = self._make_cls("payment_received",
+                             items=[{"base_flavor": "Green", "region_preference": ["ME"]}])
+        state = {"facts": {"ordered_items": ["Terea Green EU x5"]}}
+        _infer_region_from_state(cls, state)
+        assert cls.order_items[0].region_preference == ["ME"]  # NOT changed to EU
+
+    def test_product_name_with_region_not_filled(self):
+        cls = self._make_cls("payment_received",
+                             items=[{"base_flavor": "Green", "product_name": "Green EU"}])
+        state = {"facts": {"ordered_items": ["Terea Green EU x5"]}}
+        _infer_region_from_state(cls, state)
+        assert cls.order_items[0].region_preference is None  # product_name has region
+
+    def test_strict_region_not_changed(self):
+        cls = self._make_cls("payment_received",
+                             items=[{"base_flavor": "Green", "strict_region": True}])
+        state = {"facts": {"ordered_items": ["Terea Green EU x5"]}}
+        _infer_region_from_state(cls, state)
+        assert cls.order_items[0].strict_region is True  # unchanged
+
+    def test_payment_uses_only_ordered_items(self):
+        """payment_received must NOT use offered_alternatives."""
+        cls = self._make_cls("payment_received", items=[{"base_flavor": "Amber"}])
+        state = {"facts": {"offered_alternatives": ["Terea Amber EU x3"]}}
+        _infer_region_from_state(cls, state)
+        assert cls.order_items[0].region_preference is None  # not from offered_alternatives
+
+    def test_oos_uses_only_offered_alternatives(self):
+        """oos_followup+agrees must NOT use ordered_items for region."""
+        cls = self._make_cls("oos_followup", "agrees_to_alternative",
+                             items=[{"base_flavor": "Green"}])
+        state = {"facts": {"ordered_items": ["Terea Green EU x5"]}}
+        _infer_region_from_state(cls, state)
+        assert cls.order_items[0].region_preference is None  # not from ordered_items
