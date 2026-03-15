@@ -58,28 +58,7 @@ def _format_email_text(msg: dict) -> str:
     return "\n".join(parts)
 
 
-def _format_combined_email_text(candidates: list[dict]) -> str:
-    """Combine multiple same-thread messages into one text with dates.
-
-    Messages are expected to be sorted chronologically (oldest first).
-    Dates help the classifier distinguish old vs new content.
-    """
-    newest = candidates[-1]["msg"]
-    from_addr = newest.get("from_raw", newest.get("from", ""))
-    parts = [
-        f"From: {from_addr}",
-        f"Subject: {newest.get('subject', '')}",
-        f"Body: [{len(candidates)} messages from this client in the same thread]\n",
-    ]
-
-    for c in candidates:
-        ts = c["created_at"]
-        date_str = ts.strftime("%Y-%m-%d %H:%M") if ts else "unknown date"
-        parts.append(f"--- Message from {date_str} ---")
-        parts.append(c["msg"].get("body", ""))
-        parts.append("")
-
-    return "\n".join(parts)
+from agents.formatters import format_combined_email_text as _format_combined_email_text
 
 
 def _send_telegram_result(msg: dict, result: str) -> None:

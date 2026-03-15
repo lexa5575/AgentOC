@@ -298,7 +298,6 @@ def try_parse_order(email_text: str) -> EmailClassification | None:
         customer_city_state_zip=city_state_zip,
         items=items_text,
         order_items=order_items,
-        is_followup=False,
         followup_to=None,
         dialog_intent=None,
         parser_used=True,

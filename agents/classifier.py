@@ -12,7 +12,7 @@ import re
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
 
-from agents.formatters import format_thread_for_classifier
+from agents.formatters import format_conversation_state_for_classifier, format_thread_for_classifier
 from agents.models import EmailClassification, OrderItem
 from db.conversation_state import get_client_states, get_state
 from db.memory import get_full_thread_history
@@ -121,7 +121,6 @@ When a message contains MULTIPLE intents, use this priority order:
 
 Use CONVERSATION STATE and THREAD HISTORY to detect followups.
 
-is_followup: true if this is a response to our previous message
 followup_to: what our message was about:
   - "oos_email" — we told them something was out of stock or offered alternatives
   - "payment_info" — we sent payment instructions
@@ -230,7 +229,6 @@ Return ONLY this JSON (no markdown, no code fences):
 {
   "needs_reply": true,
   "situation": "new_order",
-  "is_followup": false,
   "followup_to": null,
   "dialog_intent": null,
   "client_email": "customer@example.com",
@@ -254,7 +252,6 @@ Field rules:
 - customer_city_state_zip: "City, State Zip", or null
 - items: what was ordered as free text, or null
 - order_items: structured list (for new_order, payment_received, price_question, stock_question, oos_followup), or null
-- is_followup: true/false
 - followup_to: "oos_email" / "payment_info" / "tracking_info" / "order_confirmation" / null
 - dialog_intent: "agrees_to_alternative" / "declines_alternative" / "confirms_payment" / "asks_question" / "provides_info" / null
 - order_items[].region_preference: list of "EU"/"ME"/"JAPAN" or null. Only for soft preferences.
@@ -363,14 +360,8 @@ def build_classifier_context(
             pre_state_record = get_state(gmail_thread_id)
             state_record = pre_state_record
             if state_record and state_record.get("state"):
-                state = state_record["state"]
-                conversation_context = (
-                    f"--- CONVERSATION STATE ---\n"
-                    f"Status: {state.get('status', 'unknown')}\n"
-                    f"Topic: {state.get('topic', 'unknown')}\n"
-                    f"Facts: {json.dumps(state.get('facts', {}), ensure_ascii=False)}\n"
-                    f"Open questions: {state.get('open_questions', [])}\n"
-                    f"Summary: {state.get('summary', '')}\n\n"
+                conversation_context = format_conversation_state_for_classifier(
+                    state_record["state"]
                 )
         except Exception as e:
             logger.warning("Failed to get conversation state for classifier: %s", e)
@@ -480,7 +471,6 @@ def run_classification(
         customer_city_state_zip=_find_value(data, "customer_city_state_zip", "city_state_zip"),
         items=_find_value(data, "items", "products"),
         order_items=order_items_parsed,
-        is_followup=_find_value(data, "is_followup") or False,
         followup_to=_find_value(data, "followup_to"),
         dialog_intent=_find_value(data, "dialog_intent"),
     )

@@ -144,7 +144,6 @@ class _FakeClassification:
         self.customer_city_state_zip = kwargs.get("customer_city_state_zip", None)
         self.items = kwargs.get("items", None)
         self.order_items = kwargs.get("order_items", None)
-        self.is_followup = kwargs.get("is_followup", False)
         self.parser_used = kwargs.get("parser_used", False)
 
 
@@ -153,6 +152,20 @@ class TestPriceQuestion(unittest.TestCase):
     def setUpClass(cls):
         _install_stubs()
         cls.handler_mod = importlib.import_module("agents.handlers.price_question")
+
+    def setUp(self):
+        # Patch Gmail-dependent functions to avoid googleapiclient import
+        # in LLM-fallback paths (build_context → get_full_email_history → Gmail API)
+        self._gmail_patches = [
+            patch("agents.context.get_full_email_history", return_value=[]),
+            patch("agents.context.get_full_thread_history", return_value=[]),
+        ]
+        for p in self._gmail_patches:
+            p.start()
+
+    def tearDown(self):
+        for p in self._gmail_patches:
+            p.stop()
 
     def _make_result(self, *, client_found=True, payment_type="prepay",
                      conversation_state=None):

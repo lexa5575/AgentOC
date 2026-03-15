@@ -427,7 +427,6 @@ class TestEmailPipelineSmoke(unittest.TestCase):
                 "order_items": [
                     {"product_name": "Tera Green EU", "base_flavor": "Green", "quantity": 3}
                 ],
-                "is_followup": True,
                 "followup_to": "oos_notification",
                 "dialog_intent": "agrees_to_alternative",
             }
@@ -1011,7 +1010,6 @@ class TestEmailPipelineSmoke(unittest.TestCase):
                 customer_street=None,
                 customer_city_state_zip=None,
                 parser_used=False,
-                is_followup=False,
             )
 
         with (

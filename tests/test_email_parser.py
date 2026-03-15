@@ -108,7 +108,6 @@ class TestTryParseOrder(unittest.TestCase):
         self.assertEqual(result.customer_street, "212 Main Rd")
         self.assertEqual(result.customer_city_state_zip, "El Paso, Texas 79912")
         self.assertTrue(result.needs_reply)
-        self.assertFalse(result.is_followup)
 
         # Order items
         self.assertEqual(len(result.order_items), 2)

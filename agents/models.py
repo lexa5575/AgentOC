@@ -75,7 +75,6 @@ class EmailClassification(BaseModel):
         default=None, description="Structured list of ordered items with base flavor and quantity"
     )
     # Followup detection fields (Phase 5)
-    is_followup: bool = Field(default=False, description="Whether this is a response to our previous message")
     followup_to: Optional[str] = Field(default=None, description="What type of message they're responding to (e.g. 'oos_email', 'payment_info')")
     dialog_intent: Optional[str] = Field(default=None, description="Customer intent (e.g. 'agrees_to_alternative', 'declines_alternative')")
     parser_used: bool = Field(default=False, description="True if parsed by regex (website order), False if by LLM")

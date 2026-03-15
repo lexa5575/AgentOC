@@ -1,8 +1,11 @@
 """
 Email formatting utilities.
 
-Three pure functions — no external dependencies.
+Pure functions — no external dependencies (no DB, no Gmail, no agno).
+Used by both production code and eval runner.
 """
+
+import json
 
 
 def format_email_history(history: list[dict]) -> str:
@@ -50,6 +53,46 @@ def format_thread_for_classifier(history: list[dict]) -> str:
         lines.append("---")
 
     return "\n".join(lines)
+
+
+def format_conversation_state_for_classifier(state: dict) -> str:
+    """Format conversation state dict for the classifier prompt.
+
+    Used by build_classifier_context() and eval runner — single source of truth.
+    """
+    return (
+        f"--- CONVERSATION STATE ---\n"
+        f"Status: {state.get('status', 'unknown')}\n"
+        f"Topic: {state.get('topic', 'unknown')}\n"
+        f"Facts: {json.dumps(state.get('facts', {}), ensure_ascii=False)}\n"
+        f"Open questions: {state.get('open_questions', [])}\n"
+        f"Summary: {state.get('summary', '')}\n\n"
+    )
+
+
+def format_combined_email_text(candidates: list[dict]) -> str:
+    """Combine multiple same-thread messages into one text with dates.
+
+    Moved from tools/gmail_poller.py to avoid googleapiclient import dependency.
+    Messages are expected to be sorted chronologically (oldest first).
+    Each candidate is a dict with 'msg' (message dict) and 'created_at' (datetime).
+    """
+    newest = candidates[-1]["msg"]
+    from_addr = newest.get("from_raw", newest.get("from", ""))
+    parts = [
+        f"From: {from_addr}",
+        f"Subject: {newest.get('subject', '')}",
+        f"Body: [{len(candidates)} messages from this client in the same thread]\n",
+    ]
+
+    for c in candidates:
+        ts = c["created_at"]
+        date_str = ts.strftime("%Y-%m-%d %H:%M") if ts else "unknown date"
+        parts.append(f"--- Message from {date_str} ---")
+        parts.append(c["msg"].get("body", ""))
+        parts.append("")
+
+    return "\n".join(parts)
 
 
 def format_result(result: dict) -> str:
