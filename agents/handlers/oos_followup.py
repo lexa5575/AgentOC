@@ -70,6 +70,11 @@ DIALOG INTENT HANDLING:
    - If the question is about whether a product is available or in stock:
      YOU MUST call search_stock_tool(flavor=X) — non-negotiable, even if conversation
      state mentions alternatives (those may be for a different product or outdated)
+   - IMPORTANT: If the customer asks about specific products in an OOS context
+     (e.g. "Do you have Amber ME and Balanced?"), this is likely their CHOICE of
+     replacement. If all requested products are in stock, treat this as an order
+     confirmation: confirm the items, calculate total, and provide payment/shipping
+     info based on their payment type. Do NOT just say "yes we have them" and wait.
    - Answer other questions based on what you know from context
    - Keep it helpful and friendly
 
@@ -106,7 +111,7 @@ CRITICAL RULES:
 oos_followup_agent = Agent(
     id="oos-followup-handler",
     name="OOS Followup Handler",
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-4o"),
     instructions=oos_followup_instructions,
     tools=[search_stock_tool],
     markdown=False,
