@@ -833,9 +833,12 @@ def classify_and_process(
                 state_updater._use_llm() != "true"
                 and result.get("conversation_state")
             ):
-                state_updater._enrich_state_after_routing(
-                    result["conversation_state"], result, classification,
-                )
+                try:
+                    state_updater._enrich_state_after_routing(
+                        result["conversation_state"], result, classification,
+                    )
+                except Exception as e:
+                    logger.error("State enrichment failed: %s", e, exc_info=True)
 
             # Step 3.5: Checker — validate the draft (rule-based + LLM)
             checker_obj = None

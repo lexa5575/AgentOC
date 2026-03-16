@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # Feature flag — read at runtime, not at import
 # ---------------------------------------------------------------------------
 def _use_llm() -> str:
-    return os.environ.get("USE_LLM_STATE_UPDATER", "true").lower()
+    return os.environ.get("USE_LLM_STATE_UPDATER", "true").strip().lower()
 
 
 # ---------------------------------------------------------------------------
@@ -236,13 +236,12 @@ def _derive_topic(situation: str) -> str:
 
 def _derive_status(situation: str, current_status: str | None) -> str:
     """Conservative: preserve current by default, set only for unambiguous cases."""
-    if current_status:
-        # Only override for clear initial situations when state is brand new
+    if current_status and current_status != "new":
         return current_status
-    # No current status — new thread
+    # New thread or status=="new" — set based on situation
     if situation == "oos_followup":
         return "awaiting_oos_decision"
-    return "new"
+    return current_status or "new"
 
 
 def _extract_body_preview(email_text: str, limit: int = 200) -> str | None:
@@ -576,10 +575,14 @@ def update_conversation_state(
     mode = _use_llm()
 
     if mode == "false":
-        state = _build_deterministic_state(
-            current_state, email_text, situation, direction,
-            order_id, price, classification, result,
-        )
+        try:
+            state = _build_deterministic_state(
+                current_state, email_text, situation, direction,
+                order_id, price, classification, result,
+            )
+        except Exception as e:
+            logger.error("Deterministic state builder failed: %s", e, exc_info=True)
+            return current_state or _empty_state()
         logger.info(
             "Deterministic state: topic=%s, status=%s, client=%s",
             state.get("topic"), state.get("status"), client_email,
@@ -587,10 +590,14 @@ def update_conversation_state(
         return state
 
     elif mode == "shadow":
-        deterministic = _build_deterministic_state(
-            current_state, email_text, situation, direction,
-            order_id, price, classification, result,
-        )
+        try:
+            deterministic = _build_deterministic_state(
+                current_state, email_text, situation, direction,
+                order_id, price, classification, result,
+            )
+        except Exception as e:
+            logger.error("Deterministic state builder failed in shadow mode: %s", e, exc_info=True)
+            deterministic = current_state or _empty_state()
         try:
             llm_result = _run_llm_state_updater(
                 current_state, email_text, situation, direction,
@@ -605,7 +612,7 @@ def update_conversation_state(
         )
         return deterministic
 
-    else:  # "true" — original LLM path
+    else:  # "true" or unknown — original LLM path (safe default)
         return _run_llm_state_updater(
             current_state, email_text, situation, direction,
             client_email, order_id, price,
