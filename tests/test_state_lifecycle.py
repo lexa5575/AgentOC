@@ -89,7 +89,7 @@ def _install_stubs():
     db_catalog = sys.modules["db.catalog"]
     db_catalog.get_display_name = lambda name, cat="": name
     db_catalog.get_base_display_name = lambda name: name
-    db_catalog._enrich_display_name_with_region = lambda items: items
+    db_catalog._enrich_display_name_with_region = lambda *args: args[-1] if args else ""
     db_catalog.get_catalog_products = lambda: []
 
     db_region = sys.modules["db.region_family"]
@@ -119,6 +119,22 @@ def _install_stubs():
 
     db_shipping = sys.modules["db.shipping"]
     db_shipping.save_order_shipping_address = MagicMock()
+
+    # tools stubs
+    for mod_name in ["tools", "tools.email_parser"]:
+        if mod_name not in sys.modules:
+            m = types.ModuleType(mod_name)
+            if mod_name == "tools":
+                m.__path__ = []
+            sys.modules[mod_name] = m
+
+    tools_ep = sys.modules["tools.email_parser"]
+    tools_ep._strip_quoted_text = lambda body: body
+    tools_ep.strip_quoted_text = lambda body: body
+    tools_ep.clean_email_body = lambda text: text
+    tools_ep.try_parse_order = lambda text: None
+    tools_ep._extract_base_flavor = lambda text: None
+    tools_ep.REGION_SUFFIXES = ("EU", "ME", "made in Japan")
 
     # utils stubs
     for mod_name in ["utils", "utils.gmail", "utils.telegram"]:
@@ -779,6 +795,345 @@ class TestGracefulDegradationWithoutState(unittest.TestCase):
 
         result = {"conversation_state": {"facts": {}}}
         _clear_pending_oos(result)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TEST 7: Deterministic state builder
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestDeterministicStateBuilder(unittest.TestCase):
+    """Tests for _build_deterministic_state and its helpers."""
+
+    def test_new_thread_valid_shape(self):
+        """New thread produces state with all required fields."""
+        from agents.state_updater import _build_deterministic_state
+
+        state = _build_deterministic_state(
+            None, "Body: Hello", "new_order", "inbound",
+            "ORD-1", "$110", None, None,
+        )
+        self.assertIn("status", state)
+        self.assertIn("topic", state)
+        self.assertIn("facts", state)
+        self.assertIn("last_exchange", state)
+        self.assertIn("summary", state)
+        self.assertIn("promises", state)
+        self.assertIn("open_questions", state)
+        self.assertEqual(state["topic"], "new_order")
+        self.assertEqual(state["facts"]["order_id"], "ORD-1")
+        self.assertEqual(state["facts"]["price"], "$110")
+
+    def test_preserves_existing_facts(self):
+        """Existing facts (tracking, payment_method) are preserved."""
+        from agents.state_updater import _build_deterministic_state
+
+        current = {
+            "status": "shipped",
+            "topic": "tracking",
+            "facts": {
+                "order_id": "ORD-1",
+                "tracking_number": "9400111",
+                "payment_method": "Zelle",
+                "ordered_items": ["Silver x3"],
+            },
+            "last_exchange": {"we_said": "Shipped!", "they_said": None},
+            "promises": ["delivery in 3-5 days"],
+            "open_questions": [],
+            "summary": "Shipped",
+        }
+        state = _build_deterministic_state(
+            current, "Body: Where is my order?", "tracking", "inbound",
+            None, None, None, None,
+        )
+        self.assertEqual(state["facts"]["tracking_number"], "9400111")
+        self.assertEqual(state["facts"]["payment_method"], "Zelle")
+        self.assertEqual(state["facts"]["order_id"], "ORD-1")
+
+    def test_never_strips_pending_oos(self):
+        """pending_oos_resolution is always preserved from current state."""
+        from agents.state_updater import _build_deterministic_state
+
+        pending = _make_pending_oos()
+        current = {
+            "status": "awaiting_oos_decision",
+            "facts": {"pending_oos_resolution": pending},
+        }
+        state = _build_deterministic_state(
+            current, "Body: Yes I want the Turquoise", "oos_followup", "inbound",
+            None, None, None, None,
+        )
+        self.assertEqual(
+            state["facts"]["pending_oos_resolution"], pending,
+        )
+
+    def test_preserves_promises_and_open_questions(self):
+        """promises and open_questions from current are preserved, not zeroed."""
+        from agents.state_updater import _build_deterministic_state
+
+        current = {
+            "status": "new",
+            "promises": ["ship today", "free shipping"],
+            "open_questions": ["Which flavor?"],
+            "facts": {},
+        }
+        state = _build_deterministic_state(
+            current, "Body: ok", "other", "inbound",
+            None, None, None, None,
+        )
+        self.assertEqual(state["promises"], ["ship today", "free shipping"])
+        self.assertEqual(state["open_questions"], ["Which flavor?"])
+
+    def test_ordered_items_from_classifier(self):
+        """ordered_items filled from classification.order_items."""
+        from agents.state_updater import _build_deterministic_state
+
+        cls = _FakeClassification(
+            order_items=[
+                type("OI", (), {"product_name": "Terea Green EU", "base_flavor": "Green", "quantity": 2})(),
+                type("OI", (), {"product_name": "Terea Silver ME", "base_flavor": "Silver", "quantity": 3})(),
+            ]
+        )
+        state = _build_deterministic_state(
+            None, "Body: order", "new_order", "inbound",
+            None, None, cls, None,
+        )
+        self.assertEqual(state["facts"]["ordered_items"], ["Terea Green EU x2", "Terea Silver ME x3"])
+
+    def test_order_items_dicts_populated(self):
+        """facts.order_items filled as list[dict] for stock_question/price_question."""
+        from agents.state_updater import _build_deterministic_state
+
+        cls = _FakeClassification(
+            order_items=[
+                type("OI", (), {"product_name": "Green", "base_flavor": "Green", "quantity": 2})(),
+            ]
+        )
+        state = _build_deterministic_state(
+            None, "Body: order", "new_order", "inbound",
+            None, None, cls, None,
+        )
+        self.assertIsInstance(state["facts"]["order_items"], list)
+        self.assertEqual(len(state["facts"]["order_items"]), 1)
+        self.assertEqual(state["facts"]["order_items"][0]["base_flavor"], "Green")
+        self.assertEqual(state["facts"]["order_items"][0]["quantity"], 2)
+
+    def test_topic_mapping(self):
+        """Each situation maps to correct topic."""
+        from agents.state_updater import _derive_topic
+
+        self.assertEqual(_derive_topic("new_order"), "new_order")
+        self.assertEqual(_derive_topic("oos_followup"), "new_order")
+        self.assertEqual(_derive_topic("tracking"), "tracking")
+        self.assertEqual(_derive_topic("payment_received"), "payment")
+        self.assertEqual(_derive_topic("payment_question"), "payment")
+        self.assertEqual(_derive_topic("discount_request"), "discount")
+        self.assertEqual(_derive_topic("shipping_timeline"), "shipping")
+        self.assertEqual(_derive_topic("other"), "general")
+        self.assertEqual(_derive_topic("stock_question"), "general")
+
+    def test_status_conservative(self):
+        """payment_received preserves current status, does NOT set 'shipped'."""
+        from agents.state_updater import _derive_status
+
+        self.assertEqual(_derive_status("payment_received", "awaiting_payment"), "awaiting_payment")
+        self.assertEqual(_derive_status("payment_received", "new"), "new")
+        self.assertEqual(_derive_status("payment_received", None), "new")
+        self.assertEqual(_derive_status("new_order", None), "new")
+        self.assertEqual(_derive_status("oos_followup", None), "awaiting_oos_decision")
+        self.assertEqual(_derive_status("tracking", "shipped"), "shipped")
+
+    def test_last_exchange_inbound(self):
+        """Inbound updates they_said, preserves we_said."""
+        from agents.state_updater import _derive_last_exchange
+
+        current = {"we_said": "Hello!", "they_said": "Old msg"}
+        result = _derive_last_exchange(current, "Body: New question", "inbound")
+        self.assertEqual(result["we_said"], "Hello!")
+        self.assertIn("New question", result["they_said"])
+
+    def test_summary_contains_key_facts(self):
+        """Summary includes order_id and items."""
+        from agents.state_updater import _derive_summary
+
+        facts = {
+            "order_id": "ORD-123",
+            "ordered_items": ["Green x2", "Silver x3"],
+            "pending_oos_resolution": {"items": []},
+        }
+        summary = _derive_summary(facts, "new_order")
+        self.assertIn("ORD-123", summary)
+        self.assertIn("Green x2", summary)
+        self.assertIn("pending OOS", summary)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TEST 8: Phase 2 enrichment
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestPhase2Enrichment(unittest.TestCase):
+    """Tests for _enrich_state_after_routing."""
+
+    def test_oos_items_from_stock_issue(self):
+        from agents.state_updater import _enrich_state_after_routing
+
+        state = {"facts": {}}
+        result = {
+            "stock_issue": {
+                "stock_check": {
+                    "insufficient_items": [
+                        {"product_name": "Terea Green EU", "base_flavor": "Green"},
+                    ]
+                },
+                "best_alternatives": {},
+            }
+        }
+        _enrich_state_after_routing(state, result, _FakeClassification())
+        self.assertEqual(state["facts"]["oos_items"], ["Terea Green EU"])
+
+    def test_offered_alternatives_with_regions(self):
+        from agents.state_updater import _enrich_state_after_routing
+
+        # Stub CATEGORY_REGION_SUFFIX for this test
+        db_region = sys.modules["db.region_family"]
+        old = db_region.CATEGORY_REGION_SUFFIX
+        db_region.CATEGORY_REGION_SUFFIX = {"ARMENIA": "ME", "TEREA_EUROPE": "EU"}
+
+        state = {"facts": {}}
+        result = {
+            "stock_issue": {
+                "stock_check": {"insufficient_items": []},
+                "best_alternatives": {
+                    "Green": {
+                        "alternatives": [
+                            {"alternative": {"product_name": "Turquoise", "category": "ARMENIA"}},
+                        ]
+                    }
+                },
+            }
+        }
+        _enrich_state_after_routing(state, result, _FakeClassification())
+        self.assertIn("Turquoise ME", state["facts"]["offered_alternatives"])
+
+        db_region.CATEGORY_REGION_SUFFIX = old
+
+    def test_final_price_formatted(self):
+        from agents.state_updater import _enrich_state_after_routing
+
+        state = {"facts": {}}
+        result = {"calculated_price": 209.0}
+        _enrich_state_after_routing(state, result, _FakeClassification())
+        self.assertEqual(state["facts"]["final_price"], "$209.00")
+
+    def test_oos_resolve_clears_stale_fields(self):
+        """After OOS resolve, oos_items/offered_alternatives/pending_order_items cleared."""
+        from agents.state_updater import _enrich_state_after_routing
+
+        state = {
+            "facts": {
+                "oos_items": ["Green"],
+                "offered_alternatives": ["Turquoise ME"],
+                "pending_order_items": [{"base_flavor": "Green"}],
+            }
+        }
+        result = {
+            "effective_situation": "new_order",
+            "canonical_confirmed_items": [
+                {"base_flavor": "Turquoise", "product_name": "Turquoise", "quantity": 5}
+            ],
+        }
+        _enrich_state_after_routing(state, result, _FakeClassification())
+        self.assertEqual(state["facts"]["oos_items"], [])
+        self.assertEqual(state["facts"]["offered_alternatives"], [])
+        self.assertEqual(state["facts"]["pending_order_items"], [])
+
+    def test_oos_resolve_sets_confirmed_and_order_items(self):
+        from agents.state_updater import _enrich_state_after_routing
+
+        state = {"facts": {}}
+        result = {
+            "effective_situation": "new_order",
+            "canonical_confirmed_items": [
+                {"base_flavor": "Turquoise", "product_name": "Turquoise", "quantity": 5}
+            ],
+        }
+        _enrich_state_after_routing(state, result, _FakeClassification())
+        self.assertEqual(len(state["facts"]["confirmed_order_items"]), 1)
+        self.assertEqual(state["facts"]["confirmed_order_items"][0]["base_flavor"], "Turquoise")
+        self.assertEqual(state["facts"]["order_items"], state["facts"]["confirmed_order_items"])
+
+    def test_summary_recalculated(self):
+        from agents.state_updater import _enrich_state_after_routing
+
+        state = {"facts": {"order_id": "ORD-1"}, "summary": "old summary"}
+        result = {"calculated_price": 220.0}
+        _enrich_state_after_routing(
+            state, result, _FakeClassification(situation="new_order"),
+        )
+        self.assertIn("ORD-1", state["summary"])
+        self.assertNotEqual(state["summary"], "old summary")
+
+    def test_no_stock_issue_preserves_current(self):
+        from agents.state_updater import _enrich_state_after_routing
+
+        state = {"facts": {"oos_items": ["Green"], "offered_alternatives": ["Silver"]}}
+        result = {}  # no stock_issue, no effective_situation
+        _enrich_state_after_routing(state, result, _FakeClassification())
+        self.assertEqual(state["facts"]["oos_items"], ["Green"])
+        self.assertEqual(state["facts"]["offered_alternatives"], ["Silver"])
+
+    def test_none_state_no_crash(self):
+        from agents.state_updater import _enrich_state_after_routing
+
+        _enrich_state_after_routing(None, {}, _FakeClassification())
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TEST 9: Feature flag
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestFeatureFlag(unittest.TestCase):
+    """Tests for USE_LLM_STATE_UPDATER feature flag."""
+
+    def test_flag_read_at_runtime(self):
+        from agents.state_updater import _use_llm
+
+        with patch.dict(os.environ, {"USE_LLM_STATE_UPDATER": "false"}):
+            self.assertEqual(_use_llm(), "false")
+        with patch.dict(os.environ, {"USE_LLM_STATE_UPDATER": "shadow"}):
+            self.assertEqual(_use_llm(), "shadow")
+        with patch.dict(os.environ, {"USE_LLM_STATE_UPDATER": "true"}):
+            self.assertEqual(_use_llm(), "true")
+
+    def test_flag_false_no_llm(self):
+        """When flag=false, LLM is never called."""
+        from agents import state_updater
+
+        with patch.dict(os.environ, {"USE_LLM_STATE_UPDATER": "false"}), \
+             patch.object(state_updater, "_run_llm_state_updater") as mock_llm:
+            result = state_updater.update_conversation_state(
+                None, "Body: test", "new_order", "inbound",
+            )
+            mock_llm.assert_not_called()
+            self.assertIn("facts", result)
+
+    def test_flag_shadow_returns_deterministic(self):
+        """Shadow mode returns deterministic result, calls LLM for comparison."""
+        from agents import state_updater
+
+        with patch.dict(os.environ, {"USE_LLM_STATE_UPDATER": "shadow"}), \
+             patch.object(
+                 state_updater, "_run_llm_state_updater",
+                 return_value={"status": "new", "facts": {}},
+             ) as mock_llm:
+            result = state_updater.update_conversation_state(
+                None, "Body: test", "new_order", "inbound",
+            )
+            mock_llm.assert_called_once()
+            # Result should be deterministic (has topic from derive)
+            self.assertEqual(result["topic"], "new_order")
+
+
+import os  # noqa: E402 — needed for patch.dict
 
 
 if __name__ == "__main__":

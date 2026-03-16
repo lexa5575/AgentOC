@@ -27,6 +27,7 @@ from agents.notifier import (
     notify_reply_ready,
 )
 from agents.router import route_to_handler
+import agents.state_updater as state_updater
 from agents.state_updater import update_conversation_state
 from db.conversation_state import save_state
 from db.memory import (
@@ -393,6 +394,7 @@ def _update_inbound_state(
     email_text: str,
     classification,
     pre_state_record: dict | None,
+    result: dict | None = None,
 ) -> dict | None:
     """Update ConversationState after inbound classification.
 
@@ -413,6 +415,8 @@ def _update_inbound_state(
             client_email=classification.client_email,
             order_id=classification.order_id,
             price=classification.price,
+            classification=classification,
+            result=result,
         )
 
         # Protect pending_oos_resolution from LLM state updater
@@ -798,9 +802,10 @@ def classify_and_process(
         result["gmail_thread_id"] = gmail_thread_id
         result["gmail_account"] = gmail_account
 
-        # Step 2.5: State Updater LLM — update ConversationState
+        # Step 2.5: State Updater — update ConversationState
         result["conversation_state"] = _update_inbound_state(
-            gmail_thread_id, email_text, classification, pre_state_record
+            gmail_thread_id, email_text, classification, pre_state_record,
+            result=result,
         )
 
         # Telegram: notify if new client or price issues
@@ -822,6 +827,15 @@ def classify_and_process(
             )
             result = route_to_handler(classification, result, email_text)
             result["needs_routing"] = False
+
+            # Phase 2 state enrichment (only for deterministic state path)
+            if (
+                state_updater._use_llm() != "true"
+                and result.get("conversation_state")
+            ):
+                state_updater._enrich_state_after_routing(
+                    result["conversation_state"], result, classification,
+                )
 
             # Step 3.5: Checker — validate the draft (rule-based + LLM)
             checker_obj = None
