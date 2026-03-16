@@ -175,9 +175,25 @@ def _apply_confirmation_flags(
         result["effective_situation"] = "new_order"
     else:
         if not order_id_norm:
+            from utils.telegram import send_telegram
+
+            client_email = result.get("client_email", "?")
             logger.warning(
                 "OOS agrees (%s): order_id=None → persistence/fulfillment skipped",
-                result.get("client_email", "?"),
+                client_email,
+            )
+            summary = result.get("order_summary", "")
+            price = result.get("calculated_price")
+            price_str = f"${price:.2f}" if price else "N/A"
+            send_telegram(
+                f"\u26a0\ufe0f <b>Fulfillment скипнут!</b>\n\n"
+                f"<b>Клиент:</b> {client_email}\n"
+                f"<b>Причина:</b> order_id=None (классификатор не нашёл номер заказа)\n"
+                f"<b>Источник:</b> {source}\n"
+                f"<b>Сумма:</b> {price_str}\n"
+                f"<b>Товары:</b> {summary or 'N/A'}\n\n"
+                f"Черновик создан, но заказ НЕ записан в БД и склад НЕ обновлён.\n"
+                f"Обработай вручную или добавь order_id."
             )
 
 
