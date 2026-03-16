@@ -23,8 +23,15 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Feature flag — read at runtime, not at import
 # ---------------------------------------------------------------------------
+_VALID_MODES = {"true", "false", "shadow"}
+
+
 def _use_llm() -> str:
-    return os.environ.get("USE_LLM_STATE_UPDATER", "true").strip().lower()
+    mode = os.environ.get("USE_LLM_STATE_UPDATER", "true").strip().lower()
+    if mode not in _VALID_MODES:
+        logger.warning("Invalid USE_LLM_STATE_UPDATER=%r, falling back to 'true'", mode)
+        return "true"
+    return mode
 
 
 # ---------------------------------------------------------------------------
