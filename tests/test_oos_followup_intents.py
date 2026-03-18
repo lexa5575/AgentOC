@@ -93,6 +93,15 @@ def _install_stubs() -> None:
         db_cs.get_client_states = lambda *a, **kw: []
         sys.modules["db.conversation_state"] = db_cs
 
+    # db.region_family — always reset CATEGORY_REGION_SUFFIX to real values.
+    # test_handler_templates.py sets it to {} which breaks region suffix logic
+    # in oos_agreement.py when tests run in combined mode.
+    if "db.region_family" in sys.modules:
+        sys.modules["db.region_family"].CATEGORY_REGION_SUFFIX = {
+            "ARMENIA": "ME", "KZ_TEREA": "ME",
+            "TEREA_EUROPE": "EU", "TEREA_JAPAN": "Japan",
+        }
+
     # tools — only stub web_search
     if "tools" not in sys.modules:
         try:
