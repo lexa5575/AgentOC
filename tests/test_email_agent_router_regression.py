@@ -94,6 +94,51 @@ def _install_import_stubs() -> None:
     sys.modules["db.clients"] = db_clients
     sys.modules["db.conversation_state"] = db_conversation_state
 
+    # db.region_preference — needed by agents/pipeline.py
+    db_region_preference = types.ModuleType("db.region_preference")
+    db_region_preference.apply_region_preference = lambda items, **kw: items
+    db_region_preference.apply_thread_hint = lambda items, **kw: items
+    sys.modules["db.region_preference"] = db_region_preference
+
+    # db.region_family — needed by tools/stock_tools.py and agents/handlers/stock_question.py
+    db_region_family = types.ModuleType("db.region_family")
+    db_region_family.CATEGORY_REGION_SUFFIX = {
+        "ARMENIA": "ME", "KZ_TEREA": "ME",
+        "TEREA_EUROPE": "EU", "TEREA_JAPAN": "Japan",
+    }
+    db_region_family.REGION_FAMILIES = {
+        "EU": frozenset({"TEREA_EUROPE"}),
+        "ME": frozenset({"ARMENIA", "KZ_TEREA"}),
+        "JAPAN": frozenset({"TEREA_JAPAN"}),
+    }
+    db_region_family.get_family = lambda cat: None
+    db_region_family.get_region_suffix = lambda cat: None
+    sys.modules["db.region_family"] = db_region_family
+
+    # db.stock — needed by tools/stock_tools.py and agents/handlers/stock_question.py
+    db_stock = types.ModuleType("db.stock")
+    db_stock.CATEGORY_PRICES = {}
+    db_stock.search_stock = lambda *a, **kw: []
+    db_stock.search_stock_by_ids = lambda *a, **kw: []
+    db_stock.select_best_alternatives = lambda *a, **kw: {"alternatives": []}
+    db_stock.get_product_type = lambda *a, **kw: None
+    db_stock.resolve_warehouse = lambda *a, **kw: None
+    db_stock.extract_variant_id = lambda *a, **kw: None
+    db_stock.has_ambiguous_variants = lambda *a, **kw: False
+    sys.modules["db.stock"] = db_stock
+
+    # db.catalog — needed by agents/handlers/stock_question.py
+    db_catalog = types.ModuleType("db.catalog")
+    db_catalog.get_display_name = lambda *a, **kw: ""
+    db_catalog.get_base_display_name = lambda *a, **kw: ""
+    db_catalog._enrich_display_name_with_region = lambda *a, **kw: ""
+    sys.modules["db.catalog"] = db_catalog
+
+    # db.product_resolver — needed by agents/handlers/stock_question.py
+    db_product_resolver = types.ModuleType("db.product_resolver")
+    db_product_resolver.resolve_product_to_catalog = lambda *a, **kw: []
+    sys.modules["db.product_resolver"] = db_product_resolver
+
     # Only stub tools.web_search; preserve real tools package for stock_parser
     if "tools" not in sys.modules:
         try:
@@ -105,6 +150,11 @@ def _install_import_stubs() -> None:
     tools_web_search = types.ModuleType("tools.web_search")
     tools_web_search.get_search_tools = lambda: []
     sys.modules["tools.web_search"] = tools_web_search
+
+    # tools.stock_tools — needed by agents/handlers/general.py and oos_followup.py
+    tools_stock_tools = types.ModuleType("tools.stock_tools")
+    tools_stock_tools.search_stock_tool = lambda *a, **kw: "No stock info available."
+    sys.modules["tools.stock_tools"] = tools_stock_tools
     if "tools.email_parser" not in sys.modules:
         try:
             import tools.email_parser  # noqa: F401
