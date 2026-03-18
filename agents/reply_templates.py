@@ -86,6 +86,78 @@ REPLY_TEMPLATES = {
         "just let us know!\n"
         "Thank you!"
     ),
+    # ------------------------------------------------------------------
+    # Tracking (replaces LLM handler — used only when shipment confirmed)
+    # ------------------------------------------------------------------
+    ("tracking", "any"): (
+        "Hi ! How is your day going ?\n"
+        "We shipped your order 100% . USPS website takes 2 hours - couple of days "
+        "to update package in their system\n"
+        "If nothing changed by {RECHECK_DATE} We will ship you exactly new order .\n"
+        "We think everything will be alright .\n"
+        "Feel free to ask any questions .\n"
+        "Thank you!"
+    ),
+    # ------------------------------------------------------------------
+    # Payment question (replaces LLM handler)
+    # ------------------------------------------------------------------
+    ("payment_question", "prepay"): (
+        "Hi!\n"
+        "!!! Zelle ( In memo or comments DON'T put anything please ! ) use email below\n"
+        "\n"
+        "{ZELLE_ADDRESS}\n"
+        "\n"
+        "PS. if it asks for name , you can put any name\n"
+        "Thank you!"
+    ),
+    ("payment_question", "postpay"): (
+        "Hi!\n"
+        "Pay when received as always via Zelle or Cash App\n"
+        "ZELLE IS OUR PREFERRED METHOD OF PAYMENT\n"
+        "When order is received and you are ready to pay "
+        "( In memo or comments don't put anything please ! )\n"
+        "\n"
+        "{ZELLE_ADDRESS}\n"
+        "\n"
+        "Thank you!"
+    ),
+    # ------------------------------------------------------------------
+    # Discount request (replaces LLM handler)
+    # ------------------------------------------------------------------
+    ("discount_request", "has_discount"): (
+        "Hi!\n"
+        "Great news — you have a {DISCOUNT}% discount applied for your next "
+        "{DISCOUNT_ORDERS_LEFT} order(s)!\n"
+        "It will be automatically applied to your next order.\n"
+        "Thank you!"
+    ),
+    ("discount_request", "no_discount"): (
+        "Hi!\n"
+        "Thank you for being our customer!\n"
+        "Unfortunately, we don't have any active discounts at the moment.\n"
+        "We do occasionally run promotions, so keep an eye out!\n"
+        "Thank you!"
+    ),
+    # ------------------------------------------------------------------
+    # Shipping timeline (replaces LLM handler)
+    # ------------------------------------------------------------------
+    ("shipping_timeline", "prepay"): (
+        "Hi!\n"
+        "We ship via USPS from USA.\n"
+        "Once we receive your payment, we will ship your order "
+        "the same day (if before 3 PM EST) or next business day.\n"
+        "Delivery takes 2-4 business days max.\n"
+        "FREE shipping on all orders!\n"
+        "Thank you!"
+    ),
+    ("shipping_timeline", "postpay"): (
+        "Hi!\n"
+        "We ship via USPS from USA.\n"
+        "Your order will be shipped ASAP!\n"
+        "Delivery takes 2-4 business days max.\n"
+        "FREE shipping on all orders!\n"
+        "Thank you!"
+    ),
 }
 
 # ---------------------------------------------------------------------------

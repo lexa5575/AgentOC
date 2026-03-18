@@ -20,20 +20,16 @@ Handlers:
 from agents.handlers.general import general_agent, handle_general
 from agents.handlers.new_order import handle_new_order
 from agents.handlers.oos_followup import oos_followup_agent, handle_oos_followup
-from agents.handlers.tracking import tracking_agent, handle_tracking
-from agents.handlers.payment import payment_agent, handle_payment
+from agents.handlers.tracking import handle_tracking
+from agents.handlers.payment import handle_payment
 from agents.handlers.payment_received import handle_payment_received
-from agents.handlers.discount import discount_agent, handle_discount
-from agents.handlers.shipping import shipping_agent, handle_shipping
+from agents.handlers.discount import handle_discount
+from agents.handlers.shipping import handle_shipping
 from agents.handlers.stock_question import handle_stock_question
 
 __all__ = [
-    # Agents
+    # Agents (only LLM-based handlers still have agents)
     "general_agent",
-    "tracking_agent",
-    "payment_agent",
-    "discount_agent",
-    "shipping_agent",
     "oos_followup_agent",
     # Handler functions
     "handle_new_order",

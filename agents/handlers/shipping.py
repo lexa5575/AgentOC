@@ -1,73 +1,54 @@
 """
-Shipping Handler
-----------------
+Shipping Handler — Template-based with keyword guard
+-----------------------------------------------------
 
 Handles shipping timeline questions:
-- "When will my order ship?"
-- "How long does shipping take?"
-- "Do you offer expedited shipping?"
-
-This agent has narrow, focused instructions for shipping questions only.
+- Non-standard questions (expedited, by Friday, etc.) → general handler
+- Standard FAQ → prepay/postpay template
 """
 
 import logging
+import re
 
-from agno.agent import Agent
-from agno.models.openai import OpenAIResponses
-
-from agents.context import build_context, format_context_for_prompt
+from agents.handlers.template_utils import _get_clean_body, fill_template_reply
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Shipping Agent Instructions
-# ---------------------------------------------------------------------------
-shipping_instructions = """\
-You are James, handling ONLY shipping timeline questions for shipmecarton.com.
-
-You will receive structured context with client profile (including payment type),
-conversation state, conversation history, and policy rules.
-Use ALL of this context to write your reply.
-
-Use the client's payment type from CLIENT PROFILE to explain when their order ships:
-- Prepay: ships after payment confirmed
-- Postpay: ships immediately
-
-Follow the POLICY RULES section strictly.
-Style: informative, reassuring. End with "Thank you!"
-"""
-
-# ---------------------------------------------------------------------------
-# Agent
-# ---------------------------------------------------------------------------
-shipping_agent = Agent(
-    id="shipping-handler",
-    name="Shipping Handler",
-    model=OpenAIResponses(id="gpt-5.2"),
-    instructions=shipping_instructions,
-    markdown=False,
+_NONSTANDARD_PATTERN = re.compile(
+    r"\b(expedited|express|overnight|rush|"
+    r"by\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)|"
+    r"today|tomorrow|need it by|asap)\b",
+    re.IGNORECASE,
 )
 
 
-# ---------------------------------------------------------------------------
-# Handler Function
-# ---------------------------------------------------------------------------
 def handle_shipping(
     classification,
     result: dict,
     email_text: str,
 ) -> dict:
-    """Handle shipping timeline questions with specialized agent."""
-    ctx = build_context(classification, result, email_text)
-    prompt = format_context_for_prompt(ctx) + "\n\nWrite a reply about shipping:"
+    """Handle shipping timeline questions with template + keyword guard."""
+    from agents.handlers.general import handle_general
 
-    logger.info(
-        "Shipping handler for client=%s, payment_type=%s",
-        result["client_email"], ctx.payment_type,
+    # Guard: non-standard questions → LLM (uses cleaned body)
+    clean_body = _get_clean_body(email_text)
+    if _NONSTANDARD_PATTERN.search(clean_body):
+        logger.info(
+            "Non-standard shipping question for %s, routing to general",
+            result["client_email"],
+        )
+        return handle_general(classification, result, email_text)
+
+    result, found = fill_template_reply(
+        classification=classification,
+        result=result,
+        situation="shipping_timeline",
     )
+    if found:
+        logger.info(
+            "Shipping template for %s (0 tokens)",
+            result["client_email"],
+        )
+        return result
 
-    response = shipping_agent.run(prompt)
-    result["draft_reply"] = response.content
-    result["template_used"] = False
-    result["needs_routing"] = False
-    return result
+    return handle_general(classification, result, email_text)

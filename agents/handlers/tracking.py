@@ -1,71 +1,75 @@
 """
-Tracking Handler
-----------------
+Tracking Handler — Template-based
+----------------------------------
 
-Handles tracking-related questions:
-- "Where is my order?"
-- "What's my tracking number?"
-- "When will it arrive?"
-
-This agent has narrow, focused instructions for tracking questions only.
+Handles tracking-related questions with factual branching:
+- Branch 1: tracking_number known → return it
+- Branch 2: shipped but no tracking → pending template with recheck date
+- Branch 3: not shipped / no data → fallback to general handler (LLM)
 """
 
 import logging
 
-from agno.agent import Agent
-from agno.models.openai import OpenAIResponses
-
-from agents.context import build_context, format_context_for_prompt
+from agents.handlers.template_utils import (
+    _calc_recheck_date,
+    fill_template_reply,
+)
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Tracking Agent Instructions
-# ---------------------------------------------------------------------------
-tracking_instructions = """\
-You are James, handling ONLY tracking questions for shipmecarton.com.
 
-You will receive structured context with client profile, conversation state,
-conversation history, and policy rules. Use ALL of this context to write your reply.
-
-RESPONSES YOU CAN GIVE:
-- If tracking number is in context: "Your tracking number is {X}. You can track it at usps.com"
-- If order was shipped: "Your order was shipped on {date}"
-- If no tracking yet: "We'll get the tracking info and email it to you shortly"
-- If order not found: "We'll check on your order and get back to you"
-
-Follow the POLICY RULES section strictly.
-Style: casual, friendly. End with "Thank you!"
-"""
-
-# ---------------------------------------------------------------------------
-# Agent
-# ---------------------------------------------------------------------------
-tracking_agent = Agent(
-    id="tracking-handler",
-    name="Tracking Handler",
-    model=OpenAIResponses(id="gpt-5.2"),
-    instructions=tracking_instructions,
-    markdown=False,
-)
-
-
-# ---------------------------------------------------------------------------
-# Handler Function
-# ---------------------------------------------------------------------------
 def handle_tracking(
     classification,
     result: dict,
     email_text: str,
 ) -> dict:
-    """Handle tracking questions with specialized agent."""
-    ctx = build_context(classification, result, email_text)
-    prompt = format_context_for_prompt(ctx) + "\n\nWrite a reply about their tracking question:"
+    """Handle tracking questions with factual branching."""
+    from agents.handlers.general import handle_general
 
-    logger.info("Tracking handler for client=%s", result["client_email"])
+    state = result.get("conversation_state") or {}
+    facts = state.get("facts") or {}
+    tracking_number = facts.get("tracking_number")
+    status = state.get("status")
 
-    response = tracking_agent.run(prompt)
-    result["draft_reply"] = response.content
-    result["template_used"] = False
-    result["needs_routing"] = False
-    return result
+    # Branch 1: tracking_number known → give it directly
+    if tracking_number:
+        result["draft_reply"] = (
+            f"Your tracking number is {tracking_number}.\n"
+            f"You can track it at usps.com\n"
+            f"Thank you!"
+        )
+        result["template_used"] = True
+        result["needs_routing"] = False
+        logger.info(
+            "Tracking template (with number) for %s (0 tokens)",
+            result["client_email"],
+        )
+        return result
+
+    # Branch 2: shipped but no tracking yet → pending template
+    shipped = status == "shipped" or facts.get("shipped_at")
+    if shipped:
+        recheck = _calc_recheck_date(
+            result.get("gmail_thread_id"),
+            facts=facts,
+            payment_type=(result.get("client_data") or {}).get("payment_type"),
+        )
+        if recheck:
+            result, found = fill_template_reply(
+                classification=classification,
+                result=result,
+                situation="tracking",
+            )
+            if found:
+                logger.info(
+                    "Tracking pending template for %s (0 tokens, recheck=%s)",
+                    result["client_email"], recheck,
+                )
+                return result
+
+    # Branch 3: not shipped, no recheck date, or no data → general
+    logger.info(
+        "Tracking fallback to general for %s (status=%s, shipped_at=%s)",
+        result["client_email"], status, facts.get("shipped_at"),
+    )
+    return handle_general(classification, result, email_text)

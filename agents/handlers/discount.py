@@ -1,73 +1,60 @@
 """
-Discount Handler
-----------------
+Discount Handler — Template-based
+----------------------------------
 
-Handles discount-related requests:
-- "Can I get a discount?"
-- "Do you have any promotions?"
-- "Can you lower the price?"
-
-This agent has narrow, focused instructions for discount requests only.
+Handles discount requests:
+- Mixed-intent guard (total, bulk, custom) → general
+- Has discount → show percent and orders left
+- No discount → polite decline with promotions mention
 """
 
 import logging
 
-from agno.agent import Agent
-from agno.models.openai import OpenAIResponses
-
-from agents.context import build_context, format_context_for_prompt
+from agents.handlers.template_utils import _get_clean_body, fill_template_reply
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Discount Agent Instructions
-# ---------------------------------------------------------------------------
-discount_instructions = """\
-You are James, handling ONLY discount requests for shipmecarton.com.
-
-You will receive structured context with client profile (including current
-discount status), conversation state, conversation history, and policy rules.
-Use ALL of this context to write your reply.
-
-Check CLIENT PROFILE for discount info:
-- If "Active discount: X% for next N orders" — tell the client
-- If "Discount: none" — politely decline per policy
-
-Follow the POLICY RULES section strictly.
-Style: polite, appreciative. End with "Thank you!"
-"""
-
-# ---------------------------------------------------------------------------
-# Agent
-# ---------------------------------------------------------------------------
-discount_agent = Agent(
-    id="discount-handler",
-    name="Discount Handler",
-    model=OpenAIResponses(id="gpt-5.2"),
-    instructions=discount_instructions,
-    markdown=False,
-)
+_DISCOUNT_MIXED_KEYWORDS = {
+    "total", "how much", "price", "remind me",
+    "bulk", "custom", "negotiate",
+}
 
 
-# ---------------------------------------------------------------------------
-# Handler Function
-# ---------------------------------------------------------------------------
 def handle_discount(
     classification,
     result: dict,
     email_text: str,
 ) -> dict:
-    """Handle discount requests with specialized agent."""
-    ctx = build_context(classification, result, email_text)
-    prompt = format_context_for_prompt(ctx) + "\n\nWrite a reply about their discount request:"
+    """Handle discount requests with template + mixed-intent guard."""
+    from agents.handlers.general import handle_general
 
-    logger.info(
-        "Discount handler for client=%s, discount=%d%% (%d left)",
-        result["client_email"], ctx.discount_percent, ctx.discount_orders_left,
+    # Guard: mixed-intent or bulk/custom negotiation → general
+    clean_body = _get_clean_body(email_text)
+    if any(kw in clean_body for kw in _DISCOUNT_MIXED_KEYWORDS):
+        logger.info(
+            "Discount mixed-intent for %s, routing to general",
+            result["client_email"],
+        )
+        return handle_general(classification, result, email_text)
+
+    client = result.get("client_data") or {}
+    has_discount = (
+        client.get("discount_percent", 0) > 0
+        and client.get("discount_orders_left", 0) > 0
     )
+    discount_key = "has_discount" if has_discount else "no_discount"
 
-    response = discount_agent.run(prompt)
-    result["draft_reply"] = response.content
-    result["template_used"] = False
-    result["needs_routing"] = False
-    return result
+    result, found = fill_template_reply(
+        classification=classification,
+        result=result,
+        situation="discount_request",
+        override_payment_type=discount_key,
+    )
+    if found:
+        logger.info(
+            "Discount template (%s) for %s (0 tokens)",
+            discount_key, result["client_email"],
+        )
+        return result
+
+    return handle_general(classification, result, email_text)
