@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 _gmail_clients: dict[str, GmailClient] = {}
 _poll_lock = threading.Lock()
 _RECENT_UNREAD_WINDOW_DAYS = 14
-_MAX_MERGE_GAP_HOURS = 2  # Only merge same-thread messages within this time gap
+_MAX_MERGE_GAP_HOURS = 8  # Merge same-thread messages within this gap (covers overnight)
 
 
 def _get_client(account: str = "default") -> GmailClient:
