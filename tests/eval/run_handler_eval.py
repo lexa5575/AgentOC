@@ -19,6 +19,9 @@ Usage:
 
     # Run a specific case by id
     python -m tests.eval.run_handler_eval --case-id 1073
+
+    # Offline mode (no Gmail API calls — stubs thread history)
+    python -m tests.eval.run_handler_eval --situation stock_question --no-gmail
 """
 
 from __future__ import annotations
@@ -186,27 +189,41 @@ def _llm_judge(actual: str, expected: str, case: dict) -> dict:
     # Extract just body for judge context
     body = inbound.split("Body:", 1)[1].strip()[:300] if "Body:" in inbound else inbound[:300]
 
-    judge_prompt = f"""Compare ACTUAL reply vs EXPECTED reply for a customer service email.
+    judge_prompt = f"""You are a strict QA judge for an ecommerce customer service system.
+Compare ACTUAL reply vs EXPECTED reply. Be STRICT — score reflects real business impact.
 
 CUSTOMER ASKED: {body}
 
-EXPECTED REPLY:
+EXPECTED REPLY (gold standard):
 {expected}
 
-ACTUAL REPLY:
+ACTUAL REPLY (system output):
 {actual}
 
-Score the ACTUAL reply 1-10 on these criteria:
-1. Correctness: Does it answer the customer's question accurately?
-2. Products: Are mentioned products real and relevant (no hallucinated names)?
-3. Completeness: Does it cover all parts of the customer's question?
-4. Tone: Is it short, warm, professional?
-5. Format: No repeated prices per item, no unnecessary details?
+## Hard fail criteria (automatic score <= 4):
+- HALLUCINATION: mentions products that don't exist or aren't in stock
+- WRONG INFO: incorrect prices, wrong region, wrong warehouse
+- IGNORED QUESTION: customer asked about X but reply doesn't address X
+- GENERIC DUMP: lists entire catalog instead of answering the specific question
+
+## Scoring criteria (1-10):
+1-4: Hard fail (hallucinations, wrong info, ignored questions)
+5-6: Major issues (missing key info, irrelevant alternatives, wrong tone)
+7: Acceptable but imperfect (minor format issues, slight verbosity)
+8-9: Good (covers all questions, correct products, good tone)
+10: Perfect match with expected reply
+
+## Specific checks:
+- Are ALL products mentioned in ACTUAL real? (no invented names)
+- Does ACTUAL cover every question the customer asked?
+- Are alternatives relevant to customer's flavor profile?
+- Is pricing mentioned only once per region (not per product)?
+- If customer mentioned location/warehouse, does reply address it?
 
 Return ONLY this JSON (no markdown):
-{{"score": 7, "issues": ["list of problems"], "verdict": "PASS or FAIL"}}
+{{"score": 7, "hard_fail": false, "issues": ["list of problems"], "verdict": "PASS or FAIL"}}
 
-Score >= 7 = PASS, < 7 = FAIL."""
+Score >= 8 = PASS, < 8 = FAIL. hard_fail=true for scores 1-4."""
 
     try:
         judge = Agent(
@@ -219,10 +236,12 @@ Score >= 7 = PASS, < 7 = FAIL."""
         # Parse JSON
         raw = raw.replace("```json", "").replace("```", "").strip()
         data = _json.loads(raw)
+        score = data.get("score", 0)
         return {
-            "score": data.get("score", 0),
+            "score": score,
+            "hard_fail": data.get("hard_fail", score <= 4),
             "issues": data.get("issues", []),
-            "pass": data.get("score", 0) >= 7,
+            "pass": score >= 8,
         }
     except Exception as e:
         logger.warning("LLM judge failed: %s", e)
@@ -267,6 +286,31 @@ def run_single_case(case: dict) -> dict:
     }
 
 
+def _install_gmail_stubs():
+    """Patch Gmail-dependent functions so eval runs without Gmail API access.
+
+    Stubs:
+    - tools.gmail.get_full_thread_messages → returns []
+    - db.email_history.get_full_thread_history → returns local DB data only
+    """
+    from unittest.mock import patch
+    import db.email_history as eh
+
+    # Stub the Gmail thread fetch (used by context builder for OOS replies)
+    if hasattr(eh, "_fetch_gmail_thread"):
+        patch.object(eh, "_fetch_gmail_thread", return_value=[]).start()
+
+    # Stub tools.gmail if it exists
+    try:
+        import tools.gmail as gmail_mod
+        if hasattr(gmail_mod, "get_full_thread_messages"):
+            patch.object(gmail_mod, "get_full_thread_messages", return_value=[]).start()
+        if hasattr(gmail_mod, "get_thread_messages"):
+            patch.object(gmail_mod, "get_thread_messages", return_value=[]).start()
+    except ImportError:
+        pass
+
+
 def main():
     parser = argparse.ArgumentParser(description="Handler eval runner")
     parser.add_argument("--situation", type=str, default=None,
@@ -277,7 +321,14 @@ def main():
                         help="Include synthetic cases (score >= 7)")
     parser.add_argument("--output", type=str, default=None,
                         help="Save detailed results to JSON file")
+    parser.add_argument("--no-gmail", action="store_true",
+                        help="Offline mode: stub Gmail API calls (no external requests)")
     args = parser.parse_args()
+
+    # Offline mode: patch Gmail-dependent functions to avoid external API calls
+    if args.no_gmail:
+        _install_gmail_stubs()
+        logger.info("Offline mode: Gmail API calls stubbed")
 
     # Load cases
     golden = _load_golden_cases(args.situation)
@@ -346,17 +397,20 @@ def main():
                  if r["status"] == "OK"
                  and r.get("comparison", {}).get("checks", {}).get("llm_judge", {}).get("pass", True))
     failed = completed - passed
+    hard_fails = sum(1 for r in results
+                     if r["status"] == "OK"
+                     and r.get("comparison", {}).get("checks", {}).get("llm_judge", {}).get("hard_fail", False))
 
     print(f"\n{'='*60}")
     print(f"SUMMARY: {passed} PASS / {failed} FAIL / {errors} ERROR (out of {total})")
+    if hard_fails:
+        print(f"  HARD FAILS (hallucinations/wrong info): {hard_fails}")
     print(f"  Template replies: {template_count}")
     print(f"  LLM replies: {llm_count}")
-    avg_score = 0
     scores = [r.get("comparison", {}).get("checks", {}).get("llm_judge", {}).get("score", 0)
               for r in results if r["status"] == "OK"]
-    if scores:
-        avg_score = sum(scores) / len(scores)
-    print(f"  Average judge score: {avg_score:.1f}/10")
+    avg_score = sum(scores) / len(scores) if scores else 0
+    print(f"  Average judge score: {avg_score:.1f}/10 (threshold: >= 8)")
 
     # Save detailed results
     if args.output:
