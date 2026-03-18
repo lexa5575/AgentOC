@@ -103,7 +103,7 @@ REPLY_TEMPLATES = {
     # ------------------------------------------------------------------
     ("payment_question", "prepay"): (
         "Hi!\n"
-        "!!! Zelle ( In memo or comments DON'T put anything please ! ) use email below\n"
+        "!!! Zelle ( In memo or comments don't put anything please ! ) use email below\n"
         "\n"
         "{ZELLE_ADDRESS}\n"
         "\n"

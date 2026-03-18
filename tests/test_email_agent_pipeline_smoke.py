@@ -285,19 +285,7 @@ class TestEmailPipelineSmoke(unittest.TestCase):
             patch.object(self.agents_pipeline, "check_reply", return_value=fake_check),
             # State updater: return empty state (no LLM call)
             patch.object(self.agents_pipeline, "update_conversation_state", return_value={}),
-            # Handler agents
-            patch.object(self.h_tracking.tracking_agent, "run", return_value=types.SimpleNamespace(
-                content="Your tracking number is AB123. Thank you!"
-            )),
-            patch.object(self.h_payment.payment_agent, "run", return_value=types.SimpleNamespace(
-                content="Please send payment via Zelle to pay@example.com. Thank you!"
-            )),
-            patch.object(self.h_discount.discount_agent, "run", return_value=types.SimpleNamespace(
-                content="Unfortunately, no active discounts right now. Thank you!"
-            )),
-            patch.object(self.h_shipping.shipping_agent, "run", return_value=types.SimpleNamespace(
-                content="We ship via USPS and delivery takes 2-4 business days. Thank you!"
-            )),
+            # Handler agents (only LLM-based handlers still need patching)
             patch.object(self.h_general.general_agent, "run", return_value=types.SimpleNamespace(
                 content="We'll check and get back to you. Thank you!"
             )),
@@ -518,6 +506,7 @@ class TestEmailPipelineSmoke(unittest.TestCase):
         self.assertEqual(self.classifier_calls, 0, "Parser should handle order, not LLM")
 
     def test_tracking_flow(self):
+        """Tracking without state data falls back to general handler."""
         email = (
             "From: client1@example.com\n"
             "Subject: Re: Order 23432\n"
@@ -526,9 +515,9 @@ class TestEmailPipelineSmoke(unittest.TestCase):
         out = self.email_agent.classify_and_process(email)
 
         self.assertIn("Situation: tracking", out)
-        self.assertIn("Your tracking number is AB123. Thank you!", out)
+        # State stub returns {} (no tracking_number, not shipped) → general fallback
+        self.assertIn("Thank you!", out)
         self.assertEqual(len(self.saved), 2)
-        self.assertEqual(self.saved[1]["body"], "Your tracking number is AB123. Thank you!")
 
     def test_payment_question_flow(self):
         email = (
@@ -539,7 +528,9 @@ class TestEmailPipelineSmoke(unittest.TestCase):
         out = self.email_agent.classify_and_process(email)
 
         self.assertIn("Situation: payment_question", out)
-        self.assertIn("Please send payment via Zelle to pay@example.com. Thank you!", out)
+        # Template should fill Zelle address from client data
+        self.assertIn("Zelle", out)
+        self.assertIn("pay@example.com", out)
         self.assertEqual(len(self.saved), 2)
 
     def test_oos_new_order_flow(self):

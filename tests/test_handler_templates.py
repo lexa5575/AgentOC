@@ -197,6 +197,18 @@ class TestTrackingTemplate(unittest.TestCase):
             out = handle_tracking(_FakeCls(), result, "Body: where is my order?")
             mock.assert_called_once()
 
+    def test_tracking_shipped_pending_template(self):
+        """Shipped + no tracking + valid recheck date → pending template."""
+        from agents.handlers.tracking import handle_tracking
+
+        result = _base_result(
+            conversation_state={"status": "shipped", "facts": {"shipped_at": "2026-03-10T12:00:00"}},
+        )
+        out = handle_tracking(_FakeCls(), result, "Body: where is my order?")
+        self.assertTrue(out["template_used"])
+        self.assertIn("shipped your order 100%", out["draft_reply"])
+        self.assertIn("Thank you!", out["draft_reply"])
+
     def test_tracking_shipped_no_recheck_goes_to_general(self):
         """Shipped but _calc_recheck_date returns None → general."""
         from agents.handlers.tracking import handle_tracking
@@ -429,6 +441,24 @@ class TestFillTemplateReplyExtensions(unittest.TestCase):
         result["client_data"]["payment_type"] = "prepay"
         _, found = fill_template_reply(_FakeCls(), result, "payment_question")
         self.assertFalse(found)
+
+    def test_final_price_guard_skips(self):
+        """Template with {FINAL_PRICE} but no price → skip."""
+        from agents.handlers.template_utils import fill_template_reply
+        from agents.reply_templates import REPLY_TEMPLATES
+
+        # Temporarily add a template that requires FINAL_PRICE
+        key = ("_test_final_price", "prepay")
+        REPLY_TEMPLATES[key] = "Total: {FINAL_PRICE}. Thank you!"
+        try:
+            result = _base_result()
+            result["client_data"]["payment_type"] = "prepay"
+            _, found = fill_template_reply(
+                _FakeCls(price=None, parser_used=False), result, "_test_final_price",
+            )
+            self.assertFalse(found)
+        finally:
+            del REPLY_TEMPLATES[key]
 
     def test_recheck_date_guard_skips(self):
         from agents.handlers.template_utils import fill_template_reply
