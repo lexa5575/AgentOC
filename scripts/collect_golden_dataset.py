@@ -149,7 +149,7 @@ def main():
         # Step 5: Save to JSON
         dump_path = "/tmp/golden_dataset.json"
         with open(dump_path, "w") as f:
-            json.dump(dict(dataset), f, ensure_ascii=False, indent=2)
+            json.dump(dict(dataset), f, ensure_ascii=False, indent=2, default=str)
 
         print(f"\n✓ Full dataset saved to {dump_path}")
         print(f"  Copy to local: docker cp agentos-api:{dump_path} ./golden_dataset.json")
