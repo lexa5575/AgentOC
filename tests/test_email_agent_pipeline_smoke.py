@@ -463,6 +463,36 @@ class TestEmailPipelineSmoke(unittest.TestCase):
                 "followup_to": "oos_notification",
                 "dialog_intent": "agrees_to_alternative",
             }
+        elif "where is my tracking" in text:
+            payload = {
+                "needs_reply": True,
+                "situation": "tracking",
+                "client_email": "client1@example.com",
+                "client_name": "Test Client One",
+                "order_id": None, "price": None,
+                "customer_street": None, "customer_city_state_zip": None,
+                "items": None, "order_items": None,
+            }
+        elif "any discount" in text:
+            payload = {
+                "needs_reply": True,
+                "situation": "discount_request",
+                "client_email": "client1@example.com",
+                "client_name": "Test Client One",
+                "order_id": None, "price": None,
+                "customer_street": None, "customer_city_state_zip": None,
+                "items": None, "order_items": None,
+            }
+        elif "how long does shipping" in text:
+            payload = {
+                "needs_reply": True,
+                "situation": "shipping_timeline",
+                "client_email": "client1@example.com",
+                "client_name": "Test Client One",
+                "order_id": None, "price": None,
+                "customer_street": None, "customer_city_state_zip": None,
+                "items": None, "order_items": None,
+            }
         else:
             payload = {
                 "needs_reply": True,
@@ -531,6 +561,64 @@ class TestEmailPipelineSmoke(unittest.TestCase):
         # Template should fill Zelle address from client data
         self.assertIn("Zelle", out)
         self.assertIn("pay@example.com", out)
+        self.assertEqual(len(self.saved), 2)
+
+    def test_tracking_with_number_flow(self):
+        """Tracking with tracking_number in state → template with number."""
+        email = (
+            "From: client1@example.com\n"
+            "Subject: Re: Shipping\n"
+            "Body: where is my tracking?"
+        )
+        # Stop the default state patcher and replace with one that has tracking data
+        state_patcher_idx = next(
+            i for i, p in enumerate(self.patchers)
+            if hasattr(p, "attribute") and p.attribute == "update_conversation_state"
+        )
+        self.patchers[state_patcher_idx].stop()
+        new_patcher = patch.object(
+            self.agents_pipeline, "update_conversation_state",
+            return_value={"status": "shipped", "facts": {"tracking_number": "9400111222333"}},
+        )
+        new_patcher.start()
+        try:
+            # Need gmail_thread_id so _update_inbound_state doesn't skip
+            out = self.email_agent.classify_and_process(
+                email, gmail_thread_id="thread-tracking-test",
+            )
+        finally:
+            new_patcher.stop()
+            self.patchers[state_patcher_idx].start()
+
+        self.assertIn("9400111222333", out)
+        self.assertIn("usps.com", out)
+
+    def test_discount_request_flow(self):
+        """Discount request → no_discount template."""
+        email = (
+            "From: client1@example.com\n"
+            "Subject: Discount\n"
+            "Body: Any discount available?"
+        )
+        out = self.email_agent.classify_and_process(email)
+
+        self.assertIn("Situation: discount_request", out)
+        self.assertIn("don't have any active discounts", out)
+        self.assertIn("promotions", out)
+        self.assertEqual(len(self.saved), 2)
+
+    def test_shipping_timeline_flow(self):
+        """Shipping timeline → prepay template (client1 is prepay)."""
+        email = (
+            "From: client1@example.com\n"
+            "Subject: Shipping\n"
+            "Body: How long does shipping take?"
+        )
+        out = self.email_agent.classify_and_process(email)
+
+        self.assertIn("Situation: shipping_timeline", out)
+        self.assertIn("USPS", out)
+        self.assertIn("2-4 business days", out)
         self.assertEqual(len(self.saved), 2)
 
     def test_oos_new_order_flow(self):
