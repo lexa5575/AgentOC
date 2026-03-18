@@ -1,0 +1,289 @@
+[
+  {
+    "id": "syn_sq_01_simple_in_stock",
+    "score": 9,
+    "situation": "stock_question",
+    "description": "Simple question about a single product that IS in stock",
+    "client_email": "syn.client1@example.com",
+    "client_profile": {
+      "name": "Alex Morgan",
+      "payment_type": "postpay",
+      "zelle_address": "",
+      "street": "100 Main St",
+      "city_state_zip": "Chicago, IL 60601",
+      "llm_summary": "New customer, first order inquiry."
+    },
+    "inbound_text": "From: Alex Morgan <syn.client1@example.com>\nSubject: Product question\nBody: Hi, do you have Silver in stock?",
+    "expected_reply_contains": ["Silver", "in stock", "Thank you"],
+    "expected_reply_not_contains": [],
+    "expected_behavior": "Should confirm Silver is in stock, mention both regions (ME and EU) if available, ask which region and how many boxes"
+  },
+  {
+    "id": "syn_sq_02_single_oos",
+    "score": 9,
+    "situation": "stock_question",
+    "description": "Question about a product that is OOS — should offer relevant alternatives",
+    "client_email": "syn.client2@example.com",
+    "client_profile": {
+      "name": "Sarah Wilson",
+      "payment_type": "prepay",
+      "zelle_address": "sarah.pay@example.com",
+      "street": "200 Oak Ave",
+      "city_state_zip": "Miami, FL 33101",
+      "llm_summary": "Returning customer who prefers Terea Russet ME, orders 2 cartons monthly. Non-menthol preference."
+    },
+    "inbound_text": "From: Sarah Wilson <syn.client2@example.com>\nSubject: Stock check\nBody: Hey James, do you have Russet in stock?",
+    "expected_reply_contains": ["Russet", "not available"],
+    "expected_reply_not_contains": ["Sun Pearl", "Kelly", "Menthol"],
+    "expected_behavior": "Russet ME is OOS. Should say so and offer non-menthol alternatives like Amber ME, Sienna ME, Beige ME. NOT menthol flavors."
+  },
+  {
+    "id": "syn_sq_03_multi_product",
+    "score": 9,
+    "situation": "stock_question",
+    "description": "Customer asks about multiple products at once",
+    "client_email": "syn.client3@example.com",
+    "client_profile": {
+      "name": "Mike Chen",
+      "payment_type": "postpay",
+      "zelle_address": "",
+      "street": "300 Pine Rd",
+      "city_state_zip": "Los Angeles, CA 90001",
+      "llm_summary": "Regular customer, prefers EU region, orders Green EU and Bronze EU."
+    },
+    "inbound_text": "From: Mike Chen <syn.client3@example.com>\nSubject: Stock\nBody: Hi James, do you have Green EU and Bronze EU?",
+    "expected_reply_contains": ["Green EU", "Bronze"],
+    "expected_reply_not_contains": [],
+    "expected_behavior": "Should answer about BOTH products. If Green EU in stock — say yes. If Bronze EU OOS — say so. Don't ignore either product."
+  },
+  {
+    "id": "syn_sq_04_region_query_japan",
+    "score": 9,
+    "situation": "stock_question",
+    "description": "Customer asks what Japan flavors are available",
+    "client_email": "syn.client4@example.com",
+    "client_profile": {
+      "name": "David Park",
+      "payment_type": "prepay",
+      "zelle_address": "david.z@example.com",
+      "street": "400 Elm St",
+      "city_state_zip": "San Jose, CA 95101",
+      "llm_summary": "Regular customer, always orders Japan flavors shipped from CA warehouse."
+    },
+    "inbound_text": "From: David Park <syn.client4@example.com>\nSubject: Japan stock\nBody: What Japan flavors do you have right now?",
+    "expected_reply_contains": ["Japan", "in stock"],
+    "expected_reply_not_contains": [],
+    "expected_behavior": "Should list all available Japan flavors from catalog. Only real products, no hallucinated names."
+  },
+  {
+    "id": "syn_sq_05_warehouse_specific",
+    "score": 8,
+    "situation": "stock_question",
+    "description": "Customer asks about stock from a specific warehouse/location",
+    "client_email": "syn.client5@example.com",
+    "client_profile": {
+      "name": "Lisa Nguyen",
+      "payment_type": "prepay",
+      "zelle_address": "lisa.pay@example.com",
+      "street": "500 Beach Blvd",
+      "city_state_zip": "Tampa, FL 33602",
+      "llm_summary": "Returning customer, orders Japan flavors, asks about CA shipping."
+    },
+    "inbound_text": "From: Lisa Nguyen <syn.client5@example.com>\nSubject: CA stock\nBody: Which Japan terea ship from California?",
+    "expected_reply_contains": ["California", "Japan"],
+    "expected_reply_not_contains": [],
+    "expected_behavior": "Should list only Japan products available from LA_MAKS (CA) warehouse. Not from other warehouses."
+  },
+  {
+    "id": "syn_sq_06_general_availability",
+    "score": 8,
+    "situation": "stock_question",
+    "description": "General availability question without specific product — should personalize from profile",
+    "client_email": "syn.client6@example.com",
+    "client_profile": {
+      "name": "Emma Davis",
+      "payment_type": "postpay",
+      "zelle_address": "",
+      "street": "600 Maple Dr",
+      "city_state_zip": "Austin, TX 78701",
+      "llm_summary": "Returning customer who orders Terea Turquoise EU monthly, 2 cartons. Has also tried Green EU."
+    },
+    "inbound_text": "From: Emma Davis <syn.client6@example.com>\nSubject: Re: Previous order\nBody: Hi James, what do you have available right now?",
+    "expected_reply_contains": ["Turquoise", "Green"],
+    "expected_reply_not_contains": [],
+    "expected_behavior": "Should personalize based on profile — mention Turquoise EU and Green EU first since she orders those. Not dump full catalog."
+  },
+  {
+    "id": "syn_sq_07_misspelled_product",
+    "score": 8,
+    "situation": "stock_question",
+    "description": "Customer misspells product name",
+    "client_email": "syn.client7@example.com",
+    "client_profile": {
+      "name": "Robert Kim",
+      "payment_type": "postpay",
+      "zelle_address": "",
+      "street": "700 Cedar Ln",
+      "city_state_zip": "Portland, OR 97201",
+      "llm_summary": "Occasional customer, has ordered Terea Sienna ME before."
+    },
+    "inbound_text": "From: Robert Kim <syn.client7@example.com>\nSubject: Question\nBody: Do you have tera siena?",
+    "expected_reply_contains": ["Sienna", "in stock"],
+    "expected_reply_not_contains": [],
+    "expected_behavior": "Should resolve 'tera siena' to 'Terea Sienna' via product resolver. Confirm availability with correct name."
+  },
+  {
+    "id": "syn_sq_08_oos_with_discount",
+    "score": 7,
+    "situation": "stock_question",
+    "description": "Customer asks about OOS product and mentions discount",
+    "client_email": "syn.client8@example.com",
+    "client_profile": {
+      "name": "Jennifer Lee",
+      "payment_type": "postpay",
+      "zelle_address": "",
+      "street": "800 Birch Way",
+      "city_state_zip": "Seattle, WA 98101",
+      "discount_percent": 5,
+      "discount_orders_left": 3,
+      "llm_summary": "Loyal customer, orders Bronze ME 3 cartons every 2 weeks. Has 5% discount."
+    },
+    "inbound_text": "From: Jennifer Lee <syn.client8@example.com>\nSubject: Bronze\nBody: Hi James, is Bronze available? I'd like to use my discount.",
+    "expected_reply_contains": ["Bronze"],
+    "expected_reply_not_contains": [],
+    "expected_behavior": "Bronze ME is OOS. Should say so, offer relevant non-menthol alternatives. Should acknowledge discount question."
+  },
+  {
+    "id": "syn_sq_09_product_question_not_stock",
+    "score": 6,
+    "situation": "other",
+    "description": "Customer asks about product characteristics, not availability — should NOT be stock_question",
+    "client_email": "syn.client9@example.com",
+    "client_profile": {
+      "name": "Tom Garcia",
+      "payment_type": "postpay",
+      "zelle_address": "",
+      "street": "900 Willow St",
+      "city_state_zip": "Denver, CO 80201",
+      "llm_summary": "New customer exploring options."
+    },
+    "inbound_text": "From: Tom Garcia <syn.client9@example.com>\nSubject: Question about flavors\nBody: What's the difference between Amber and Bronze? Is Bronze more like a tobacco flavor?",
+    "expected_reply_contains": ["Amber", "Bronze"],
+    "expected_reply_not_contains": [],
+    "expected_behavior": "This is a product info question, not stock question. Should describe flavor profiles. May need web search tool."
+  },
+  {
+    "id": "syn_sq_10_florida_warehouse",
+    "score": 7,
+    "situation": "stock_question",
+    "description": "Customer mentions being in Florida — should check Miami warehouse",
+    "client_email": "syn.client10@example.com",
+    "client_profile": {
+      "name": "Carlos Rivera",
+      "payment_type": "postpay",
+      "zelle_address": "",
+      "street": "1000 Ocean Dr",
+      "city_state_zip": "Miami, FL 33139",
+      "llm_summary": "Returning customer, prefers Amber ME, orders from Miami area."
+    },
+    "inbound_text": "From: Carlos Rivera <syn.client10@example.com>\nSubject: Stock in FL\nBody: I'm in Miami, what ME flavors do you have available here?",
+    "expected_reply_contains": ["Miami", "ME"],
+    "expected_reply_not_contains": [],
+    "expected_behavior": "Should check Miami warehouse stock specifically. List only ME products available in MIAMI_MAKS warehouse."
+  },
+  {
+    "id": "syn_sq_11_device_question",
+    "score": 7,
+    "situation": "stock_question",
+    "description": "Customer asks about device availability (not sticks)",
+    "client_email": "syn.client11@example.com",
+    "client_profile": {
+      "name": "Anna Schmidt",
+      "payment_type": "prepay",
+      "zelle_address": "anna.z@example.com",
+      "street": "1100 River Rd",
+      "city_state_zip": "Boston, MA 02101",
+      "llm_summary": "Customer who orders sticks and occasionally asks about devices."
+    },
+    "inbound_text": "From: Anna Schmidt <syn.client11@example.com>\nSubject: Device\nBody: Do you have IQOS ONE devices available?",
+    "expected_reply_contains": ["ONE"],
+    "expected_reply_not_contains": [],
+    "expected_behavior": "Should check ONE device availability. Different product type from sticks."
+  },
+  {
+    "id": "syn_sq_12_mixed_language",
+    "score": 6,
+    "situation": "stock_question",
+    "description": "Customer writes in mixed English/broken English",
+    "client_email": "syn.client12@example.com",
+    "client_profile": {
+      "name": "Duc Pham",
+      "payment_type": "prepay",
+      "zelle_address": "duc.pay@example.com",
+      "street": "1200 Valley Ave",
+      "city_state_zip": "Arleta, CA 91331",
+      "llm_summary": "Regular customer, orders Japan flavors from CA. Communicates briefly, sometimes in Vietnamese."
+    },
+    "inbound_text": "From: Duc Pham <syn.client12@example.com>\nSubject: Re: order\nBody: you have menthol japan ship CA?",
+    "expected_reply_contains": ["Menthol", "Japan", "California"],
+    "expected_reply_not_contains": [],
+    "expected_behavior": "Should understand broken English request for Japan Menthol from CA warehouse. List available menthol Japan from LA_MAKS."
+  },
+  {
+    "id": "syn_sq_13_two_regions_same_flavor",
+    "score": 8,
+    "situation": "stock_question",
+    "description": "Customer asks about a flavor available in multiple regions",
+    "client_email": "syn.client13@example.com",
+    "client_profile": {
+      "name": "Kate Brown",
+      "payment_type": "postpay",
+      "zelle_address": "",
+      "street": "1300 Park Ave",
+      "city_state_zip": "New York, NY 10001",
+      "llm_summary": "Returning customer, orders Turquoise, flexible on region."
+    },
+    "inbound_text": "From: Kate Brown <syn.client13@example.com>\nSubject: Turquoise\nBody: Do you have Turquoise? Any region is fine.",
+    "expected_reply_contains": ["Turquoise"],
+    "expected_reply_not_contains": [],
+    "expected_behavior": "Turquoise available in ME and EU. Should offer both regions since customer says any region is fine."
+  },
+  {
+    "id": "syn_sq_14_quantity_check",
+    "score": 6,
+    "situation": "stock_question",
+    "description": "Customer asks if enough stock for large quantity",
+    "client_email": "syn.client14@example.com",
+    "client_profile": {
+      "name": "James Cooper",
+      "payment_type": "postpay",
+      "zelle_address": "",
+      "street": "1400 Main St",
+      "city_state_zip": "Dallas, TX 75201",
+      "llm_summary": "Bulk buyer, orders 8-10 cartons of Green EU."
+    },
+    "inbound_text": "From: James Cooper <syn.client14@example.com>\nSubject: Stock check\nBody: Hi, do you have Green EU available? Checking if you have enough for a big order.",
+    "expected_reply_contains": ["Green EU"],
+    "expected_reply_not_contains": [],
+    "expected_behavior": "Should confirm Green EU availability. Pure availability check, no ordering intent."
+  },
+  {
+    "id": "syn_sq_15_eu_list_non_menthol",
+    "score": 7,
+    "situation": "stock_question",
+    "description": "Customer asks for non-menthol EU options",
+    "client_email": "syn.client15@example.com",
+    "client_profile": {
+      "name": "Peter Walsh",
+      "payment_type": "postpay",
+      "zelle_address": "",
+      "street": "1500 Elm St",
+      "city_state_zip": "Philadelphia, PA 19101",
+      "llm_summary": "Customer who dislikes menthol, orders Amber EU and Bronze EU."
+    },
+    "inbound_text": "From: Peter Walsh <syn.client15@example.com>\nSubject: EU flavors\nBody: What non-menthol European flavors do you have?",
+    "expected_reply_contains": ["EU"],
+    "expected_reply_not_contains": ["Kelly", "Menthol"],
+    "expected_behavior": "Should list only non-menthol EU flavors: Amber, Bronze, Sienna, Teak, Sof Fuse, etc. NOT Kelly (peppermint), not menthol."
+  }
+]
