@@ -70,7 +70,9 @@ We must confirm the order — this is NOT a simple acknowledgment.
 ## Rules for situation
 
 - "new_order" — customer wants to place an order.
-  KEY RULE: product name + quantity = new_order (NOT price_question).
+  KEY RULE: product name + quantity + ordering intent = new_order.
+  "How much for 5 boxes?" → price_question (asking price, NOT ordering).
+  "Send me 5 boxes" → new_order (clear ordering intent).
   NOT new_order: "hold/reserve/set aside" → classify as "other".
 - "tracking" — asks about delivery status, tracking number, "where is my order?"
 - "price_question" — asks how much something costs WITHOUT quantity.
@@ -133,14 +135,18 @@ Set order_items to null for other situations or when no clear product list exist
 - quantity: number of units (default 1)
 
 ### Region preferences
-- region_preference: ordered list ["EU","ME","JAPAN"] for SOFT preferences only.
-  null when no preference or when region is already in product_name.
-  "Turquoise EU" → region_preference=null (region IN name).
+- region_preference: ALWAYS fill when region is known. Ordered list ["EU","ME","JAPAN"].
+  null ONLY when the customer does NOT specify or imply any region.
+  "Turquoise EU" → region_preference=["EU"] (extract region even if it's in the name).
   "Turquoise, ME ok if no EU" → region_preference=["EU","ME"], strict_region=false.
   "Turquoise EU only" → region_preference=["EU"], strict_region=true.
-- Thread hint: if no region stated but THREAD HISTORY shows a specific region
-  variant (e.g. "Terea Yellow ME"), use that as region_preference.
+  "3 green please" (no region) → region_preference=null.
+- Thread/state hint: if no region stated in the message but CONVERSATION STATE
+  or THREAD HISTORY shows a specific region (e.g. "Terea Yellow ME", or
+  ordered_items: "Terea Green EU x5"), use that as region_preference.
 - strict_region: true only for "only"/"exclusively" language, false otherwise.
+- NEVER guess or hallucinate a region — if the customer didn't mention one
+  and there is no region in state/history, leave region_preference=null.
 
 ### Situation-specific rules
 - new_order: extract products, quantities, regions from the order.
@@ -150,8 +156,10 @@ Set order_items to null for other situations or when no clear product list exist
 - stock_question: each product/region = separate OrderItem (qty=1).
   Region queries → base_flavor = region name ("Japan", "Europe").
   General queries ("What do you have?") → order_items=null.
-- oos_followup: extract order_items ONLY when dialog_intent=agrees_to_alternative
-  (confirmed items from message + CONVERSATION STATE). For declines/provides_info → null.
+- oos_followup:
+  agrees_to_alternative → extract confirmed items from message + CONVERSATION STATE.
+  asks_question → extract the product(s) being asked about (qty=1 if not stated).
+  declines_alternative / provides_info → order_items=null.
 
 ## Output format
 
@@ -344,11 +352,6 @@ def _infer_region_from_state(classification, conversation_state: dict | None) ->
         # Guard: don't override existing region_preference
         if item.region_preference is not None:
             continue
-        # Guard: don't fill if product_name already has region suffix
-        if item.product_name:
-            pn_lower = item.product_name.lower()
-            if any(pn_lower.endswith(s.lower()) for s in REGION_SUFFIXES):
-                continue
         # Guard: don't touch strict_region
         region = region_map.get(item.base_flavor.lower())
         if region:

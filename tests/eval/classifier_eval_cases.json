@@ -1,7 +1,11 @@
 [
   {
     "id": "new_order_direct_green_5",
-    "tags": ["new_order", "direct_order", "single_product"],
+    "tags": [
+      "new_order",
+      "direct_order",
+      "single_product"
+    ],
     "email_text": "From: alice.johnson@example.com\nSubject: Order request\nBody: Hi James, I want to order 5 boxes of Green. Please let me know the total. Thanks, Alice",
     "conversation_state": null,
     "thread_history": null,
@@ -12,12 +16,23 @@
       "dialog_intent": null,
       "needs_reply": true,
       "client_email": "alice.johnson@example.com",
-      "order_items": [{"base_flavor": "Green", "quantity": 5, "region_preference": null, "strict_region": false}]
+      "order_items": [
+        {
+          "base_flavor": "Green",
+          "quantity": 5,
+          "region_preference": null,
+          "strict_region": false
+        }
+      ]
     }
   },
   {
     "id": "new_order_question_format_with_qty",
-    "tags": ["new_order", "question_format", "has_quantity"],
+    "tags": [
+      "new_order",
+      "question_format",
+      "has_quantity"
+    ],
     "email_text": "From: bob.smith@example.com\nSubject: Inquiry\nBody: Hey, can I get 4 cartons of Yellow Menthol? Thanks Bob",
     "conversation_state": null,
     "thread_history": null,
@@ -28,12 +43,23 @@
       "dialog_intent": null,
       "needs_reply": true,
       "client_email": "bob.smith@example.com",
-      "order_items": [{"base_flavor": "Yellow Menthol", "quantity": 4, "region_preference": null, "strict_region": false}]
+      "order_items": [
+        {
+          "base_flavor": "Yellow Menthol",
+          "quantity": 4,
+          "region_preference": null,
+          "strict_region": false
+        }
+      ]
     }
   },
   {
     "id": "not_new_order_hold_reserve",
-    "tags": ["other", "reserve_request", "edge_case"],
+    "tags": [
+      "other",
+      "reserve_request",
+      "edge_case"
+    ],
     "email_text": "From: charlie.wang@example.com\nSubject: Hold request\nBody: Hi James, please hold 3 boxes of Silver for me. I'll confirm the order next week. Charlie",
     "conversation_state": null,
     "thread_history": null,
@@ -49,7 +75,10 @@
   },
   {
     "id": "new_order_compound_flavor_black_purple_menthol",
-    "tags": ["new_order", "compound_flavor"],
+    "tags": [
+      "new_order",
+      "compound_flavor"
+    ],
     "email_text": "From: diana.ross@example.com\nSubject: New order\nBody: I'd like 2 boxes of Black Purple Menthol please. Ship to the usual address.",
     "conversation_state": null,
     "thread_history": null,
@@ -60,28 +89,55 @@
       "dialog_intent": null,
       "needs_reply": true,
       "client_email": "diana.ross@example.com",
-      "order_items": [{"base_flavor": "Black Purple Menthol", "quantity": 2, "region_preference": null, "strict_region": false}]
+      "order_items": [
+        {
+          "base_flavor": "Black Purple Menthol",
+          "quantity": 2,
+          "region_preference": null,
+          "strict_region": false
+        }
+      ]
     }
   },
   {
     "id": "new_order_after_shipped_state",
-    "tags": ["new_order", "shipped_state", "not_oos_followup"],
+    "tags": [
+      "new_order",
+      "shipped_state",
+      "not_oos_followup"
+    ],
     "email_text": "From: evan.clark@example.com\nSubject: Re: Your order has shipped\nBody: Thanks for the tracking! Can I have 2 Terea Sienna?",
     "conversation_state": {
       "status": "shipped",
       "topic": "order_shipped",
       "facts": {
         "tracking": "1Z999AA10123456784",
-        "ordered_items": ["Terea Turquoise EU x3"],
-        "oos_items": ["Terea Amber ME"],
-        "offered_alternatives": ["Terea Sienna EU"]
+        "ordered_items": [
+          "Terea Turquoise EU x3"
+        ],
+        "oos_items": [
+          "Terea Amber ME"
+        ],
+        "offered_alternatives": [
+          "Terea Sienna EU"
+        ]
       },
       "open_questions": [],
       "summary": "Order shipped with tracking number. OOS discussion for Amber concluded."
     },
     "thread_history": [
-      {"direction": "inbound", "body": "I want 3 Turquoise EU and 1 Amber ME", "subject": "New order", "created_at": "2026-03-08"},
-      {"direction": "outbound", "body": "Hi Evan, Amber ME is out of stock. We have Sienna EU available. Your order for 3 Turquoise EU has shipped. Tracking: 1Z999AA10123456784", "subject": "Re: New order", "created_at": "2026-03-10"}
+      {
+        "direction": "inbound",
+        "body": "I want 3 Turquoise EU and 1 Amber ME",
+        "subject": "New order",
+        "created_at": "2026-03-08"
+      },
+      {
+        "direction": "outbound",
+        "body": "Hi Evan, Amber ME is out of stock. We have Sienna EU available. Your order for 3 Turquoise EU has shipped. Tracking: 1Z999AA10123456784",
+        "subject": "Re: New order",
+        "created_at": "2026-03-10"
+      }
     ],
     "other_threads": null,
     "combined_messages": null,
@@ -90,30 +146,75 @@
       "dialog_intent": null,
       "needs_reply": true,
       "client_email": "evan.clark@example.com",
-      "order_items": [{"base_flavor": "Sienna", "quantity": 2, "region_preference": null, "strict_region": false}]
+      "order_items": [
+        {
+          "base_flavor": "Sienna",
+          "quantity": 2,
+          "region_preference": [
+            "EU"
+          ],
+          "strict_region": false
+        }
+      ]
     }
   },
   {
     "id": "oos_followup_simple_yes",
-    "tags": ["oos_followup", "agrees_to_alternative", "simple_agreement"],
+    "tags": [
+      "oos_followup",
+      "agrees_to_alternative",
+      "simple_agreement"
+    ],
     "email_text": "From: fiona.green@example.com\nSubject: Re: Out of stock notice\nBody: yes pls",
     "conversation_state": {
       "status": "awaiting_response",
       "topic": "out_of_stock",
       "facts": {
-        "oos_items": ["Terea Purple ME x3"],
-        "offered_alternatives": ["Terea Bright Menthol EU x3"],
+        "oos_items": [
+          "Terea Purple ME x3"
+        ],
+        "offered_alternatives": [
+          "Terea Bright Menthol EU x3"
+        ],
         "pending_oos_resolution": {
-          "original": [{"base_flavor": "Purple", "quantity": 3, "region_preference": ["ME"]}],
-          "alternatives": [{"base_flavor": "Bright Menthol", "quantity": 3, "region_preference": ["EU"]}]
+          "original": [
+            {
+              "base_flavor": "Purple",
+              "quantity": 3,
+              "region_preference": [
+                "ME"
+              ]
+            }
+          ],
+          "alternatives": [
+            {
+              "base_flavor": "Bright Menthol",
+              "quantity": 3,
+              "region_preference": [
+                "EU"
+              ]
+            }
+          ]
         }
       },
-      "open_questions": ["Customer to confirm alternative"],
+      "open_questions": [
+        "Customer to confirm alternative"
+      ],
       "summary": "Purple ME out of stock, offered Bright Menthol EU as alternative."
     },
     "thread_history": [
-      {"direction": "inbound", "body": "I want 3 boxes of Purple ME", "subject": "Order", "created_at": "2026-03-09"},
-      {"direction": "outbound", "body": "Hi Fiona, unfortunately Purple ME is out of stock. Would you like 3 Bright Menthol EU instead?", "subject": "Re: Order", "created_at": "2026-03-10"}
+      {
+        "direction": "inbound",
+        "body": "I want 3 boxes of Purple ME",
+        "subject": "Order",
+        "created_at": "2026-03-09"
+      },
+      {
+        "direction": "outbound",
+        "body": "Hi Fiona, unfortunately Purple ME is out of stock. Would you like 3 Bright Menthol EU instead?",
+        "subject": "Re: Order",
+        "created_at": "2026-03-10"
+      }
     ],
     "other_threads": null,
     "combined_messages": null,
@@ -122,30 +223,77 @@
       "dialog_intent": "agrees_to_alternative",
       "needs_reply": true,
       "client_email": "fiona.green@example.com",
-      "order_items": [{"base_flavor": "Bright Menthol", "quantity": 3, "region_preference": ["EU"], "strict_region": false}]
+      "order_items": [
+        {
+          "base_flavor": "Bright Menthol",
+          "quantity": 3,
+          "region_preference": [
+            "EU"
+          ],
+          "strict_region": false
+        }
+      ]
     }
   },
   {
     "id": "oos_followup_explicit_product_choice",
-    "tags": ["oos_followup", "agrees_to_alternative", "explicit_choice"],
+    "tags": [
+      "oos_followup",
+      "agrees_to_alternative",
+      "explicit_choice"
+    ],
     "email_text": "From: george.miller@example.com\nSubject: Re: Stock update\nBody: ok send me 4 black menthol",
     "conversation_state": {
       "status": "awaiting_response",
       "topic": "out_of_stock",
       "facts": {
-        "oos_items": ["Terea Amber EU x4"],
-        "offered_alternatives": ["Terea Black Menthol EU", "Terea Bronze EU"],
+        "oos_items": [
+          "Terea Amber EU x4"
+        ],
+        "offered_alternatives": [
+          "Terea Black Menthol EU",
+          "Terea Bronze EU"
+        ],
         "pending_oos_resolution": {
-          "original": [{"base_flavor": "Amber", "quantity": 4, "region_preference": ["EU"]}],
-          "alternatives": [{"base_flavor": "Black Menthol", "quantity": 4}, {"base_flavor": "Bronze", "quantity": 4}]
+          "original": [
+            {
+              "base_flavor": "Amber",
+              "quantity": 4,
+              "region_preference": [
+                "EU"
+              ]
+            }
+          ],
+          "alternatives": [
+            {
+              "base_flavor": "Black Menthol",
+              "quantity": 4
+            },
+            {
+              "base_flavor": "Bronze",
+              "quantity": 4
+            }
+          ]
         }
       },
-      "open_questions": ["Customer to choose alternative"],
+      "open_questions": [
+        "Customer to choose alternative"
+      ],
       "summary": "Amber EU out of stock, offered Black Menthol EU or Bronze EU."
     },
     "thread_history": [
-      {"direction": "inbound", "body": "4 Amber EU please", "subject": "Order", "created_at": "2026-03-08"},
-      {"direction": "outbound", "body": "George, Amber EU is out of stock right now. I can do 4 Black Menthol EU or 4 Bronze EU instead. Let me know which works.", "subject": "Re: Order", "created_at": "2026-03-09"}
+      {
+        "direction": "inbound",
+        "body": "4 Amber EU please",
+        "subject": "Order",
+        "created_at": "2026-03-08"
+      },
+      {
+        "direction": "outbound",
+        "body": "George, Amber EU is out of stock right now. I can do 4 Black Menthol EU or 4 Bronze EU instead. Let me know which works.",
+        "subject": "Re: Order",
+        "created_at": "2026-03-09"
+      }
     ],
     "other_threads": null,
     "combined_messages": null,
@@ -154,62 +302,141 @@
       "dialog_intent": "agrees_to_alternative",
       "needs_reply": true,
       "client_email": "george.miller@example.com",
-      "order_items": [{"base_flavor": "Black Menthol", "quantity": 4, "region_preference": null, "strict_region": false}]
+      "order_items": [
+        {
+          "base_flavor": "Black Menthol",
+          "quantity": 4,
+          "region_preference": [
+            "EU"
+          ],
+          "strict_region": false
+        }
+      ]
     }
   },
   {
     "id": "oos_followup_declines",
-    "tags": ["oos_followup", "declines_alternative"],
+    "tags": [
+      "oos_followup",
+      "declines_alternative"
+    ],
     "email_text": "From: hannah.lee@example.com\nSubject: Re: Availability update\nBody: no thanks, I'll pass. Maybe next time.",
     "conversation_state": {
       "status": "awaiting_response",
       "topic": "out_of_stock",
       "facts": {
-        "oos_items": ["Terea Green EU x2"],
-        "offered_alternatives": ["Terea Green ME x2"],
+        "oos_items": [
+          "Terea Green EU x2"
+        ],
+        "offered_alternatives": [
+          "Terea Green ME x2"
+        ],
         "pending_oos_resolution": {
-          "original": [{"base_flavor": "Green", "quantity": 2, "region_preference": ["EU"]}],
-          "alternatives": [{"base_flavor": "Green", "quantity": 2, "region_preference": ["ME"]}]
+          "original": [
+            {
+              "base_flavor": "Green",
+              "quantity": 2,
+              "region_preference": [
+                "EU"
+              ]
+            }
+          ],
+          "alternatives": [
+            {
+              "base_flavor": "Green",
+              "quantity": 2,
+              "region_preference": [
+                "ME"
+              ]
+            }
+          ]
         }
       },
-      "open_questions": ["Customer to decide on ME alternative"],
+      "open_questions": [
+        "Customer to decide on ME alternative"
+      ],
       "summary": "Green EU out of stock, offered Green ME."
     },
     "thread_history": [
-      {"direction": "inbound", "body": "2 Green EU please", "subject": "Order request", "created_at": "2026-03-10"},
-      {"direction": "outbound", "body": "Hi Hannah, Green EU is out of stock. I can offer Green ME instead — same flavor, different region. Would you like that?", "subject": "Re: Order request", "created_at": "2026-03-11"}
+      {
+        "direction": "inbound",
+        "body": "2 Green EU please",
+        "subject": "Order request",
+        "created_at": "2026-03-10"
+      },
+      {
+        "direction": "outbound",
+        "body": "Hi Hannah, Green EU is out of stock. I can offer Green ME instead — same flavor, different region. Would you like that?",
+        "subject": "Re: Order request",
+        "created_at": "2026-03-11"
+      }
     ],
     "other_threads": null,
     "combined_messages": null,
     "expected": {
       "situation": "oos_followup",
       "dialog_intent": "declines_alternative",
-      "needs_reply": true,
+      "needs_reply": false,
       "client_email": "hannah.lee@example.com",
       "order_items": null
     }
   },
   {
     "id": "oos_followup_asks_question",
-    "tags": ["oos_followup", "asks_question"],
+    "tags": [
+      "oos_followup",
+      "asks_question"
+    ],
     "email_text": "From: ivan.kowalski@example.com\nSubject: Re: Stock issue\nBody: do you have any silver?",
     "conversation_state": {
       "status": "awaiting_response",
       "topic": "out_of_stock",
       "facts": {
-        "oos_items": ["Terea Turquoise EU x5"],
-        "offered_alternatives": ["Terea Silver EU x5"],
+        "oos_items": [
+          "Terea Turquoise EU x5"
+        ],
+        "offered_alternatives": [
+          "Terea Silver EU x5"
+        ],
         "pending_oos_resolution": {
-          "original": [{"base_flavor": "Turquoise", "quantity": 5, "region_preference": ["EU"]}],
-          "alternatives": [{"base_flavor": "Silver", "quantity": 5, "region_preference": ["EU"]}]
+          "original": [
+            {
+              "base_flavor": "Turquoise",
+              "quantity": 5,
+              "region_preference": [
+                "EU"
+              ]
+            }
+          ],
+          "alternatives": [
+            {
+              "base_flavor": "Silver",
+              "quantity": 5,
+              "region_preference": [
+                "EU"
+              ]
+            }
+          ]
         }
       },
-      "open_questions": ["Customer to confirm Silver EU"],
+      "open_questions": [
+        "Customer to confirm Silver EU"
+      ],
       "summary": "Turquoise EU out of stock, offered Silver EU."
     },
     "thread_history": [
-      {"direction": "inbound", "body": "5 Turquoise EU", "subject": "Order", "created_at": "2026-03-09"},
-      {"direction": "outbound", "body": "Ivan, Turquoise EU isn't available right now. Would you like 5 Silver EU instead?", "subject": "Re: Order", "created_at": "2026-03-10"}
+      {
+        "direction": "inbound",
+        "body": "5 Turquoise EU",
+        "subject": "Order",
+        "created_at": "2026-03-09"
+      },
+      {
+        "direction": "outbound",
+        "body": "Ivan, Turquoise EU isn't available right now. Would you like 5 Silver EU instead?",
+        "subject": "Re: Order",
+        "created_at": "2026-03-10"
+      }
     ],
     "other_threads": null,
     "combined_messages": null,
@@ -218,32 +445,84 @@
       "dialog_intent": "asks_question",
       "needs_reply": true,
       "client_email": "ivan.kowalski@example.com",
-      "order_items": [{"base_flavor": "Silver", "quantity": 1, "region_preference": null, "strict_region": false}]
+      "order_items": [
+        {
+          "base_flavor": "Silver",
+          "quantity": 1,
+          "region_preference": null,
+          "strict_region": false
+        }
+      ]
     }
   },
   {
     "id": "oos_followup_provides_address",
-    "tags": ["oos_followup", "provides_info"],
+    "tags": [
+      "oos_followup",
+      "provides_info"
+    ],
     "email_text": "From: julia.nguyen@example.com\nSubject: Re: Your order alternatives\nBody: my address is 123 Oak St, Apt 4B, Portland OR 97201",
     "conversation_state": {
       "status": "awaiting_response",
       "topic": "out_of_stock",
       "facts": {
-        "oos_items": ["Terea Yellow ME x3"],
-        "offered_alternatives": ["Terea Yellow EU x3"],
+        "oos_items": [
+          "Terea Yellow ME x3"
+        ],
+        "offered_alternatives": [
+          "Terea Yellow EU x3"
+        ],
         "pending_oos_resolution": {
-          "original": [{"base_flavor": "Yellow", "quantity": 3, "region_preference": ["ME"]}],
-          "alternatives": [{"base_flavor": "Yellow", "quantity": 3, "region_preference": ["EU"]}]
+          "original": [
+            {
+              "base_flavor": "Yellow",
+              "quantity": 3,
+              "region_preference": [
+                "ME"
+              ]
+            }
+          ],
+          "alternatives": [
+            {
+              "base_flavor": "Yellow",
+              "quantity": 3,
+              "region_preference": [
+                "EU"
+              ]
+            }
+          ]
         }
       },
-      "open_questions": ["Customer address needed"],
+      "open_questions": [
+        "Customer address needed"
+      ],
       "summary": "Yellow ME out of stock, customer agreed to Yellow EU, need shipping address."
     },
     "thread_history": [
-      {"direction": "inbound", "body": "3 Yellow ME", "subject": "New order", "created_at": "2026-03-07"},
-      {"direction": "outbound", "body": "Yellow ME is out of stock. I can send Yellow EU. What's your shipping address?", "subject": "Re: New order", "created_at": "2026-03-08"},
-      {"direction": "inbound", "body": "ok that works", "subject": "Re: New order", "created_at": "2026-03-09"},
-      {"direction": "outbound", "body": "Great! Please send your shipping address and I'll get this out.", "subject": "Re: New order", "created_at": "2026-03-10"}
+      {
+        "direction": "inbound",
+        "body": "3 Yellow ME",
+        "subject": "New order",
+        "created_at": "2026-03-07"
+      },
+      {
+        "direction": "outbound",
+        "body": "Yellow ME is out of stock. I can send Yellow EU. What's your shipping address?",
+        "subject": "Re: New order",
+        "created_at": "2026-03-08"
+      },
+      {
+        "direction": "inbound",
+        "body": "ok that works",
+        "subject": "Re: New order",
+        "created_at": "2026-03-09"
+      },
+      {
+        "direction": "outbound",
+        "body": "Great! Please send your shipping address and I'll get this out.",
+        "subject": "Re: New order",
+        "created_at": "2026-03-10"
+      }
     ],
     "other_threads": null,
     "combined_messages": null,
@@ -257,22 +536,37 @@
   },
   {
     "id": "new_order_not_oos_shipped_state",
-    "tags": ["new_order", "shipped_state", "not_oos_followup"],
+    "tags": [
+      "new_order",
+      "shipped_state",
+      "not_oos_followup"
+    ],
     "email_text": "From: kevin.martinez@example.com\nSubject: Re: Tracking info\nBody: Hey James, I want 3 green please. New order.",
     "conversation_state": {
       "status": "shipped",
       "topic": "order_shipped",
       "facts": {
         "tracking": "9400111899223100012345",
-        "ordered_items": ["Terea Silver EU x2"],
-        "oos_items": ["Terea Amber EU"],
-        "offered_alternatives": ["Terea Green EU"]
+        "ordered_items": [
+          "Terea Silver EU x2"
+        ],
+        "oos_items": [
+          "Terea Amber EU"
+        ],
+        "offered_alternatives": [
+          "Terea Green EU"
+        ]
       },
       "open_questions": [],
       "summary": "Previous order shipped. Silver EU delivered. Amber was OOS, Green was offered but never confirmed."
     },
     "thread_history": [
-      {"direction": "outbound", "body": "Kevin, your order has shipped! Tracking: 9400111899223100012345", "subject": "Re: Tracking info", "created_at": "2026-03-12"}
+      {
+        "direction": "outbound",
+        "body": "Kevin, your order has shipped! Tracking: 9400111899223100012345",
+        "subject": "Re: Tracking info",
+        "created_at": "2026-03-12"
+      }
     ],
     "other_threads": null,
     "combined_messages": null,
@@ -281,30 +575,75 @@
       "dialog_intent": null,
       "needs_reply": true,
       "client_email": "kevin.martinez@example.com",
-      "order_items": [{"base_flavor": "Green", "quantity": 3, "region_preference": null, "strict_region": false}]
+      "order_items": [
+        {
+          "base_flavor": "Green",
+          "quantity": 3,
+          "region_preference": [
+            "EU"
+          ],
+          "strict_region": false
+        }
+      ]
     }
   },
   {
     "id": "oos_followup_that_works",
-    "tags": ["oos_followup", "agrees_to_alternative", "informal_agreement"],
+    "tags": [
+      "oos_followup",
+      "agrees_to_alternative",
+      "informal_agreement"
+    ],
     "email_text": "From: lena.petrov@example.com\nSubject: Re: Product availability\nBody: that works for me",
     "conversation_state": {
       "status": "awaiting_response",
       "topic": "out_of_stock",
       "facts": {
-        "oos_items": ["Terea Fusion Menthol EU x2"],
-        "offered_alternatives": ["Terea Fusion Menthol JAPAN x2"],
+        "oos_items": [
+          "Terea Fusion Menthol EU x2"
+        ],
+        "offered_alternatives": [
+          "Terea Fusion Menthol JAPAN x2"
+        ],
         "pending_oos_resolution": {
-          "original": [{"base_flavor": "Fusion Menthol", "quantity": 2, "region_preference": ["EU"]}],
-          "alternatives": [{"base_flavor": "Fusion Menthol", "quantity": 2, "region_preference": ["JAPAN"]}]
+          "original": [
+            {
+              "base_flavor": "Fusion Menthol",
+              "quantity": 2,
+              "region_preference": [
+                "EU"
+              ]
+            }
+          ],
+          "alternatives": [
+            {
+              "base_flavor": "Fusion Menthol",
+              "quantity": 2,
+              "region_preference": [
+                "JAPAN"
+              ]
+            }
+          ]
         }
       },
-      "open_questions": ["Customer to confirm JAPAN alternative"],
+      "open_questions": [
+        "Customer to confirm JAPAN alternative"
+      ],
       "summary": "Fusion Menthol EU OOS, offered JAPAN variant."
     },
     "thread_history": [
-      {"direction": "inbound", "body": "2 Fusion Menthol EU", "subject": "Order", "created_at": "2026-03-11"},
-      {"direction": "outbound", "body": "Hi Lena, Fusion Menthol EU is currently out of stock. Would 2 Fusion Menthol JAPAN work for you? Same great flavor.", "subject": "Re: Order", "created_at": "2026-03-12"}
+      {
+        "direction": "inbound",
+        "body": "2 Fusion Menthol EU",
+        "subject": "Order",
+        "created_at": "2026-03-11"
+      },
+      {
+        "direction": "outbound",
+        "body": "Hi Lena, Fusion Menthol EU is currently out of stock. Would 2 Fusion Menthol JAPAN work for you? Same great flavor.",
+        "subject": "Re: Order",
+        "created_at": "2026-03-12"
+      }
     ],
     "other_threads": null,
     "combined_messages": null,
@@ -313,26 +652,55 @@
       "dialog_intent": "agrees_to_alternative",
       "needs_reply": true,
       "client_email": "lena.petrov@example.com",
-      "order_items": [{"base_flavor": "Fusion Menthol", "quantity": 2, "region_preference": ["JAPAN"], "strict_region": false}]
+      "order_items": [
+        {
+          "base_flavor": "Fusion Menthol",
+          "quantity": 2,
+          "region_preference": [
+            "JAPAN"
+          ],
+          "strict_region": false
+        }
+      ]
     }
   },
   {
     "id": "oos_followup_sounds_good_no_pending",
-    "tags": ["oos_followup", "agrees_to_alternative", "no_pending_oos"],
+    "tags": [
+      "oos_followup",
+      "agrees_to_alternative",
+      "no_pending_oos"
+    ],
     "email_text": "From: marco.silva@example.com\nSubject: Re: Alternatives\nBody: sounds good",
     "conversation_state": {
       "status": "awaiting_response",
       "topic": "out_of_stock",
       "facts": {
-        "oos_items": ["Terea Bronze EU x1"],
-        "offered_alternatives": ["Terea Amber EU x1"]
+        "oos_items": [
+          "Terea Bronze EU x1"
+        ],
+        "offered_alternatives": [
+          "Terea Amber EU x1"
+        ]
       },
-      "open_questions": ["Awaiting customer response on alternative"],
+      "open_questions": [
+        "Awaiting customer response on alternative"
+      ],
       "summary": "Bronze EU out of stock, offered Amber EU instead."
     },
     "thread_history": [
-      {"direction": "inbound", "body": "1 Bronze EU", "subject": "Order", "created_at": "2026-03-10"},
-      {"direction": "outbound", "body": "Marco, Bronze EU is out of stock. I have Amber EU available — similar warm notes. Sound good?", "subject": "Re: Order", "created_at": "2026-03-11"}
+      {
+        "direction": "inbound",
+        "body": "1 Bronze EU",
+        "subject": "Order",
+        "created_at": "2026-03-10"
+      },
+      {
+        "direction": "outbound",
+        "body": "Marco, Bronze EU is out of stock. I have Amber EU available — similar warm notes. Sound good?",
+        "subject": "Re: Order",
+        "created_at": "2026-03-11"
+      }
     ],
     "other_threads": null,
     "combined_messages": null,
@@ -341,26 +709,52 @@
       "dialog_intent": "agrees_to_alternative",
       "needs_reply": true,
       "client_email": "marco.silva@example.com",
-      "order_items": [{"base_flavor": "Amber", "quantity": 1, "region_preference": ["EU"], "strict_region": false}]
+      "order_items": [
+        {
+          "base_flavor": "Amber",
+          "quantity": 1,
+          "region_preference": [
+            "EU"
+          ],
+          "strict_region": false
+        }
+      ]
     }
   },
   {
     "id": "payment_received_zelle",
-    "tags": ["payment_received", "zelle"],
+    "tags": [
+      "payment_received",
+      "zelle"
+    ],
     "email_text": "From: natalie.chen@example.com\nSubject: Payment sent\nBody: Hi James, I just sent $220 via Zelle. Let me know when you get it. Natalie",
     "conversation_state": {
       "status": "awaiting_payment",
       "topic": "new_order",
       "facts": {
-        "ordered_items": ["Terea Green EU x5"],
+        "ordered_items": [
+          "Terea Green EU x5"
+        ],
         "total": "$220.00"
       },
-      "open_questions": ["Awaiting payment"],
+      "open_questions": [
+        "Awaiting payment"
+      ],
       "summary": "Order for 5 Green EU confirmed at $220. Payment pending."
     },
     "thread_history": [
-      {"direction": "inbound", "body": "I want 5 Green EU", "subject": "Order", "created_at": "2026-03-08"},
-      {"direction": "outbound", "body": "Total is $220 for 5 Terea Green EU. Please send via Zelle to payment@example.com.", "subject": "Re: Order", "created_at": "2026-03-09"}
+      {
+        "direction": "inbound",
+        "body": "I want 5 Green EU",
+        "subject": "Order",
+        "created_at": "2026-03-08"
+      },
+      {
+        "direction": "outbound",
+        "body": "Total is $220 for 5 Terea Green EU. Please send via Zelle to payment@example.com.",
+        "subject": "Re: Order",
+        "created_at": "2026-03-09"
+      }
     ],
     "other_threads": null,
     "combined_messages": null,
@@ -369,26 +763,53 @@
       "dialog_intent": "confirms_payment",
       "needs_reply": true,
       "client_email": "natalie.chen@example.com",
-      "order_items": [{"base_flavor": "Green", "quantity": 5, "region_preference": ["EU"], "strict_region": false}]
+      "order_items": [
+        {
+          "base_flavor": "Green",
+          "quantity": 5,
+          "region_preference": [
+            "EU"
+          ],
+          "strict_region": false
+        }
+      ]
     }
   },
   {
     "id": "payment_received_plus_tracking_multi_intent",
-    "tags": ["payment_received", "multi_intent", "tracking_secondary"],
+    "tags": [
+      "payment_received",
+      "multi_intent",
+      "tracking_secondary"
+    ],
     "email_text": "From: oliver.brown@example.com\nSubject: Re: Payment instructions\nBody: Money sent. Where is my tracking?",
     "conversation_state": {
       "status": "awaiting_payment",
       "topic": "new_order",
       "facts": {
-        "ordered_items": ["Terea Silver EU x3"],
+        "ordered_items": [
+          "Terea Silver EU x3"
+        ],
         "total": "$132.00"
       },
-      "open_questions": ["Awaiting payment"],
+      "open_questions": [
+        "Awaiting payment"
+      ],
       "summary": "Order for 3 Silver EU at $132. Awaiting payment."
     },
     "thread_history": [
-      {"direction": "inbound", "body": "3 Silver EU please", "subject": "Order", "created_at": "2026-03-09"},
-      {"direction": "outbound", "body": "That's $132 for 3 Silver EU. Zelle to payment@example.com.", "subject": "Re: Order", "created_at": "2026-03-10"}
+      {
+        "direction": "inbound",
+        "body": "3 Silver EU please",
+        "subject": "Order",
+        "created_at": "2026-03-09"
+      },
+      {
+        "direction": "outbound",
+        "body": "That's $132 for 3 Silver EU. Zelle to payment@example.com.",
+        "subject": "Re: Order",
+        "created_at": "2026-03-10"
+      }
     ],
     "other_threads": null,
     "combined_messages": null,
@@ -397,12 +818,24 @@
       "dialog_intent": "confirms_payment",
       "needs_reply": true,
       "client_email": "oliver.brown@example.com",
-      "order_items": [{"base_flavor": "Silver", "quantity": 3, "region_preference": ["EU"], "strict_region": false}]
+      "order_items": [
+        {
+          "base_flavor": "Silver",
+          "quantity": 3,
+          "region_preference": [
+            "EU"
+          ],
+          "strict_region": false
+        }
+      ]
     }
   },
   {
     "id": "payment_received_with_items_in_message",
-    "tags": ["payment_received", "items_in_message"],
+    "tags": [
+      "payment_received",
+      "items_in_message"
+    ],
     "email_text": "From: patricia.jones@example.com\nSubject: Paid\nBody: Paid for 3 Green and 2 Silver via CashApp just now.",
     "conversation_state": null,
     "thread_history": null,
@@ -414,28 +847,56 @@
       "needs_reply": true,
       "client_email": "patricia.jones@example.com",
       "order_items": [
-        {"base_flavor": "Green", "quantity": 3, "region_preference": null, "strict_region": false},
-        {"base_flavor": "Silver", "quantity": 2, "region_preference": null, "strict_region": false}
+        {
+          "base_flavor": "Green",
+          "quantity": 3,
+          "region_preference": null,
+          "strict_region": false
+        },
+        {
+          "base_flavor": "Silver",
+          "quantity": 2,
+          "region_preference": null,
+          "strict_region": false
+        }
       ]
     }
   },
   {
     "id": "payment_received_sent_it_items_in_state",
-    "tags": ["payment_received", "items_from_state", "short_message"],
+    "tags": [
+      "payment_received",
+      "items_from_state",
+      "short_message"
+    ],
     "email_text": "From: quentin.adams@example.com\nSubject: Re: Payment info\nBody: Sent it",
     "conversation_state": {
       "status": "awaiting_payment",
       "topic": "new_order",
       "facts": {
-        "ordered_items": ["Terea Yellow x2"],
+        "ordered_items": [
+          "Terea Yellow x2"
+        ],
         "total": "$88.00"
       },
-      "open_questions": ["Awaiting payment"],
+      "open_questions": [
+        "Awaiting payment"
+      ],
       "summary": "Order for 2 Yellow at $88. Awaiting Zelle payment."
     },
     "thread_history": [
-      {"direction": "inbound", "body": "2 Yellow please", "subject": "Order", "created_at": "2026-03-11"},
-      {"direction": "outbound", "body": "2 Terea Yellow — $88 total. Zelle to payment@example.com.", "subject": "Re: Order", "created_at": "2026-03-12"}
+      {
+        "direction": "inbound",
+        "body": "2 Yellow please",
+        "subject": "Order",
+        "created_at": "2026-03-11"
+      },
+      {
+        "direction": "outbound",
+        "body": "2 Terea Yellow — $88 total. Zelle to payment@example.com.",
+        "subject": "Re: Order",
+        "created_at": "2026-03-12"
+      }
     ],
     "other_threads": null,
     "combined_messages": null,
@@ -444,22 +905,36 @@
       "dialog_intent": "confirms_payment",
       "needs_reply": true,
       "client_email": "quentin.adams@example.com",
-      "order_items": [{"base_flavor": "Yellow", "quantity": 2, "region_preference": null, "strict_region": false}]
+      "order_items": [
+        {
+          "base_flavor": "Yellow",
+          "quantity": 2,
+          "region_preference": null,
+          "strict_region": false
+        }
+      ]
     }
   },
   {
     "id": "payment_received_with_order_id",
-    "tags": ["payment_received", "order_id"],
+    "tags": [
+      "payment_received",
+      "order_id"
+    ],
     "email_text": "From: rachel.kim@example.com\nSubject: Payment confirmation\nBody: Payment sent for order #12345. Paid $176 via Zelle.",
     "conversation_state": {
       "status": "awaiting_payment",
       "topic": "new_order",
       "facts": {
-        "ordered_items": ["Terea Turquoise EU x4"],
+        "ordered_items": [
+          "Terea Turquoise EU x4"
+        ],
         "order_id": "12345",
         "total": "$176.00"
       },
-      "open_questions": ["Awaiting payment"],
+      "open_questions": [
+        "Awaiting payment"
+      ],
       "summary": "Order #12345 for 4 Turquoise EU at $176. Awaiting payment."
     },
     "thread_history": null,
@@ -470,12 +945,24 @@
       "dialog_intent": "confirms_payment",
       "needs_reply": true,
       "client_email": "rachel.kim@example.com",
-      "order_items": [{"base_flavor": "Turquoise", "quantity": 4, "region_preference": ["EU"], "strict_region": false}]
+      "order_items": [
+        {
+          "base_flavor": "Turquoise",
+          "quantity": 4,
+          "region_preference": [
+            "EU"
+          ],
+          "strict_region": false
+        }
+      ]
     }
   },
   {
     "id": "stock_question_region_japan",
-    "tags": ["stock_question", "region_query"],
+    "tags": [
+      "stock_question",
+      "region_query"
+    ],
     "email_text": "From: sam.tucker@example.com\nSubject: Japan flavors\nBody: Hey, what Japan do you have?",
     "conversation_state": null,
     "thread_history": null,
@@ -486,12 +973,25 @@
       "dialog_intent": null,
       "needs_reply": true,
       "client_email": "sam.tucker@example.com",
-      "order_items": [{"base_flavor": "Japan", "quantity": 1, "region_preference": null, "strict_region": false}]
+      "order_items": [
+        {
+          "base_flavor": "Japan",
+          "quantity": 1,
+          "region_preference": [
+            "JAPAN"
+          ],
+          "strict_region": false
+        }
+      ]
     }
   },
   {
     "id": "stock_question_specific_japan_regular",
-    "tags": ["stock_question", "specific_product", "region_context"],
+    "tags": [
+      "stock_question",
+      "specific_product",
+      "region_context"
+    ],
     "email_text": "From: tina.garcia@example.com\nSubject: Question\nBody: do you have japan regular?",
     "conversation_state": null,
     "thread_history": null,
@@ -502,12 +1002,25 @@
       "dialog_intent": null,
       "needs_reply": true,
       "client_email": "tina.garcia@example.com",
-      "order_items": [{"base_flavor": "Regular", "quantity": 1, "region_preference": null, "strict_region": false}]
+      "order_items": [
+        {
+          "base_flavor": "Regular",
+          "quantity": 1,
+          "region_preference": [
+            "JAPAN"
+          ],
+          "strict_region": false
+        }
+      ]
     }
   },
   {
     "id": "stock_question_general_availability",
-    "tags": ["stock_question", "general_query", "null_items"],
+    "tags": [
+      "stock_question",
+      "general_query",
+      "null_items"
+    ],
     "email_text": "From: ursula.white@example.com\nSubject: What's available\nBody: Hi, what do you have? Looking to place a first order.",
     "conversation_state": null,
     "thread_history": null,
@@ -523,7 +1036,10 @@
   },
   {
     "id": "stock_question_multi_product",
-    "tags": ["stock_question", "multi_product"],
+    "tags": [
+      "stock_question",
+      "multi_product"
+    ],
     "email_text": "From: victor.hall@example.com\nSubject: Availability check\nBody: do you have Green and Silver?",
     "conversation_state": null,
     "thread_history": null,
@@ -535,14 +1051,27 @@
       "needs_reply": true,
       "client_email": "victor.hall@example.com",
       "order_items": [
-        {"base_flavor": "Green", "quantity": 1, "region_preference": null, "strict_region": false},
-        {"base_flavor": "Silver", "quantity": 1, "region_preference": null, "strict_region": false}
+        {
+          "base_flavor": "Green",
+          "quantity": 1,
+          "region_preference": null,
+          "strict_region": false
+        },
+        {
+          "base_flavor": "Silver",
+          "quantity": 1,
+          "region_preference": null,
+          "strict_region": false
+        }
       ]
     }
   },
   {
     "id": "price_question_no_qty",
-    "tags": ["price_question", "no_quantity"],
+    "tags": [
+      "price_question",
+      "no_quantity"
+    ],
     "email_text": "From: wendy.park@example.com\nSubject: Price inquiry\nBody: How much is Turquoise?",
     "conversation_state": null,
     "thread_history": null,
@@ -553,12 +1082,22 @@
       "dialog_intent": null,
       "needs_reply": true,
       "client_email": "wendy.park@example.com",
-      "order_items": [{"base_flavor": "Turquoise", "quantity": 1, "region_preference": null, "strict_region": false}]
+      "order_items": [
+        {
+          "base_flavor": "Turquoise",
+          "quantity": 1,
+          "region_preference": null,
+          "strict_region": false
+        }
+      ]
     }
   },
   {
     "id": "price_question_compound_flavor",
-    "tags": ["price_question", "compound_flavor"],
+    "tags": [
+      "price_question",
+      "compound_flavor"
+    ],
     "email_text": "From: xavier.reed@example.com\nSubject: Pricing\nBody: what's the price for Yellow Menthol?",
     "conversation_state": null,
     "thread_history": null,
@@ -569,28 +1108,50 @@
       "dialog_intent": null,
       "needs_reply": true,
       "client_email": "xavier.reed@example.com",
-      "order_items": [{"base_flavor": "Yellow Menthol", "quantity": 1, "region_preference": null, "strict_region": false}]
+      "order_items": [
+        {
+          "base_flavor": "Yellow Menthol",
+          "quantity": 1,
+          "region_preference": null,
+          "strict_region": false
+        }
+      ]
     }
   },
   {
     "id": "price_with_qty_becomes_new_order",
-    "tags": ["new_order", "price_question_with_qty", "edge_case"],
+    "tags": [
+      "new_order",
+      "price_question_with_qty",
+      "edge_case"
+    ],
     "email_text": "From: yvonne.fisher@example.com\nSubject: Price check\nBody: how much for 5 boxes of Green?",
     "conversation_state": null,
     "thread_history": null,
     "other_threads": null,
     "combined_messages": null,
     "expected": {
-      "situation": "new_order",
+      "situation": "price_question",
       "dialog_intent": null,
       "needs_reply": true,
       "client_email": "yvonne.fisher@example.com",
-      "order_items": [{"base_flavor": "Green", "quantity": 5, "region_preference": null, "strict_region": false}]
+      "order_items": [
+        {
+          "base_flavor": "Green",
+          "quantity": 5,
+          "region_preference": null,
+          "strict_region": false
+        }
+      ]
     }
   },
   {
     "id": "needs_reply_false_simple_thanks",
-    "tags": ["other", "needs_reply_false", "simple_ack"],
+    "tags": [
+      "other",
+      "needs_reply_false",
+      "simple_ack"
+    ],
     "email_text": "From: zachary.moore@example.com\nSubject: Re: Your order\nBody: Thanks!",
     "conversation_state": null,
     "thread_history": null,
@@ -606,13 +1167,19 @@
   },
   {
     "id": "needs_reply_true_thanks_with_question",
-    "tags": ["shipping_timeline", "needs_reply_true", "thanks_plus_question"],
+    "tags": [
+      "shipping_timeline",
+      "needs_reply_true",
+      "thanks_plus_question"
+    ],
     "email_text": "From: anna.baker@example.com\nSubject: Re: Order confirmation\nBody: Thank you! When will it be shipped?",
     "conversation_state": {
       "status": "confirmed",
       "topic": "new_order",
       "facts": {
-        "ordered_items": ["Terea Green EU x3"]
+        "ordered_items": [
+          "Terea Green EU x3"
+        ]
       },
       "open_questions": [],
       "summary": "Order confirmed for 3 Green EU."
@@ -630,25 +1197,61 @@
   },
   {
     "id": "needs_reply_true_oos_sounds_good",
-    "tags": ["oos_followup", "needs_reply_true", "agreement_not_ack"],
+    "tags": [
+      "oos_followup",
+      "needs_reply_true",
+      "agreement_not_ack"
+    ],
     "email_text": "From: brian.davis@example.com\nSubject: Re: Stock alternatives\nBody: sounds good",
     "conversation_state": {
       "status": "awaiting_response",
       "topic": "out_of_stock",
       "facts": {
-        "oos_items": ["Terea Amber ME x2"],
-        "offered_alternatives": ["Terea Bronze EU x2"],
+        "oos_items": [
+          "Terea Amber ME x2"
+        ],
+        "offered_alternatives": [
+          "Terea Bronze EU x2"
+        ],
         "pending_oos_resolution": {
-          "original": [{"base_flavor": "Amber", "quantity": 2, "region_preference": ["ME"]}],
-          "alternatives": [{"base_flavor": "Bronze", "quantity": 2, "region_preference": ["EU"]}]
+          "original": [
+            {
+              "base_flavor": "Amber",
+              "quantity": 2,
+              "region_preference": [
+                "ME"
+              ]
+            }
+          ],
+          "alternatives": [
+            {
+              "base_flavor": "Bronze",
+              "quantity": 2,
+              "region_preference": [
+                "EU"
+              ]
+            }
+          ]
         }
       },
-      "open_questions": ["Customer to confirm Bronze EU alternative"],
+      "open_questions": [
+        "Customer to confirm Bronze EU alternative"
+      ],
       "summary": "Amber ME OOS, offered Bronze EU."
     },
     "thread_history": [
-      {"direction": "inbound", "body": "2 Amber ME", "subject": "Order", "created_at": "2026-03-11"},
-      {"direction": "outbound", "body": "Amber ME is out of stock. I can send 2 Bronze EU. Sound good?", "subject": "Re: Order", "created_at": "2026-03-12"}
+      {
+        "direction": "inbound",
+        "body": "2 Amber ME",
+        "subject": "Order",
+        "created_at": "2026-03-11"
+      },
+      {
+        "direction": "outbound",
+        "body": "Amber ME is out of stock. I can send 2 Bronze EU. Sound good?",
+        "subject": "Re: Order",
+        "created_at": "2026-03-12"
+      }
     ],
     "other_threads": null,
     "combined_messages": null,
@@ -657,12 +1260,25 @@
       "dialog_intent": "agrees_to_alternative",
       "needs_reply": true,
       "client_email": "brian.davis@example.com",
-      "order_items": [{"base_flavor": "Bronze", "quantity": 2, "region_preference": ["EU"], "strict_region": false}]
+      "order_items": [
+        {
+          "base_flavor": "Bronze",
+          "quantity": 2,
+          "region_preference": [
+            "EU"
+          ],
+          "strict_region": false
+        }
+      ]
     }
   },
   {
     "id": "needs_reply_false_got_it_non_oos",
-    "tags": ["other", "needs_reply_false", "simple_ack_non_oos"],
+    "tags": [
+      "other",
+      "needs_reply_false",
+      "simple_ack_non_oos"
+    ],
     "email_text": "From: carla.evans@example.com\nSubject: Re: Tracking number\nBody: Got it",
     "conversation_state": {
       "status": "shipped",
@@ -674,7 +1290,12 @@
       "summary": "Tracking number sent to customer."
     },
     "thread_history": [
-      {"direction": "outbound", "body": "Here's your tracking: 9261290100130435678901", "subject": "Re: Tracking number", "created_at": "2026-03-13"}
+      {
+        "direction": "outbound",
+        "body": "Here's your tracking: 9261290100130435678901",
+        "subject": "Re: Tracking number",
+        "created_at": "2026-03-13"
+      }
     ],
     "other_threads": null,
     "combined_messages": null,
@@ -688,14 +1309,18 @@
   },
   {
     "id": "tracking_where_is_order",
-    "tags": ["tracking"],
+    "tags": [
+      "tracking"
+    ],
     "email_text": "From: derek.hughes@example.com\nSubject: Order status\nBody: Where is my order? I ordered last week and haven't heard anything.",
     "conversation_state": {
       "status": "shipped",
       "topic": "order_shipped",
       "facts": {
         "tracking": "9400111899223100067890",
-        "ordered_items": ["Terea Turquoise EU x2"]
+        "ordered_items": [
+          "Terea Turquoise EU x2"
+        ]
       },
       "open_questions": [],
       "summary": "Order shipped with USPS tracking."
@@ -713,7 +1338,9 @@
   },
   {
     "id": "payment_question_how_to_pay",
-    "tags": ["payment_question"],
+    "tags": [
+      "payment_question"
+    ],
     "email_text": "From: elena.fox@example.com\nSubject: Payment methods\nBody: How do I pay? Do you accept Venmo?",
     "conversation_state": null,
     "thread_history": null,
@@ -729,7 +1356,9 @@
   },
   {
     "id": "shipping_timeline_when_ship",
-    "tags": ["shipping_timeline"],
+    "tags": [
+      "shipping_timeline"
+    ],
     "email_text": "From: frank.graham@example.com\nSubject: Shipping question\nBody: When do you ship? I need it by Friday.",
     "conversation_state": null,
     "thread_history": null,
@@ -745,18 +1374,31 @@
   },
   {
     "id": "combined_messages_two_unread",
-    "tags": ["new_order", "combined_messages"],
+    "tags": [
+      "new_order",
+      "combined_messages"
+    ],
     "email_text": "From: gina.hart@example.com\nSubject: Order\nBody: (see combined_messages)",
     "conversation_state": null,
     "thread_history": null,
     "other_threads": null,
     "combined_messages": [
       {
-        "msg": {"from": "gina.hart@example.com", "from_raw": "Gina Hart <gina.hart@example.com>", "subject": "Order", "body": "Hi James, I'd like to order 3 boxes of Turquoise EU."},
+        "msg": {
+          "from": "gina.hart@example.com",
+          "from_raw": "Gina Hart <gina.hart@example.com>",
+          "subject": "Order",
+          "body": "Hi James, I'd like to order 3 boxes of Turquoise EU."
+        },
         "created_at": "2026-03-13T10:15:00"
       },
       {
-        "msg": {"from": "gina.hart@example.com", "from_raw": "Gina Hart <gina.hart@example.com>", "subject": "Order", "body": "Actually, make that 4 boxes please. And add 1 Silver EU too."},
+        "msg": {
+          "from": "gina.hart@example.com",
+          "from_raw": "Gina Hart <gina.hart@example.com>",
+          "subject": "Order",
+          "body": "Actually, make that 4 boxes please. And add 1 Silver EU too."
+        },
         "created_at": "2026-03-13T10:22:00"
       }
     ],
@@ -766,28 +1408,60 @@
       "needs_reply": true,
       "client_email": "gina.hart@example.com",
       "order_items": [
-        {"base_flavor": "Turquoise", "quantity": 4, "region_preference": ["EU"], "strict_region": false},
-        {"base_flavor": "Silver", "quantity": 1, "region_preference": ["EU"], "strict_region": false}
+        {
+          "base_flavor": "Turquoise",
+          "quantity": 4,
+          "region_preference": [
+            "EU"
+          ],
+          "strict_region": false
+        },
+        {
+          "base_flavor": "Silver",
+          "quantity": 1,
+          "region_preference": [
+            "EU"
+          ],
+          "strict_region": false
+        }
       ]
     }
   },
   {
     "id": "thread_history_previous_exchange",
-    "tags": ["payment_received", "thread_history"],
+    "tags": [
+      "payment_received",
+      "thread_history"
+    ],
     "email_text": "From: henry.irwin@example.com\nSubject: Re: Order and payment\nBody: Just sent the payment via Zelle.",
     "conversation_state": {
       "status": "awaiting_payment",
       "topic": "new_order",
       "facts": {
-        "ordered_items": ["Terea Black Ruby Menthol EU x2", "Terea Green ME x1"],
+        "ordered_items": [
+          "Terea Black Ruby Menthol EU x2",
+          "Terea Green ME x1"
+        ],
         "total": "$132.00"
       },
-      "open_questions": ["Awaiting payment"],
+      "open_questions": [
+        "Awaiting payment"
+      ],
       "summary": "Order for 2 Black Ruby Menthol EU + 1 Green ME at $132."
     },
     "thread_history": [
-      {"direction": "inbound", "body": "I'd like 2 Black Ruby Menthol EU and 1 Green ME", "subject": "Order and payment", "created_at": "2026-03-10"},
-      {"direction": "outbound", "body": "Great choices! That's $132 total. Please Zelle to payment@example.com.", "subject": "Re: Order and payment", "created_at": "2026-03-11"}
+      {
+        "direction": "inbound",
+        "body": "I'd like 2 Black Ruby Menthol EU and 1 Green ME",
+        "subject": "Order and payment",
+        "created_at": "2026-03-10"
+      },
+      {
+        "direction": "outbound",
+        "body": "Great choices! That's $132 total. Please Zelle to payment@example.com.",
+        "subject": "Re: Order and payment",
+        "created_at": "2026-03-11"
+      }
     ],
     "other_threads": null,
     "combined_messages": null,
@@ -797,14 +1471,32 @@
       "needs_reply": true,
       "client_email": "henry.irwin@example.com",
       "order_items": [
-        {"base_flavor": "Black Ruby Menthol", "quantity": 2, "region_preference": ["EU"], "strict_region": false},
-        {"base_flavor": "Green", "quantity": 1, "region_preference": ["ME"], "strict_region": false}
+        {
+          "base_flavor": "Black Ruby Menthol",
+          "quantity": 2,
+          "region_preference": [
+            "EU"
+          ],
+          "strict_region": false
+        },
+        {
+          "base_flavor": "Green",
+          "quantity": 1,
+          "region_preference": [
+            "ME"
+          ],
+          "strict_region": false
+        }
       ]
     }
   },
   {
     "id": "cross_thread_stock_question_not_oos",
-    "tags": ["stock_question", "cross_thread", "not_oos_followup"],
+    "tags": [
+      "stock_question",
+      "cross_thread",
+      "not_oos_followup"
+    ],
     "email_text": "From: ingrid.jacobson@example.com\nSubject: Quick question\nBody: Hey, do you have any Bright Menthol?",
     "conversation_state": null,
     "thread_history": null,
@@ -816,8 +1508,12 @@
           "status": "awaiting_response",
           "topic": "out_of_stock",
           "facts": {
-            "oos_items": ["Terea Silver EU x3"],
-            "offered_alternatives": ["Terea Turquoise EU x3"]
+            "oos_items": [
+              "Terea Silver EU x3"
+            ],
+            "offered_alternatives": [
+              "Terea Turquoise EU x3"
+            ]
           },
           "summary": "Silver EU OOS in other thread, offered Turquoise."
         }
@@ -829,12 +1525,22 @@
       "dialog_intent": null,
       "needs_reply": true,
       "client_email": "ingrid.jacobson@example.com",
-      "order_items": [{"base_flavor": "Bright Menthol", "quantity": 1, "region_preference": null, "strict_region": false}]
+      "order_items": [
+        {
+          "base_flavor": "Bright Menthol",
+          "quantity": 1,
+          "region_preference": null,
+          "strict_region": false
+        }
+      ]
     }
   },
   {
     "id": "cross_thread_new_order_different_product",
-    "tags": ["new_order", "cross_thread"],
+    "tags": [
+      "new_order",
+      "cross_thread"
+    ],
     "email_text": "From: jack.kelly@example.com\nSubject: New order\nBody: James, please send me 6 boxes of Black Tropical Menthol JAPAN.",
     "conversation_state": null,
     "thread_history": null,
@@ -846,8 +1552,12 @@
           "status": "awaiting_response",
           "topic": "out_of_stock",
           "facts": {
-            "oos_items": ["Terea Green ME x2"],
-            "offered_alternatives": ["Terea Green EU x2"]
+            "oos_items": [
+              "Terea Green ME x2"
+            ],
+            "offered_alternatives": [
+              "Terea Green EU x2"
+            ]
           },
           "summary": "Green ME OOS in other thread."
         }
@@ -859,12 +1569,25 @@
       "dialog_intent": null,
       "needs_reply": true,
       "client_email": "jack.kelly@example.com",
-      "order_items": [{"base_flavor": "Black Tropical Menthol", "quantity": 6, "region_preference": null, "strict_region": false}]
+      "order_items": [
+        {
+          "base_flavor": "Black Tropical Menthol",
+          "quantity": 6,
+          "region_preference": [
+            "JAPAN"
+          ],
+          "strict_region": false
+        }
+      ]
     }
   },
   {
     "id": "new_order_region_preference_soft",
-    "tags": ["new_order", "region_preference", "soft_preference"],
+    "tags": [
+      "new_order",
+      "region_preference",
+      "soft_preference"
+    ],
     "email_text": "From: karen.lowe@example.com\nSubject: Order\nBody: I'd like 3 Turquoise. ME is ok if no EU.",
     "conversation_state": null,
     "thread_history": null,
@@ -875,12 +1598,25 @@
       "dialog_intent": null,
       "needs_reply": true,
       "client_email": "karen.lowe@example.com",
-      "order_items": [{"base_flavor": "Turquoise", "quantity": 3, "region_preference": ["EU", "ME"], "strict_region": false}]
+      "order_items": [
+        {
+          "base_flavor": "Turquoise",
+          "quantity": 3,
+          "region_preference": [
+            "EU",
+            "ME"
+          ],
+          "strict_region": false
+        }
+      ]
     }
   },
   {
     "id": "new_order_strict_region_eu_only",
-    "tags": ["new_order", "strict_region"],
+    "tags": [
+      "new_order",
+      "strict_region"
+    ],
     "email_text": "From: louis.mann@example.com\nSubject: Order EU only\nBody: 2 boxes of Silver EU only please. No other region.",
     "conversation_state": null,
     "thread_history": null,
@@ -891,12 +1627,23 @@
       "dialog_intent": null,
       "needs_reply": true,
       "client_email": "louis.mann@example.com",
-      "order_items": [{"base_flavor": "Silver", "quantity": 2, "region_preference": ["EU"], "strict_region": true}]
+      "order_items": [
+        {
+          "base_flavor": "Silver",
+          "quantity": 2,
+          "region_preference": [
+            "EU"
+          ],
+          "strict_region": true
+        }
+      ]
     }
   },
   {
     "id": "discount_request",
-    "tags": ["discount_request"],
+    "tags": [
+      "discount_request"
+    ],
     "email_text": "From: maria.nelson@example.com\nSubject: Bulk discount?\nBody: Hi, I'm looking to buy 20 boxes. Do you offer any volume discounts?",
     "conversation_state": null,
     "thread_history": null,
@@ -912,7 +1659,11 @@
   },
   {
     "id": "system_email_noreply_with_real_customer",
-    "tags": ["new_order", "system_email", "reply_to"],
+    "tags": [
+      "new_order",
+      "system_email",
+      "reply_to"
+    ],
     "email_text": "From: noreply@shipmecarton.com\nReply-To: nancy.olsen@example.com\nSubject: New Order #67890\nBody: Firstname: Nancy\nEmail: nancy.olsen@example.com\nOrder: Tera Green made in Middle East x 3\nTotal: $132.00\nAddress: 456 Elm St, Miami FL 33101",
     "conversation_state": null,
     "thread_history": null,
@@ -923,12 +1674,24 @@
       "dialog_intent": null,
       "needs_reply": true,
       "client_email": "nancy.olsen@example.com",
-      "order_items": [{"base_flavor": "Green", "quantity": 3, "region_preference": null, "strict_region": false}]
+      "order_items": [
+        {
+          "base_flavor": "Green",
+          "quantity": 3,
+          "region_preference": [
+            "ME"
+          ],
+          "strict_region": false
+        }
+      ]
     }
   },
   {
     "id": "new_order_multi_item",
-    "tags": ["new_order", "multi_item"],
+    "tags": [
+      "new_order",
+      "multi_item"
+    ],
     "email_text": "From: oscar.powell@example.com\nSubject: Bulk order\nBody: Hi James, I'd like to order:\n- 3 Green EU\n- 2 Silver EU\n- 1 Turquoise ME\nPlease send total. Thanks, Oscar",
     "conversation_state": null,
     "thread_history": null,
@@ -940,9 +1703,30 @@
       "needs_reply": true,
       "client_email": "oscar.powell@example.com",
       "order_items": [
-        {"base_flavor": "Green", "quantity": 3, "region_preference": null, "strict_region": false},
-        {"base_flavor": "Silver", "quantity": 2, "region_preference": null, "strict_region": false},
-        {"base_flavor": "Turquoise", "quantity": 1, "region_preference": null, "strict_region": false}
+        {
+          "base_flavor": "Green",
+          "quantity": 3,
+          "region_preference": [
+            "EU"
+          ],
+          "strict_region": false
+        },
+        {
+          "base_flavor": "Silver",
+          "quantity": 2,
+          "region_preference": [
+            "EU"
+          ],
+          "strict_region": false
+        },
+        {
+          "base_flavor": "Turquoise",
+          "quantity": 1,
+          "region_preference": [
+            "ME"
+          ],
+          "strict_region": false
+        }
       ]
     }
   }
