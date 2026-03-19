@@ -571,11 +571,9 @@ def _build_oos_fallback(client_name, oos_display_names, alt_display_names, price
     loc = f" from our {_WAREHOUSE_DISPLAY.get(warehouse, '')} warehouse" if warehouse else ""
     oos_str = " and ".join(oos_display_names)
     alt_str = ", ".join(alt_display_names[:3])
-    price_parts = [f"${p:.0f}/box for {r}" for r, p in price_by_region.items()]
-    price_str = f" ({', '.join(price_parts)})" if price_parts else ""
     return (
         f"{greeting} {oos_str} {'is' if len(oos_display_names)==1 else 'are'} "
-        f"not available{loc}. We have {alt_str}{price_str} as alternatives. "
+        f"not available{loc}. We have {alt_str} as alternatives. "
         f"Would any of these work for you? Thank you!"
     )
 
