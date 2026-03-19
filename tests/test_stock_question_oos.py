@@ -268,18 +268,23 @@ class TestOosHandlerForbiddenTriggersFallback(unittest.TestCase):
             ]
         }
 
-        with patch("agents.handlers.stock_question.select_best_alternatives", return_value=mock_alts), \
-             patch("db.stock.select_best_alternatives", return_value=mock_alts), \
-             patch("db.alternatives.select_best_alternatives", return_value=mock_alts), \
-             patch.object(_oos_agent, "run") as mock_run:
-            mock_response = MagicMock()
-            mock_response.content = hallucinated_reply
-            mock_run.return_value = mock_response
+        # Monkeypatch at the actual module where _handle_oos_reply lives
+        import agents.handlers.stock_question as sq_mod
+        original_sba = sq_mod.select_best_alternatives
+        sq_mod.select_best_alternatives = lambda **kw: mock_alts
 
-            result = _handle_oos_reply(
-                classification, result, "Body: Do you have Silver?",
-                oos_sections, "John", None,
-            )
+        try:
+            with patch.object(_oos_agent, "run") as mock_run:
+                mock_response = MagicMock()
+                mock_response.content = hallucinated_reply
+                mock_run.return_value = mock_response
+
+                result = _handle_oos_reply(
+                    classification, result, "Body: Do you have Silver?",
+                    oos_sections, "John", None,
+                )
+        finally:
+            sq_mod.select_best_alternatives = original_sba
 
         self.assertTrue(result["fallback_triggered"])
         # Fallback reply should NOT contain "Green EU"
@@ -333,18 +338,22 @@ class TestMixedHandlerForbiddenTriggersMixedFallback(unittest.TestCase):
             "alternatives": [_alt("Amber", "ARMENIA")]
         }
 
-        with patch("agents.handlers.stock_question.select_best_alternatives", return_value=mock_alts), \
-             patch("db.stock.select_best_alternatives", return_value=mock_alts), \
-             patch("db.alternatives.select_best_alternatives", return_value=mock_alts), \
-             patch.object(_oos_agent, "run") as mock_run:
-            mock_response = MagicMock()
-            mock_response.content = hallucinated_reply
-            mock_run.return_value = mock_response
+        import agents.handlers.stock_question as sq_mod
+        original_sba = sq_mod.select_best_alternatives
+        sq_mod.select_best_alternatives = lambda **kw: mock_alts
 
-            result = _handle_mixed_reply(
-                classification, result, "Body: Do you have Tropical and Silver?",
-                in_stock_sections, oos_sections, "John", None,
-            )
+        try:
+            with patch.object(_oos_agent, "run") as mock_run:
+                mock_response = MagicMock()
+                mock_response.content = hallucinated_reply
+                mock_run.return_value = mock_response
+
+                result = _handle_mixed_reply(
+                    classification, result, "Body: Do you have Tropical and Silver?",
+                    in_stock_sections, oos_sections, "John", None,
+                )
+        finally:
+            sq_mod.select_best_alternatives = original_sba
 
         self.assertTrue(result["fallback_triggered"])
         # Fallback should preserve available section
