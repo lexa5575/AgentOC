@@ -491,14 +491,16 @@ def resolve_product_to_catalog(
     if not filtered:
         return ResolveResult(raw_name, raw_name, "low", 0.0, [])
 
-    # Extract unique stock_names (deduplicated by normalized form)
-    seen_norms: set[str] = set()
+    # Extract unique stock_names — keep both raw and T-prefixed variants
+    # so alias lookup can find "T Purple" even when "Purple" exists.
+    seen_exact: set[str] = set()
     known_names: list[str] = []
     for entry in filtered:
-        norm_key = _normalize(entry["stock_name"]).lower()
-        if norm_key not in seen_norms:
-            seen_norms.add(norm_key)
-            known_names.append(entry["stock_name"])
+        sn = entry["stock_name"]
+        sn_lower = sn.lower()
+        if sn_lower not in seen_exact:
+            seen_exact.add(sn_lower)
+            known_names.append(sn)
 
     # Use existing matching logic
     result = resolve_product_name(raw_name, known_names)
