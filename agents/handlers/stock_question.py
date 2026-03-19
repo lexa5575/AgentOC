@@ -60,7 +60,7 @@ RULES:
 _oos_agent = Agent(
     id="stock-question-oos",
     name="Stock Question OOS Handler",
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-4.1"),
     instructions=_oos_instructions,
     markdown=False,
 )
