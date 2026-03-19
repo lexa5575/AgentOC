@@ -259,7 +259,18 @@ def select_best_alternatives(
             seen_names.add(item["product_name"])
 
     # 5. Fallback: fill remaining slots with top items by quantity
+    # Prefer same flavor_family as OOS item to avoid cross-family suggestions
     if len(selected) < max_options:
+        # First pass: same flavor family only
+        for item in available:
+            if item["product_name"] not in (_excluded | seen_names):
+                if oos_flavor_family and item.get("flavor_family") == oos_flavor_family:
+                    selected.append({"alternative": item, "reason": "fallback", "order_count": None})
+                    seen_names.add(item["product_name"])
+            if len(selected) >= max_options:
+                break
+    if len(selected) < max_options:
+        # Second pass: any family (if same-family not enough)
         for item in available:
             if item["product_name"] not in (_excluded | seen_names):
                 selected.append({"alternative": item, "reason": "fallback", "order_count": None})
