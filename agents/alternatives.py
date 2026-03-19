@@ -34,11 +34,12 @@ You are a product recommendation specialist for an IQOS tobacco product store.
 - TEREA_JAPAN, УНИКАЛЬНАЯ_ТЕРЕА → "made in Japan"
 
 ## Available stock format
-Each item in the stock list includes its flavor family in parentheses:
-  CATEGORY|PRODUCT_NAME (flavor_family)  qty: N
+Each line in the stock list:
+  KEY: CATEGORY|PRODUCT_NAME  family: FLAVOR_FAMILY  qty: N
 
-The flavor_family tag tells you the taste profile of each product.
-Use it to match alternatives — suggest products from the SAME flavor family.
+The KEY is CATEGORY|PRODUCT_NAME (e.g. "ARMENIA|Silver").
+The family tag tells you the taste profile — suggest from the SAME family.
+Return ONLY the KEY part (CATEGORY|PRODUCT_NAME), nothing else.
 
 ## Product types
 DEVICES (IQOS hardware): ONE, STND, PRIME — only suggest devices for devices.
@@ -62,7 +63,7 @@ _PROMPT_TEMPLATE = """\
 ## OOS flavor
 {oos_flavor} (flavor family: {oos_family})
 
-## Available stock  (format: "CATEGORY|PRODUCT_NAME (flavor_family)  qty: N")
+## Available stock  (format: "KEY: CATEGORY|PRODUCT_NAME  family: FLAVOR  qty: N")
 {stock_lines}
 
 ## Customer order history  (most ordered first)
@@ -74,7 +75,8 @@ _PROMPT_TEMPLATE = """\
 ## Already suggested for other OOS flavors in this order (exclude these)
 {excluded_text}
 
-Return ONLY a JSON array of keys from the available stock list above.
+Return ONLY a JSON array of KEY values (CATEGORY|PRODUCT_NAME) from the list above.
+Do NOT include family, qty, or any other text in the keys.
 Example: ["TEREA_EUROPE|Green", "ARMENIA|Turquoise"]
 If nothing fits, return an empty array: []
 """
@@ -120,9 +122,9 @@ def get_llm_alternatives(
             for it in available_items
         }
 
-        # Format stock list for prompt (include flavor_family tag)
+        # Format stock list for prompt — KEY separate from metadata
         stock_lines = "\n".join(
-            f"  {key} ({it.get('flavor_family') or 'unknown'})  qty: {it['quantity']}"
+            f"  KEY: {key}  family: {it.get('flavor_family') or 'unknown'}  qty: {it['quantity']}"
             for key, it in key_to_item.items()
         )
 
@@ -156,7 +158,7 @@ def get_llm_alternatives(
         agent = Agent(
             id="alternatives-selector",
             name="Alternatives Selector",
-            model=OpenAIResponses(id="gpt-4.1"),
+            model=OpenAIResponses(id="gpt-5-mini"),
             instructions=instructions,
             markdown=False,
         )
@@ -182,10 +184,14 @@ def get_llm_alternatives(
             if not isinstance(key, str):
                 continue
 
-            item = key_to_item.get(key)
+            # Strip any trailing parenthesized text LLM might add
+            # e.g. "KZ_TEREA|Amber (classic)" → "KZ_TEREA|Amber"
+            clean_key = re.sub(r"\s*\(.*?\)\s*$", "", key).strip()
+
+            item = key_to_item.get(clean_key)
             if item is None:
                 # Case-insensitive fallback
-                item = key_to_item_lower.get(key.lower())
+                item = key_to_item_lower.get(clean_key.lower())
                 if item is None:
                     logger.warning(
                         "LLM alternatives: unknown key '%s' for OOS '%s' — dropped",
