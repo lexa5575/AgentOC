@@ -99,6 +99,11 @@ _ALIASES: dict[str, str] = {
     "summer breeze": "Summer",
     # Catalog name ≠ common name (T Lemon is marketed as Yellow Menthol)
     "yellow menthol": "T Lemon",
+    # Site sends "PURPLE MENTHOL" for Japan Purple (T Purple in catalog)
+    "purple menthol": "T Purple",
+    # Site sends "Rich REGULAR" for Japan RICH (T RICH in catalog)
+    "rich regular": "T RICH",
+    "rich": "T RICH",
 }
 
 # ---------------------------------------------------------------------------
