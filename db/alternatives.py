@@ -278,35 +278,64 @@ def select_best_alternatives(
     if region_preference:
         oos_region_families = set(region_preference)
 
-    if len(selected) < max_options:
-        # First pass: same flavor family + same region family
+    # Closeness map: when no same-family available, these are acceptable
+    _CLOSE_FAMILIES = {
+        "tobacco": {"fruit"},          # both non-menthol
+        "fruit": {"tobacco"},
+        "menthol": {"menthol_fruit"},   # both minty
+        "menthol_fruit": {"menthol"},
+        "capsule": set(),              # no close family
+    }
+
+    def _is_same_family(item: dict) -> bool:
+        return not oos_flavor_family or item.get("flavor_family") == oos_flavor_family
+
+    def _is_close_family(item: dict) -> bool:
+        if not oos_flavor_family:
+            return True
+        close = _CLOSE_FAMILIES.get(oos_flavor_family, set())
+        return item.get("flavor_family") in close
+
+    def _fill_pass(predicate, reason="fallback"):
         for item in available:
-            if item["product_name"] not in (_excluded | seen_names):
-                family_match = not oos_flavor_family or item.get("flavor_family") == oos_flavor_family
+            if len(selected) >= max_options:
+                break
+            if item["product_name"] not in (_excluded | seen_names) and predicate(item):
                 region_fam = _get_family(item.get("category", ""))
                 region_match = not oos_region_families or region_fam in oos_region_families
-                if family_match and region_match:
-                    selected.append({"alternative": item, "reason": "fallback", "order_count": None})
+                if region_match:
+                    selected.append({"alternative": item, "reason": reason, "order_count": None})
                     seen_names.add(item["product_name"])
+
+    # Pass 1: same flavor family + same region family
+    _fill_pass(_is_same_family)
+
+    if len(selected) < max_options:
+        # Pass 2: same flavor family, any region
+        for item in available:
             if len(selected) >= max_options:
                 break
-    if len(selected) < max_options:
-        # Second pass: same flavor family, any region
-        for item in available:
-            if item["product_name"] not in (_excluded | seen_names):
-                if not oos_flavor_family or item.get("flavor_family") == oos_flavor_family:
-                    selected.append({"alternative": item, "reason": "fallback", "order_count": None})
-                    seen_names.add(item["product_name"])
-            if len(selected) >= max_options:
-                break
-    if len(selected) < max_options:
-        # Third pass: any family, any region
-        for item in available:
-            if item["product_name"] not in (_excluded | seen_names):
+            if item["product_name"] not in (_excluded | seen_names) and _is_same_family(item):
                 selected.append({"alternative": item, "reason": "fallback", "order_count": None})
                 seen_names.add(item["product_name"])
+
+    if len(selected) < max_options:
+        # Pass 3: close flavor family, any region
+        for item in available:
             if len(selected) >= max_options:
                 break
+            if item["product_name"] not in (_excluded | seen_names) and _is_close_family(item):
+                selected.append({"alternative": item, "reason": "fallback_close", "order_count": None})
+                seen_names.add(item["product_name"])
+
+    if len(selected) < max_options:
+        # Pass 4 (last resort): any family, any region
+        for item in available:
+            if len(selected) >= max_options:
+                break
+            if item["product_name"] not in (_excluded | seen_names):
+                selected.append({"alternative": item, "reason": "fallback_any", "order_count": None})
+                seen_names.add(item["product_name"])
 
     if not selected:
         return {"alternatives": [], "reason": "none_available", "order_count": None}
