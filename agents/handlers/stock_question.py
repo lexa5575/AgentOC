@@ -630,6 +630,12 @@ def _handle_oos_reply(
         _oi = _oi_by_flavor.get(flavor)
         _region_pref = getattr(_oi, "region_preference", None) if _oi else None
         _strict = getattr(_oi, "strict_region", False) if _oi else False
+        # Default: if no region preference for sticks, prefer EU/ME (same price tier $110)
+        # to avoid suggesting Japan ($115) alternatives for EU/ME customers
+        if not _region_pref:
+            from db.stock import get_product_type as _gpt
+            if _gpt(flavor) == "stick":
+                _region_pref = ["EU", "ME"]
         alts_result = select_best_alternatives(
             client_email=result["client_email"],
             base_flavor=flavor,
@@ -764,6 +770,12 @@ def _handle_mixed_reply(
         _oi = _oi_by_flavor.get(flavor)
         _region_pref = getattr(_oi, "region_preference", None) if _oi else None
         _strict = getattr(_oi, "strict_region", False) if _oi else False
+        # Default: if no region preference for sticks, prefer EU/ME (same price tier $110)
+        # to avoid suggesting Japan ($115) alternatives for EU/ME customers
+        if not _region_pref:
+            from db.stock import get_product_type as _gpt
+            if _gpt(flavor) == "stick":
+                _region_pref = ["EU", "ME"]
         alts_result = select_best_alternatives(
             client_email=result["client_email"],
             base_flavor=flavor,
