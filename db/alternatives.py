@@ -57,6 +57,8 @@ def select_best_alternatives(
     client_summary: str = "",
     excluded_products: set[str] | None = None,
     original_product_name: str | None = None,
+    region_preference: list[str] | None = None,
+    strict_region: bool = False,
 ) -> dict:
     """Select up to N best alternatives for an out-of-stock flavor using LLM.
 
@@ -75,6 +77,10 @@ def select_best_alternatives(
         original_product_name: Full product name from order (e.g. "Tera AMBER made
             in Europe"). Used for region detection in Priority 0. Falls back to
             base_flavor if not provided.
+        region_preference: Ordered list of preferred region families (e.g. ["JAPAN"]).
+            When set, filters available items to preferred region categories first.
+        strict_region: If True and region_preference is set, only return alternatives
+            from preferred region categories. If no items available → return empty.
 
     Returns:
         {"alternatives": [...], "reason": str, "order_count": None}
@@ -100,6 +106,36 @@ def select_best_alternatives(
         allowed_cats, warehouse,
         exclude_product_ids=oos_product_ids,
     )
+
+    # Region preference filtering: narrow available items to preferred categories
+    preferred_categories: set[str] | None = None
+    if region_preference:
+        from db.region_family import REGION_FAMILIES
+        preferred_categories = set()
+        for region in region_preference:
+            cats = REGION_FAMILIES.get(region)
+            if cats:
+                preferred_categories |= cats
+        if preferred_categories:
+            region_filtered = [it for it in available if it["category"] in preferred_categories]
+            if region_filtered:
+                available = region_filtered
+                logger.info(
+                    "Region preference %s: filtered to %d items in categories %s",
+                    region_preference, len(region_filtered), preferred_categories,
+                )
+            elif strict_region:
+                logger.info(
+                    "Region preference %s strict: no items in preferred categories → empty",
+                    region_preference,
+                )
+                return {"alternatives": [], "reason": "region_unavailable", "order_count": None}
+            else:
+                logger.info(
+                    "Region preference %s soft: no items in preferred categories → fallback to all",
+                    region_preference,
+                )
+
     if not available:
         return {"alternatives": [], "reason": "none_available", "order_count": None}
 
@@ -156,6 +192,13 @@ def select_best_alternatives(
                 _best_by_family[family] = item
         same_flavor_items = list(_best_by_family.values())
 
+        # strict_region: drop Priority 0 items outside preferred categories
+        if strict_region and preferred_categories:
+            same_flavor_items = [
+                it for it in same_flavor_items
+                if it["category"] in preferred_categories
+            ]
+
         for item in same_flavor_items:
             same_flavor_names.add(item["product_name"])
         if same_flavor_items:
@@ -193,10 +236,15 @@ def select_best_alternatives(
             max_options=llm_slots,
             excluded_products=llm_excluded,
             oos_flavor_family=oos_flavor_family,
+            region_preference=region_preference,
         )
     except Exception as exc:
         logger.warning("LLM alternatives unavailable for '%s': %s", base_flavor, exc)
         llm_items = []
+
+    # Post-filter: strict_region drops any LLM item outside preferred categories
+    if strict_region and preferred_categories and llm_items:
+        llm_items = [it for it in llm_items if it["category"] in preferred_categories]
 
     # 4. Build result: same_flavor first, then LLM picks
     selected: list[dict] = []

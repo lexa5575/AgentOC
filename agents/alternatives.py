@@ -74,7 +74,7 @@ _PROMPT_TEMPLATE = """\
 
 ## Already suggested for other OOS flavors in this order (exclude these)
 {excluded_text}
-
+{region_constraint}
 Return ONLY a JSON array of KEY values (CATEGORY|PRODUCT_NAME) from the list above.
 Do NOT include family, qty, or any other text in the keys.
 Example: ["TEREA_EUROPE|Green", "ARMENIA|Turquoise"]
@@ -92,6 +92,7 @@ def get_llm_alternatives(
     max_options: int = 3,
     excluded_products: set[str] | None = None,
     oos_flavor_family: str | None = None,
+    region_preference: list[str] | None = None,
 ) -> list[dict]:
     """Return up to max_options stock item dicts chosen by LLM.
 
@@ -142,6 +143,26 @@ def get_llm_alternatives(
         excluded_keys = [k for k, it in key_to_item.items() if it["product_name"] in _excluded]
         excluded_text = ", ".join(sorted(excluded_keys)) if excluded_keys else "None"
 
+        # Build region constraint block for prompt
+        region_constraint = ""
+        if region_preference:
+            from db.region_family import REGION_FAMILIES
+            allowed_cats = set()
+            for region in region_preference:
+                cats = REGION_FAMILIES.get(region)
+                if cats:
+                    allowed_cats |= cats
+            if allowed_cats:
+                region_names = ", ".join(region_preference)
+                cat_names = ", ".join(sorted(allowed_cats))
+                region_constraint = (
+                    f"\n## Region constraint\n"
+                    f"Customer requested: {region_names}\n"
+                    f"Allowed categories: {cat_names}\n"
+                    f"STRICT: only suggest from these categories. "
+                    f"Do NOT suggest products from other regions."
+                )
+
         prompt = _PROMPT_TEMPLATE.format(
             oos_flavor=oos_flavor,
             oos_family=oos_flavor_family or "unknown",
@@ -149,6 +170,7 @@ def get_llm_alternatives(
             history_text=history_text,
             profile_text=profile_text,
             excluded_text=excluded_text,
+            region_constraint=region_constraint,
             max_options=max_options,
         )
 

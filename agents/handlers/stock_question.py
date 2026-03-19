@@ -460,14 +460,28 @@ def _handle_oos_reply(
     """Handle reply when all queried products are OOS."""
     client_summary = (result.get("client_data") or {}).get("llm_summary", "")
 
+    # Build lookup: base_flavor → order_item for region preference extraction
+    order_items = getattr(classification, "order_items", None) or []
+    _oi_by_flavor = {}
+    for oi in order_items:
+        bf = getattr(oi, "base_flavor", None)
+        if bf:
+            _oi_by_flavor[bf] = oi
+
     stock_info_parts = ["STOCK INFO:"]
     for sec in oos_sections:
         flavor = sec["flavor"]
+        # Extract region preference from matching order_item
+        _oi = _oi_by_flavor.get(flavor)
+        _region_pref = getattr(_oi, "region_preference", None) if _oi else None
+        _strict = getattr(_oi, "strict_region", False) if _oi else False
         alts_result = select_best_alternatives(
             client_email=result["client_email"],
             base_flavor=flavor,
             client_summary=client_summary,
             warehouse=warehouse,
+            region_preference=_region_pref,
+            strict_region=_strict,
         )
         alternatives = alts_result.get("alternatives", [])
 
@@ -476,9 +490,10 @@ def _handle_oos_reply(
             alt_lines = []
             for a in alternatives:
                 item = a["alternative"]
+                dn = get_display_name(item["product_name"], item["category"])
                 p = _price_for_items([item])
                 price_str = f" (${p:.0f}/box)" if p is not None else ""
-                alt_lines.append(f"- {item['product_name']}{price_str}")
+                alt_lines.append(f"- {dn}{price_str}")
             stock_info_parts.append("Available alternatives:\n" + "\n".join(alt_lines))
         else:
             stock_info_parts.append("No similar alternatives currently in stock.")
@@ -535,14 +550,28 @@ def _handle_mixed_reply(
         else:
             stock_info_parts.append(f"\n{flavor} — AVAILABLE{price_str}")
 
+    # Build lookup: base_flavor → order_item for region preference extraction
+    order_items = getattr(classification, "order_items", None) or []
+    _oi_by_flavor = {}
+    for oi in order_items:
+        bf = getattr(oi, "base_flavor", None)
+        if bf:
+            _oi_by_flavor[bf] = oi
+
     # OOS sections with alternatives
     for sec in oos_sections:
         flavor = sec["flavor"]
+        # Extract region preference from matching order_item
+        _oi = _oi_by_flavor.get(flavor)
+        _region_pref = getattr(_oi, "region_preference", None) if _oi else None
+        _strict = getattr(_oi, "strict_region", False) if _oi else False
         alts_result = select_best_alternatives(
             client_email=result["client_email"],
             base_flavor=flavor,
             client_summary=client_summary,
             warehouse=warehouse,
+            region_preference=_region_pref,
+            strict_region=_strict,
         )
         alternatives = alts_result.get("alternatives", [])
 
@@ -553,7 +582,8 @@ def _handle_mixed_reply(
                 item = a["alternative"]
                 p = _price_for_items([item])
                 price_str = f" (${p:.0f}/box)" if p is not None else ""
-                alt_lines.append(f"- {item['product_name']}{price_str}")
+                dn = get_display_name(item["product_name"], item["category"])
+                alt_lines.append(f"- {dn}{price_str}")
             stock_info_parts.append("Alternatives:\n" + "\n".join(alt_lines))
 
     stock_info = "\n".join(stock_info_parts)
