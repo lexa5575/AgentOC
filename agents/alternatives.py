@@ -53,18 +53,28 @@ Return ONLY the KEY part (CATEGORY|PRODUCT_NAME), nothing else.
 DEVICES (IQOS hardware): ONE, STND, PRIME — only suggest devices for devices.
 All other items are STICKS (tobacco consumables).
 
+## CRITICAL RULE — flavor family matching
+Look at the OOS item's flavor family. Then look at the "family:" tag on each available item.
+You MUST pick alternatives from the SAME family as the OOS item.
+
+FORBIDDEN cross-family substitutions (examples):
+- tobacco OOS → suggesting menthol, fruit, or capsule = WRONG
+- menthol OOS → suggesting tobacco or fruit = WRONG
+- capsule OOS → suggesting anything except capsule = WRONG
+- menthol_fruit OOS → suggesting fruit or menthol = WRONG (must be menthol_fruit)
+
+If NO items from the same family are available, ONLY THEN you may pick from the closest family.
+Closeness: tobacco↔fruit (both non-menthol), menthol↔menthol_fruit (both minty). capsule has no close family.
+
 ## Selection rules
 - ONLY use keys EXACTLY as listed in AVAILABLE STOCK — never invent new ones
 - Never suggest the out-of-stock flavor itself
 - Never suggest keys listed in EXCLUDED
-- Priority order:
+- Priority order (ALWAYS within the same flavor family first):
   1) SAME FLAVOR from a different region (e.g. Amber EU OOS → Amber ME)
-  2) Items the customer has ordered before (see history)
-  3) Items from the SAME flavor family as the OOS item (use the flavor_family tag)
-  4) Popular available items by quantity
-- For customers with no history: prefer the same flavor family
-- NEVER cross flavor families (e.g. don't suggest menthol for tobacco, don't suggest fruit for menthol)
-- capsule is a separate family — only suggest capsule alternatives if the OOS item is also capsule
+  2) Items the customer has ordered before that match the flavor family
+  3) Other items from the SAME flavor family
+  4) ONLY if no same-family items exist: closest family, then popular by quantity
 - Return up to {max_options} choices
 """
 
