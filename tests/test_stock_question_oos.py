@@ -70,9 +70,15 @@ def _mock_catalog():
 
     @contextmanager
     def _ctx():
+        # Patch in BOTH the handler module and db.catalog to handle
+        # test isolation issues (other test files may re-import modules)
         with _patch("agents.handlers.stock_question.get_catalog_products",
                      return_value=list(_TEST_CATALOG)), \
              _patch("agents.handlers.stock_question.get_display_name",
+                    side_effect=_test_get_display_name), \
+             _patch("db.catalog.get_catalog_products",
+                    return_value=list(_TEST_CATALOG)), \
+             _patch("db.catalog.get_display_name",
                     side_effect=_test_get_display_name):
             yield
 
