@@ -175,6 +175,7 @@ def run_eval(
 
         row_mismatches = []
         alt_details = []
+        selected_families = set()
         for a in alts:
             alt_item = a["alternative"]
             alt_display = get_display_name(alt_item["product_name"], alt_item["category"])
@@ -182,12 +183,11 @@ def run_eval(
             reason = a.get("reason", "?")
             match = _check_flavor_match(oos_family, alt_family)
 
+            if alt_family:
+                selected_families.add(alt_family)
+
             if match == "MISMATCH":
                 row_mismatches.append(alt_display)
-                if has_same_family_in_stock:
-                    stats["mismatch_bug"] += 1
-                else:
-                    stats["mismatch_forced"] += 1
             elif match == "OK":
                 stats["ok"] += 1
             else:
@@ -200,8 +200,20 @@ def run_eval(
                 "match": match,
             })
 
-        is_bug = row_mismatches and has_same_family_in_stock
-        is_forced = row_mismatches and not has_same_family_in_stock
+        # BUG = same-family was available but NONE of the selected alts are same-family
+        # (i.e. LLM/fallback completely ignored same-family options)
+        # If at least one same-family alt was selected, extra cross-family slots = FORCED (stock exhausted)
+        same_family_selected = oos_family in selected_families if oos_family else False
+        if row_mismatches and has_same_family_in_stock and not same_family_selected:
+            is_bug = True
+            is_forced = False
+            for _ in row_mismatches:
+                stats["mismatch_bug"] += 1
+        else:
+            is_bug = False
+            is_forced = bool(row_mismatches)
+            for _ in row_mismatches:
+                stats["mismatch_forced"] += 1
 
         # Print row
         if row_mismatches or show_all:
