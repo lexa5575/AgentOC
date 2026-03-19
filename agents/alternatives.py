@@ -41,6 +41,14 @@ The KEY is CATEGORY|PRODUCT_NAME (e.g. "ARMENIA|Silver").
 The family tag tells you the taste profile — suggest from the SAME family.
 Return ONLY the KEY part (CATEGORY|PRODUCT_NAME), nothing else.
 
+## Flavor families (taste taxonomy)
+- tobacco       — pure tobacco, no menthol, no fruit (e.g. Amber, Bronze, Silver, Teak)
+- menthol       — pure menthol/mint, no significant fruit (e.g. Green, Turquoise, Blue)
+- menthol_fruit — menthol + significant fruit/berry/citrus (e.g. Fusion Menthol, MAUVE, Willow, Black Purple Menthol)
+- fruit         — fruity, no menthol (e.g. Purple, Ruby, Yellow, Summer, Oasis)
+- capsule       — Pearl/click products with a flavor capsule (e.g. Sun Pearl, Abore Pearl, Starling)
+- device        — IQOS hardware, never suggest for sticks
+
 ## Product types
 DEVICES (IQOS hardware): ONE, STND, PRIME — only suggest devices for devices.
 All other items are STICKS (tobacco consumables).
@@ -55,7 +63,8 @@ All other items are STICKS (tobacco consumables).
   3) Items from the SAME flavor family as the OOS item (use the flavor_family tag)
   4) Popular available items by quantity
 - For customers with no history: prefer the same flavor family
-- NEVER cross flavor families (e.g. don't suggest menthol for classic tobacco)
+- NEVER cross flavor families (e.g. don't suggest menthol for tobacco, don't suggest fruit for menthol)
+- capsule is a separate family — only suggest capsule alternatives if the OOS item is also capsule
 - Return up to {max_options} choices
 """
 

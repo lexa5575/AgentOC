@@ -624,6 +624,7 @@ def _handle_oos_reply(
             _oi_by_flavor[bf] = oi
 
     stock_info_parts = ["STOCK INFO:"]
+    _suggested_names: set[str] = set()  # accumulate across OOS items to avoid duplicate alternatives
     for sec in oos_sections:
         flavor = sec["flavor"]
         # Extract region preference from matching order_item
@@ -633,12 +634,17 @@ def _handle_oos_reply(
         alts_result = select_best_alternatives(
             client_email=result["client_email"],
             base_flavor=flavor,
+            original_product_name=sec["display_name"],  # region hint for Priority 0
             client_summary=client_summary,
             warehouse=warehouse,
+            excluded_products=_suggested_names,
             region_preference=_region_pref,
             strict_region=_strict,
         )
         alternatives = alts_result.get("alternatives", [])
+        # Track suggested names so next OOS item doesn't repeat them
+        for a in alternatives:
+            _suggested_names.add(a["alternative"]["product_name"])
 
         # Save structured data for validation
         sec["_alternatives_raw"] = alternatives
@@ -758,6 +764,7 @@ def _handle_mixed_reply(
             _oi_by_flavor[bf] = oi
 
     # OOS sections with alternatives
+    _suggested_names: set[str] = set()  # accumulate across OOS items to avoid duplicate alternatives
     for sec in oos_sections:
         flavor = sec["flavor"]
         # Extract region preference from matching order_item
@@ -767,12 +774,17 @@ def _handle_mixed_reply(
         alts_result = select_best_alternatives(
             client_email=result["client_email"],
             base_flavor=flavor,
+            original_product_name=sec["display_name"],  # region hint for Priority 0
             client_summary=client_summary,
             warehouse=warehouse,
+            excluded_products=_suggested_names,
             region_preference=_region_pref,
             strict_region=_strict,
         )
         alternatives = alts_result.get("alternatives", [])
+        # Track suggested names so next OOS item doesn't repeat them
+        for a in alternatives:
+            _suggested_names.add(a["alternative"]["product_name"])
 
         # Save structured data for validation
         sec["_alternatives_raw"] = alternatives
