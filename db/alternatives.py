@@ -237,6 +237,7 @@ def select_best_alternatives(
             excluded_products=llm_excluded,
             oos_flavor_family=oos_flavor_family,
             region_preference=region_preference,
+            strict_region=strict_region,
         )
     except Exception as exc:
         logger.warning("LLM alternatives unavailable for '%s': %s", base_flavor, exc)

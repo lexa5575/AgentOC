@@ -135,5 +135,42 @@ class TestRegionPreferenceSoft(unittest.TestCase):
                 p.stop()
 
 
+class TestStrictPostFilter(unittest.TestCase):
+    """strict_region=True → post-filter drops cross-region LLM results."""
+
+    def test_strict_post_filter_drops_cross_region(self):
+        """LLM returns ME item for JAPAN strict → post-filter must remove it."""
+        patches = _base_patches()
+        mocks = {k: p.start() for k, p in patches.items()}
+        try:
+            # Mix of Japan and ME items available
+            japan_item = {"category": "TEREA_JAPAN", "product_name": "T Lemon", "quantity": 5, "flavor_family": "citrus"}
+            me_item = {"category": "ARMENIA", "product_name": "Yellow", "quantity": 30, "flavor_family": "citrus"}
+            mocks["avail"].return_value = [japan_item, me_item]
+            mocks["resolve"].return_value = MagicMock(product_ids=[99], display_name="Tropical")
+            # LLM returns both (cross-region mistake)
+            mocks["llm"].return_value = [me_item, japan_item]
+
+            from db.alternatives import select_best_alternatives
+            result = select_best_alternatives(
+                client_email="test@example.com",
+                base_flavor="Tropical",
+                region_preference=["JAPAN"],
+                strict_region=True,
+            )
+
+            alternatives = result["alternatives"]
+            # ME item must be filtered out by post-filter
+            for alt in alternatives:
+                cat = alt["alternative"]["category"]
+                self.assertIn(
+                    cat, {"TEREA_JAPAN", "УНИКАЛЬНАЯ_ТЕРЕА"},
+                    f"strict JAPAN mode returned non-JAPAN category: {cat}",
+                )
+        finally:
+            for p in patches.values():
+                p.stop()
+
+
 if __name__ == "__main__":
     unittest.main()
