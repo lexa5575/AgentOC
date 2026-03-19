@@ -129,6 +129,7 @@ def _install_import_stubs() -> None:
 
     # db.catalog — needed by agents/handlers/stock_question.py
     db_catalog = types.ModuleType("db.catalog")
+    db_catalog.get_catalog_products = lambda: []
     db_catalog.get_display_name = lambda *a, **kw: ""
     db_catalog.get_base_display_name = lambda *a, **kw: ""
     db_catalog._enrich_display_name_with_region = lambda *a, **kw: ""
