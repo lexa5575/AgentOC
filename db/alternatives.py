@@ -259,18 +259,48 @@ def select_best_alternatives(
             seen_names.add(item["product_name"])
 
     # 5. Fallback: fill remaining slots with top items by quantity
-    # Prefer same flavor_family as OOS item to avoid cross-family suggestions
+    # Priority: same flavor_family + same region family as OOS item
+    # This prevents suggesting Japan ($115) alternatives for ME/EU ($110) products
+    from db.region_family import get_family as _get_family
+
+    # Determine the OOS item's region families for fallback filtering
+    oos_region_families: set[str] = set()
+    if oos_product_ids:
+        from db.catalog import get_catalog_products as _get_catalog
+        id_to_cat = {e["id"]: e["category"] for e in _get_catalog()}
+        for pid in oos_product_ids:
+            cat = id_to_cat.get(pid)
+            if cat:
+                fam = _get_family(cat)
+                if fam:
+                    oos_region_families.add(fam)
+    # If region_preference is set, use that instead
+    if region_preference:
+        oos_region_families = set(region_preference)
+
     if len(selected) < max_options:
-        # First pass: same flavor family only
+        # First pass: same flavor family + same region family
         for item in available:
             if item["product_name"] not in (_excluded | seen_names):
-                if oos_flavor_family and item.get("flavor_family") == oos_flavor_family:
+                family_match = not oos_flavor_family or item.get("flavor_family") == oos_flavor_family
+                region_fam = _get_family(item.get("category", ""))
+                region_match = not oos_region_families or region_fam in oos_region_families
+                if family_match and region_match:
                     selected.append({"alternative": item, "reason": "fallback", "order_count": None})
                     seen_names.add(item["product_name"])
             if len(selected) >= max_options:
                 break
     if len(selected) < max_options:
-        # Second pass: any family (if same-family not enough)
+        # Second pass: same flavor family, any region
+        for item in available:
+            if item["product_name"] not in (_excluded | seen_names):
+                if not oos_flavor_family or item.get("flavor_family") == oos_flavor_family:
+                    selected.append({"alternative": item, "reason": "fallback", "order_count": None})
+                    seen_names.add(item["product_name"])
+            if len(selected) >= max_options:
+                break
+    if len(selected) < max_options:
+        # Third pass: any family, any region
         for item in available:
             if item["product_name"] not in (_excluded | seen_names):
                 selected.append({"alternative": item, "reason": "fallback", "order_count": None})
