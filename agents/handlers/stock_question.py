@@ -42,15 +42,19 @@ EMPTY_ALLOWED_SENTINEL = ["__empty_allowed__"]
 # ---------------------------------------------------------------------------
 
 _oos_instructions = """\
-You are James from shipmecarton.com. Write a short reply about product availability.
+You are James from shipmecarton.com.
 
-STRICT RULES — violating ANY is a critical error:
-1. ONLY mention products from the STOCK INFO section. No exceptions.
-2. List up to 3 best alternatives from STOCK INFO (prefer same region).
-3. Price: mention ONCE per region ("$110/box for ME"), NOT per product.
-4. Region suffix always: "Amber ME", "Lemon Japan", "Green EU".
-5. Format: 2-3 sentences. Start "Hi {name}," — end "Thank you!"
-6. If customer mentioned a location/warehouse, reference it briefly.
+Reply using EXACTLY this template. Do NOT deviate:
+
+Hi {name}, {OOS product} is not available right now. We have {alt1}, {alt2}, {alt3} as alternatives. Would any of these work for you? Thank you!
+
+RULES:
+- Fill {OOS product} from the "NOT available" line in STOCK INFO.
+- Fill {alt1}, {alt2}, {alt3} from "alternatives" in STOCK INFO. Use 2-3 items max.
+- Do NOT mention price unless the customer asked about price.
+- Do NOT add extra sentences, explanations, or questions beyond the template.
+- Do NOT mention any product not listed in STOCK INFO.
+- Always include region suffix: "Amber ME", "Lemon Japan", "Green EU".
 """
 
 _oos_agent = Agent(
@@ -635,33 +639,22 @@ def _handle_oos_reply(
         sec["_region_preference"] = _region_pref
         sec["_strict_region"] = _strict
 
-        stock_info_parts.append(f"\n{flavor} is NOT available.")
+        stock_info_parts.append(f"\n{sec['display_name']} is NOT available.")
         if alternatives:
-            alt_lines = []
-            for a in alternatives:
-                item = a["alternative"]
-                dn = get_display_name(item["product_name"], item["category"])
-                p = _price_for_items([item])
-                price_str = f" (${p:.0f}/box)" if p is not None else ""
-                alt_lines.append(f"- {dn}{price_str}")
-            stock_info_parts.append("Available alternatives:\n" + "\n".join(alt_lines))
+            alt_names = [get_display_name(a["alternative"]["product_name"], a["alternative"]["category"]) for a in alternatives[:3]]
+            stock_info_parts.append("Alternatives: " + ", ".join(alt_names))
         else:
-            stock_info_parts.append("No similar alternatives currently in stock.")
+            stock_info_parts.append("No alternatives available.")
 
     stock_info = "\n".join(stock_info_parts)
 
     # Compute allowed products from structured data
     allowed_products = _extract_allowed_products(oos_sections)
 
-    # Minimal context — STOCK INFO first, then customer info
-    location = _WAREHOUSE_DISPLAY.get(warehouse, "") if warehouse else ""
-    loc_line = f"Warehouse: {location}\n" if location else ""
-
     prompt = (
         f"=== {stock_info}\n\n"
-        f"Customer: {client_name or 'Customer'}\n"
-        f"{loc_line}"
-        f"\nWrite the reply. ONLY products from STOCK INFO above."
+        f"Customer name: {client_name or 'Customer'}\n"
+        f"Reply using the template from your instructions."
     )
 
     response = _oos_agent.run(prompt)
@@ -770,33 +763,20 @@ def _handle_mixed_reply(
         sec["_region_preference"] = _region_pref
         sec["_strict_region"] = _strict
 
-        stock_info_parts.append(f"\n{flavor} — NOT available.")
+        stock_info_parts.append(f"\n{sec['display_name']} — NOT available.")
         if alternatives:
-            alt_lines = []
-            for a in alternatives:
-                item = a["alternative"]
-                p = _price_for_items([item])
-                price_str = f" (${p:.0f}/box)" if p is not None else ""
-                dn = get_display_name(item["product_name"], item["category"])
-                alt_lines.append(f"- {dn}{price_str}")
-            stock_info_parts.append("Alternatives:\n" + "\n".join(alt_lines))
+            alt_names = [get_display_name(a["alternative"]["product_name"], a["alternative"]["category"]) for a in alternatives[:3]]
+            stock_info_parts.append("Alternatives: " + ", ".join(alt_names))
 
     stock_info = "\n".join(stock_info_parts)
 
     # Compute allowed products from structured data
     allowed_products = _extract_allowed_products(oos_sections, in_stock_sections)
 
-    # Minimal context — STOCK INFO first, then customer info
-    location = _WAREHOUSE_DISPLAY.get(warehouse, "") if warehouse else ""
-    loc_line = f"Warehouse: {location}\n" if location else ""
-
     prompt = (
         f"=== {stock_info}\n\n"
-        f"Customer: {client_name or 'Customer'}\n"
-        f"{loc_line}"
-        f"\nWrite the reply. Cover ALL products from STOCK INFO: "
-        f"confirm what's AVAILABLE, explain what's NOT, suggest alternatives. "
-        f"ONLY products from STOCK INFO."
+        f"Customer name: {client_name or 'Customer'}\n"
+        f"Reply using the template from your instructions."
     )
 
     response = _oos_agent.run(prompt)
