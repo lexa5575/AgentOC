@@ -303,7 +303,17 @@ def increment_maks_sales(warehouse: str, matched_items: list[dict]) -> dict:
                 })
                 continue
 
-            old_maks = item["maks_sales"]
+            # Read current value from Sheets (source of truth) to avoid
+            # overwriting manual edits or values from previous fulfillments
+            # that weren't synced back to local DB.
+            try:
+                sheet_value = client.get_cell_value(
+                    spreadsheet_id, sheet_name, source_row, maks_col,
+                )
+                old_maks = int(sheet_value) if sheet_value else 0
+            except Exception:
+                # Fallback to local DB value if Sheets read fails
+                old_maks = item["maks_sales"]
             new_maks = old_maks + item["ordered_qty"]
 
             try:

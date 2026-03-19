@@ -196,6 +196,36 @@ class SheetsClient:
         logger.info("Wrote %s = %s in spreadsheet %s", cell_ref, value, spreadsheet_id)
         return result
 
+    def get_cell_value(
+        self,
+        spreadsheet_id: str,
+        sheet_name: str,
+        row: int,
+        col: int,
+    ):
+        """Read a single cell value.
+
+        Args:
+            spreadsheet_id: The spreadsheet to read from.
+            sheet_name: Tab name.
+            row: 0-based row index.
+            col: 0-based column index.
+
+        Returns:
+            Cell value (str/int/float) or None if empty.
+        """
+        cell_ref = f"'{sheet_name}'!{col_to_a1(col)}{row + 1}"
+        service = self._get_service()
+        req = service.spreadsheets().values().get(
+            spreadsheetId=spreadsheet_id,
+            range=cell_ref,
+        )
+        result = _retry(req.execute)
+        values = result.get("values", [])
+        if values and values[0]:
+            return values[0][0]
+        return None
+
 
 def col_to_a1(col: int) -> str:
     """Convert 0-based column index to A1-notation letter(s).
