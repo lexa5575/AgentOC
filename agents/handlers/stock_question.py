@@ -40,30 +40,26 @@ logger = logging.getLogger(__name__)
 _oos_instructions = """\
 You are James, answering a product availability question for shipmecarton.com.
 
-## Style rules (STRICT)
-- Write like a casual text message: short, warm, no formality
-- 2-5 sentences MAX. Never write a long paragraph.
-- Start with "Hi {name}," if name is known, otherwise start directly
-- Always end with exactly "Thank you!" — nothing after it
-- No bullet points, no bold, no lists
+## Style (STRICT)
+- Short, warm, like a text message. 2-4 sentences MAX.
+- Start with "Hi {name}," — end with "Thank you!"
+- No bullet points, no bold, no markdown, no lists.
 
-## Content rules
-- ALWAYS use the STOCK INFO section — never make up availability
-- For products that ARE available: list them clearly with price
-- For products that are NOT available: say so and mention alternatives if provided
-- Ask if any of the available products or alternatives work for the customer
-- Never invent product names or prices not listed in STOCK INFO
-
-## Region in product names — MANDATORY
-- ALWAYS include the region suffix (ME, EU, or Japan) when mentioning a product
-- Say "Terea Silver ME", NOT just "Terea Silver"
-- This is critical — without region, the system can't process the order correctly
+## Content (STRICT)
+- ONLY use products from STOCK INFO — NEVER invent product names.
+- Product unavailable → say so briefly, then list alternatives from STOCK INFO.
+- Mention price ONCE per region (e.g. "$110/box" for ME), NOT per product.
+- Alternatives MUST match customer's flavor profile: don't suggest menthol
+  for a customer who orders classic/tobacco flavors (Amber, Bronze, Sienna, Teak).
+- ALWAYS include region suffix: "Terea Silver ME", not "Terea Silver".
+- If customer mentions a location (Florida, CA), mention the warehouse.
+- Ask which alternative works and how many boxes they want.
 """
 
 _oos_agent = Agent(
     id="stock-question-oos",
     name="Stock Question OOS Handler",
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=_oos_instructions,
     markdown=False,
 )
@@ -85,10 +81,70 @@ def _handle_general_availability(
     client_name: str | None,
     warehouse: str | None,
 ) -> dict:
-    """Deterministic reply listing available products by region (0 LLM tokens)."""
+    """Deterministic reply listing available products by region (0 LLM tokens).
+
+    If client has favorite flavors or order history, personalize the reply
+    by listing their preferred products first.
+    """
     from db.stock import get_available_by_category
 
     greeting = f"Hi {client_name}," if client_name else "Hi,"
+    client_data = result.get("client_data") or {}
+
+    # Try to personalize from client profile
+    favorite_flavors = client_data.get("favorite_flavors") or []
+    if not favorite_flavors:
+        # Extract from llm_summary if available
+        summary = client_data.get("llm_summary", "")
+        if summary:
+            # Simple extraction: look for product names mentioned in summary
+            from db.catalog import get_catalog_products
+            catalog = get_catalog_products()
+            catalog_names = {p["stock_name"].lower() for p in catalog}
+            for word in summary.split():
+                cleaned = word.strip(",.()").lower()
+                if cleaned in catalog_names:
+                    favorite_flavors.append(cleaned.title())
+
+    # If we have favorites, check their availability first
+    if favorite_flavors:
+        from db.stock import search_stock
+        available_favorites = []
+        for fav in favorite_flavors[:5]:  # limit to top 5
+            items = search_stock(fav, warehouse=warehouse)
+            available = [it for it in items if it.get("quantity", 0) > 0]
+            if available:
+                dn = get_display_name(available[0]["product_name"], available[0]["category"])
+                price = _price_for_items(available)
+                if dn not in available_favorites:
+                    available_favorites.append(dn)
+
+        if available_favorites:
+            fav_list = ", ".join(available_favorites[:4])
+            price_str = ""
+            # Get price from first available
+            for fav in favorite_flavors[:1]:
+                items = search_stock(fav, warehouse=warehouse)
+                avail = [it for it in items if it.get("quantity", 0) > 0]
+                if avail:
+                    p = _price_for_items(avail)
+                    if p:
+                        price_str = f" ${p:.0f}/box."
+
+            result["draft_reply"] = (
+                f"{greeting} yes, we have availability!\n"
+                f"Based on your previous orders — {fav_list} are in stock.{price_str}\n"
+                f"Would you like to order any of these, or would you like to see the full list? Thank you!"
+            )
+            result["template_used"] = True
+            result["needs_routing"] = False
+            logger.info(
+                "Stock question: personalized availability for %s (0 tokens, %d favorites)",
+                result["client_email"], len(available_favorites),
+            )
+            return result
+
+    # Fallback: generic region summary
     parts = [f"{greeting} here's what we currently have in stock:"]
 
     any_available = False
@@ -97,7 +153,7 @@ def _handle_general_availability(
         for cat in categories:
             for item in get_available_by_category(cat, warehouse=warehouse):
                 dn = get_display_name(item["product_name"], item["category"])
-                names.add(dn)
+                names.add(dn.lower())  # dedup case-insensitive
         if names:
             any_available = True
             parts.append(f"- {region_label} — ${price}/box ({len(names)} flavors)")
@@ -190,9 +246,11 @@ def _build_in_stock_reply(
     distinct_names = sorted({it["product_name"] for it in stock_items})
     if is_region and len(distinct_names) > 1:
         display_names = []
+        seen_lower = set()
         for it in stock_items:
             dn = get_display_name(it["product_name"], it["category"])
-            if dn not in display_names:
+            if dn.lower() not in seen_lower:
+                seen_lower.add(dn.lower())
                 display_names.append(dn)
         product_list = ", ".join(display_names)
         price_str = f" ${price:.0f} per box." if price is not None else ""
@@ -204,9 +262,18 @@ def _build_in_stock_reply(
 
     # Single product query — include region to disambiguate (ME vs EU vs Japan)
     regions = sorted({CATEGORY_REGION_SUFFIX.get(it["category"], "") for it in stock_items} - {""})
+
+    # Guard: don't append region if flavor already contains it
+    def _flavor_has_region(f: str, r: str) -> bool:
+        fl = f.lower()
+        return fl.endswith(r.lower()) or f"made in {r.lower()}" in fl
+
     if len(regions) > 1:
         # Multiple regions available — list each with region suffix
-        region_list = ", ".join(f"{flavor} {r}" for r in regions)
+        region_list = ", ".join(
+            flavor if _flavor_has_region(flavor, r) else f"{flavor} {r}"
+            for r in regions
+        )
         price_str = f" ${price:.0f} per box." if price is not None else ""
         return (
             f"{greeting} yes, we have {flavor} in stock{loc_suffix}!{price_str} "
@@ -214,8 +281,8 @@ def _build_in_stock_reply(
             f"Which one would you like? Thank you!"
         )
     elif len(regions) == 1:
-        # Single region — include it in the name
-        flavor_with_region = f"{flavor} {regions[0]}"
+        # Single region — include it in the name (unless already there)
+        flavor_with_region = flavor if _flavor_has_region(flavor, regions[0]) else f"{flavor} {regions[0]}"
         price_str = f" It's ${price:.0f} per box." if price is not None else ""
         return (
             f"{greeting} yes, we have {flavor_with_region} in stock{loc_suffix}!{price_str} "
@@ -257,9 +324,11 @@ def _build_multi_stock_reply(
         distinct_names = sorted({it["product_name"] for it in available})
         if is_region and len(distinct_names) > 1:
             display_names = []
+            seen_lower = set()
             for it in available:
                 dn = get_display_name(it["product_name"], it["category"])
-                if dn not in display_names:
+                if dn.lower() not in seen_lower:
+                    seen_lower.add(dn.lower())
                     display_names.append(dn)
             product_list = ", ".join(display_names)
             parts.append(f"\n{flavor}:{price_str}\n{product_list}")
