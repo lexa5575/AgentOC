@@ -15,6 +15,7 @@ Flow:
 """
 
 import logging
+import re
 
 from db.stock import (
     CATEGORY_PRICES,
@@ -24,7 +25,7 @@ from db.stock import (
     get_product_type,
     resolve_warehouse,
 )
-from db.catalog import get_base_display_name, get_display_name
+from db.catalog import get_base_display_name, get_display_name, get_catalog_products
 from db.region_family import CATEGORY_REGION_SUFFIX
 from db.product_resolver import resolve_product_to_catalog
 from agents.context import build_context, format_context_for_prompt
@@ -33,27 +34,23 @@ from agno.models.openai import OpenAIResponses
 
 logger = logging.getLogger(__name__)
 
+# Sentinel value for fail-closed validation when allowed_products is empty
+EMPTY_ALLOWED_SENTINEL = ["__empty_allowed__"]
+
 # ---------------------------------------------------------------------------
 # Agent (used only when any product is NOT in stock — for alternatives reply)
 # ---------------------------------------------------------------------------
 
 _oos_instructions = """\
-You are James, answering a product availability question for shipmecarton.com.
+You are James from shipmecarton.com. Write a short reply about product availability.
 
-## Style (STRICT)
-- Short, warm, like a text message. 2-4 sentences MAX.
-- Start with "Hi {name}," — end with "Thank you!"
-- No bullet points, no bold, no markdown, no lists.
-
-## Content (STRICT)
-- ONLY use products from STOCK INFO — NEVER invent product names.
-- Product unavailable → say so briefly, then list alternatives from STOCK INFO.
-- Mention price ONCE per region (e.g. "$110/box" for ME), NOT per product.
-- Alternatives MUST match customer's flavor profile: don't suggest menthol
-  for a customer who orders classic/tobacco flavors (Amber, Bronze, Sienna, Teak).
-- ALWAYS include region suffix: "Terea Silver ME", not "Terea Silver".
-- If customer mentions a location (Florida, CA), mention the warehouse.
-- Ask which alternative works and how many boxes they want.
+STRICT RULES — violating ANY is a critical error:
+1. ONLY mention products from the STOCK INFO section. No exceptions.
+2. List up to 3 best alternatives from STOCK INFO (prefer same region).
+3. Price: mention ONCE per region ("$110/box for ME"), NOT per product.
+4. Region suffix always: "Amber ME", "Lemon Japan", "Green EU".
+5. Format: 2-3 sentences. Start "Hi {name}," — end "Thank you!"
+6. If customer mentioned a location/warehouse, reference it briefly.
 """
 
 _oos_agent = Agent(
@@ -451,6 +448,154 @@ def handle_stock_question(
     )
 
 
+def _extract_allowed_products(
+    oos_sections: list[dict],
+    in_stock_sections: list[dict] | None = None,
+) -> set[str]:
+    """Extract set of allowed product display names from structured data.
+
+    Only products explicitly present in STOCK INFO (alternatives + available)
+    are allowed. This prevents the validator from passing products that exist
+    in DB but were not in the prompt.
+    """
+    allowed = set()
+    for sec in oos_sections:
+        for alt in sec.get("_alternatives_raw", []):
+            item = alt["alternative"]
+            dn = get_display_name(item["product_name"], item["category"])
+            allowed.add(dn.lower())
+    if in_stock_sections:
+        for sec in in_stock_sections:
+            for it in sec["available"]:
+                dn = get_display_name(it["product_name"], it["category"])
+                allowed.add(dn.lower())
+    # OOS product names — allowed to mention (as unavailable)
+    for sec in oos_sections:
+        dn = sec["display_name"].lower()
+        allowed.add(dn)
+    return allowed
+
+
+def _validate_reply_products(reply: str, allowed_products: set[str]) -> tuple[bool, list[str]]:
+    """Validate that LLM reply only mentions allowed products.
+
+    Uses word-boundary matching against full product catalog, longest-first
+    to avoid partial matches. Returns (is_valid, list_of_forbidden_products).
+    """
+    if not allowed_products:
+        logger.warning("Empty allowed_products — fail-closed, triggering fallback")
+        return (False, EMPTY_ALLOWED_SENTINEL)
+
+    all_catalog = get_catalog_products()
+    # Build display names sorted longest-first (avoids partial matches)
+    catalog_display = sorted(
+        {get_display_name(p["stock_name"], p["category"]).lower() for p in all_catalog},
+        key=len, reverse=True,
+    )
+
+    # Also build short aliases: "terea amber me" → also check "amber me", "amber"
+    allowed_with_aliases = set(allowed_products)
+    for ap in allowed_products:
+        # Strip "terea " prefix
+        if ap.startswith("terea "):
+            allowed_with_aliases.add(ap[6:])
+        # Strip "made in japan" → add "japan" suffix form
+        if "made in japan" in ap:
+            short = ap.replace(" made in japan", " japan")
+            allowed_with_aliases.add(short)
+            if short.startswith("terea "):
+                allowed_with_aliases.add(short[6:])
+
+    def _all_forms(dn: str) -> list[str]:
+        """Generate all recognizable forms of a display name."""
+        forms = [dn]
+        if dn.startswith("terea "):
+            forms.append(dn[6:])  # "amber me"
+            base = dn[6:]
+            # Strip region suffix
+            for suffix in [" me", " eu", " japan", " made in japan"]:
+                if base.endswith(suffix):
+                    forms.append(base[:-len(suffix)].strip())  # just "amber"
+                    break
+        if "made in japan" in dn:
+            forms.append(dn.replace(" made in japan", " japan"))
+        return forms
+
+    # Build all searchable forms for each catalog product (longest-first)
+    # Each form maps back to ALL canonical display names (handles ambiguous short forms)
+    form_to_canonicals: dict[str, list[str]] = {}
+    for dn in catalog_display:
+        for form in _all_forms(dn):
+            form_to_canonicals.setdefault(form, [])
+            if dn not in form_to_canonicals[form]:
+                form_to_canonicals[form].append(dn)
+
+    # Sort forms longest-first for matching
+    all_forms_sorted = sorted(form_to_canonicals.keys(), key=len, reverse=True)
+
+    reply_lower = reply.lower()
+    forbidden = []
+    matched_canonical = set()
+    for form in all_forms_sorted:
+        pattern = r'(?<!\w)' + re.escape(form) + r'(?!\w)'
+        if re.search(pattern, reply_lower):
+            canonicals = form_to_canonicals[form]
+            for canonical in canonicals:
+                if canonical in matched_canonical:
+                    continue  # already checked via a longer form
+                matched_canonical.add(canonical)
+                # Check if ANY form of this product is in allowed set
+                if not any(f in allowed_with_aliases for f in _all_forms(canonical)):
+                    # Before flagging: if this form is ambiguous (shared with other
+                    # canonicals) and ANY sibling canonical is allowed, skip —
+                    # the ambiguous short form could refer to the allowed product.
+                    if len(canonicals) > 1:
+                        sibling_allowed = any(
+                            any(f in allowed_with_aliases for f in _all_forms(sib))
+                            for sib in canonicals if sib != canonical
+                        )
+                        if sibling_allowed:
+                            continue
+                    forbidden.append(canonical)
+
+    return (len(forbidden) == 0, forbidden)
+
+
+def _build_oos_fallback(client_name, oos_display_names, alt_display_names, price_by_region, warehouse):
+    """Deterministic fallback reply when LLM hallucinates in OOS path."""
+    greeting = f"Hi {client_name}," if client_name else "Hi,"
+    loc = f" from our {_WAREHOUSE_DISPLAY.get(warehouse, '')} warehouse" if warehouse else ""
+    oos_str = " and ".join(oos_display_names)
+    alt_str = ", ".join(alt_display_names[:3])
+    price_parts = [f"${p:.0f}/box for {r}" for r, p in price_by_region.items()]
+    price_str = f" ({', '.join(price_parts)})" if price_parts else ""
+    return (
+        f"{greeting} {oos_str} {'is' if len(oos_display_names)==1 else 'are'} "
+        f"not available{loc}. We have {alt_str}{price_str} as alternatives. "
+        f"Would any of these work for you? Thank you!"
+    )
+
+
+def _build_mixed_fallback(client_name, in_stock_sections, oos_sections, warehouse):
+    """Deterministic fallback reply when LLM hallucinates in mixed path."""
+    greeting = f"Hi {client_name}," if client_name else "Hi,"
+    loc = f" from our {_WAREHOUSE_DISPLAY.get(warehouse, '')} warehouse" if warehouse else ""
+    parts = [f"{greeting} here's what we have{loc}:"]
+    # In-stock
+    for sec in in_stock_sections:
+        price_str = f" ${sec['price']:.0f}/box" if sec.get('price') else ""
+        parts.append(f"\n{sec['display_name']} — in stock{price_str}")
+    # OOS + alternatives
+    for sec in oos_sections:
+        parts.append(f"\n{sec['display_name']} — not available")
+        alts = sec.get("_alternatives_raw", [])
+        if alts:
+            alt_names = [get_display_name(a["alternative"]["product_name"], a["alternative"]["category"]) for a in alts[:3]]
+            parts.append(f"Alternatives: {', '.join(alt_names)}")
+    parts.append("\nLet us know what works for you! Thank you!")
+    return "\n".join(parts)
+
+
 def _handle_oos_reply(
     classification, result: dict, email_text: str,
     oos_sections: list[dict],
@@ -485,6 +630,11 @@ def _handle_oos_reply(
         )
         alternatives = alts_result.get("alternatives", [])
 
+        # Save structured data for validation
+        sec["_alternatives_raw"] = alternatives
+        sec["_region_preference"] = _region_pref
+        sec["_strict_region"] = _strict
+
         stock_info_parts.append(f"\n{flavor} is NOT available.")
         if alternatives:
             alt_lines = []
@@ -500,34 +650,61 @@ def _handle_oos_reply(
 
     stock_info = "\n".join(stock_info_parts)
 
-    # Minimal context — only what LLM needs to write the reply.
-    # Full context (profile, history, state) causes LLM to hallucinate
-    # products from conversation history instead of using STOCK INFO.
+    # Compute allowed products from structured data
+    allowed_products = _extract_allowed_products(oos_sections)
+
+    # Minimal context — STOCK INFO first, then customer info
     location = _WAREHOUSE_DISPLAY.get(warehouse, "") if warehouse else ""
     loc_line = f"Warehouse: {location}\n" if location else ""
 
-    # Extract just the customer's question (body only)
-    body = email_text
-    if "Body:" in email_text:
-        body = email_text.split("Body:", 1)[1].strip().split("\n")[0]
-
     prompt = (
-        f"Customer: {client_name or 'Unknown'}\n"
-        f"{loc_line}"
-        f"Customer asked: {body}\n\n"
         f"=== {stock_info}\n\n"
-        f"Write a reply using ONLY the products listed in STOCK INFO above. "
-        f"Do NOT mention any products not in STOCK INFO:"
+        f"Customer: {client_name or 'Customer'}\n"
+        f"{loc_line}"
+        f"\nWrite the reply. ONLY products from STOCK INFO above."
     )
 
     response = _oos_agent.run(prompt)
-    result["draft_reply"] = response.content
+    reply = response.content
+
+    # Validate LLM reply — check for hallucinated products
+    is_valid, forbidden = _validate_reply_products(reply, allowed_products)
+    if not is_valid:
+        logger.warning(
+            "OOS reply validation FAILED for %s — forbidden products: %s. Using fallback.",
+            result["client_email"], forbidden,
+        )
+        # Build deterministic fallback
+        oos_display_names = [sec["display_name"] for sec in oos_sections]
+        alt_display_names = []
+        price_by_region = {}
+        for sec in oos_sections:
+            for alt in sec.get("_alternatives_raw", []):
+                item = alt["alternative"]
+                dn = get_display_name(item["product_name"], item["category"])
+                if dn not in alt_display_names:
+                    alt_display_names.append(dn)
+                p = _price_for_items([item])
+                if p is not None:
+                    region = CATEGORY_REGION_SUFFIX.get(item["category"], "")
+                    if region and region not in price_by_region:
+                        price_by_region[region] = p
+
+        reply = _build_oos_fallback(
+            client_name, oos_display_names, alt_display_names,
+            price_by_region, warehouse,
+        )
+        result["fallback_triggered"] = True
+    else:
+        result["fallback_triggered"] = False
+
+    result["draft_reply"] = reply
     result["template_used"] = False
     result["needs_routing"] = False
 
     logger.info(
-        "Stock question: OOS reply for %s",
-        result["client_email"],
+        "Stock question: OOS reply for %s (fallback=%s)",
+        result["client_email"], result["fallback_triggered"],
     )
     return result
 
@@ -588,6 +765,11 @@ def _handle_mixed_reply(
         )
         alternatives = alts_result.get("alternatives", [])
 
+        # Save structured data for validation
+        sec["_alternatives_raw"] = alternatives
+        sec["_region_preference"] = _region_pref
+        sec["_strict_region"] = _strict
+
         stock_info_parts.append(f"\n{flavor} — NOT available.")
         if alternatives:
             alt_lines = []
@@ -601,30 +783,46 @@ def _handle_mixed_reply(
 
     stock_info = "\n".join(stock_info_parts)
 
-    # Minimal context — prevent LLM from hallucinating products from history
+    # Compute allowed products from structured data
+    allowed_products = _extract_allowed_products(oos_sections, in_stock_sections)
+
+    # Minimal context — STOCK INFO first, then customer info
     location = _WAREHOUSE_DISPLAY.get(warehouse, "") if warehouse else ""
     loc_line = f"Warehouse: {location}\n" if location else ""
 
-    body = email_text
-    if "Body:" in email_text:
-        body = email_text.split("Body:", 1)[1].strip().split("\n")[0]
-
     prompt = (
-        f"Customer: {client_name or 'Unknown'}\n"
-        f"{loc_line}"
-        f"Customer asked: {body}\n\n"
         f"=== {stock_info}\n\n"
-        f"Write a reply covering all products listed in STOCK INFO above. "
-        f"Use ONLY products from STOCK INFO — do NOT mention any other products:"
+        f"Customer: {client_name or 'Customer'}\n"
+        f"{loc_line}"
+        f"\nWrite the reply. Cover ALL products from STOCK INFO: "
+        f"confirm what's AVAILABLE, explain what's NOT, suggest alternatives. "
+        f"ONLY products from STOCK INFO."
     )
 
     response = _oos_agent.run(prompt)
-    result["draft_reply"] = response.content
+    reply = response.content
+
+    # Validate LLM reply — check for hallucinated products
+    is_valid, forbidden = _validate_reply_products(reply, allowed_products)
+    if not is_valid:
+        logger.warning(
+            "Mixed reply validation FAILED for %s — forbidden products: %s. Using fallback.",
+            result["client_email"], forbidden,
+        )
+        reply = _build_mixed_fallback(
+            client_name, in_stock_sections, oos_sections, warehouse,
+        )
+        result["fallback_triggered"] = True
+    else:
+        result["fallback_triggered"] = False
+
+    result["draft_reply"] = reply
     result["template_used"] = False
     result["needs_routing"] = False
 
     logger.info(
-        "Stock question: mixed reply (%d in stock, %d OOS) for %s",
+        "Stock question: mixed reply (%d in stock, %d OOS) for %s (fallback=%s)",
         len(in_stock_sections), len(oos_sections), result["client_email"],
+        result["fallback_triggered"],
     )
     return result

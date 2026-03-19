@@ -281,6 +281,7 @@ def run_single_case(case: dict) -> dict:
         "status": "OK",
         "situation": case.get("situation"),
         "template_used": template_used,
+        "fallback_triggered": result.get("fallback_triggered", False),
         "elapsed_ms": int(elapsed * 1000),
         "comparison": comparison,
     }
@@ -407,6 +408,13 @@ def main():
         print(f"  HARD FAILS (hallucinations/wrong info): {hard_fails}")
     print(f"  Template replies: {template_count}")
     print(f"  LLM replies: {llm_count}")
+
+    # Fallback rate (only for LLM cases)
+    llm_results = [r for r in results if r["status"] == "OK" and not r.get("template_used")]
+    fallback_count = sum(1 for r in llm_results if r.get("fallback_triggered"))
+    if llm_results:
+        print(f"  Fallback: {fallback_count}/{len(llm_results)} LLM cases ({fallback_count/len(llm_results)*100:.0f}%)")
+
     scores = [r.get("comparison", {}).get("checks", {}).get("llm_judge", {}).get("score", 0)
               for r in results if r["status"] == "OK"]
     avg_score = sum(scores) / len(scores) if scores else 0
