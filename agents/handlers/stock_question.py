@@ -500,11 +500,24 @@ def _handle_oos_reply(
 
     stock_info = "\n".join(stock_info_parts)
 
-    ctx = build_context(classification, result, email_text)
+    # Minimal context — only what LLM needs to write the reply.
+    # Full context (profile, history, state) causes LLM to hallucinate
+    # products from conversation history instead of using STOCK INFO.
+    location = _WAREHOUSE_DISPLAY.get(warehouse, "") if warehouse else ""
+    loc_line = f"Warehouse: {location}\n" if location else ""
+
+    # Extract just the customer's question (body only)
+    body = email_text
+    if "Body:" in email_text:
+        body = email_text.split("Body:", 1)[1].strip().split("\n")[0]
+
     prompt = (
-        format_context_for_prompt(ctx)
-        + f"\n\n=== {stock_info}\n\n"
-        + "Write a reply explaining that the product is unavailable and offering the alternatives above:"
+        f"Customer: {client_name or 'Unknown'}\n"
+        f"{loc_line}"
+        f"Customer asked: {body}\n\n"
+        f"=== {stock_info}\n\n"
+        f"Write a reply using ONLY the products listed in STOCK INFO above. "
+        f"Do NOT mention any products not in STOCK INFO:"
     )
 
     response = _oos_agent.run(prompt)
@@ -588,12 +601,21 @@ def _handle_mixed_reply(
 
     stock_info = "\n".join(stock_info_parts)
 
-    ctx = build_context(classification, result, email_text)
+    # Minimal context — prevent LLM from hallucinating products from history
+    location = _WAREHOUSE_DISPLAY.get(warehouse, "") if warehouse else ""
+    loc_line = f"Warehouse: {location}\n" if location else ""
+
+    body = email_text
+    if "Body:" in email_text:
+        body = email_text.split("Body:", 1)[1].strip().split("\n")[0]
+
     prompt = (
-        format_context_for_prompt(ctx)
-        + f"\n\n=== {stock_info}\n\n"
-        + "Write a reply covering all products the customer asked about. "
-        + "List what's available with prices, mention what's not available, and suggest alternatives:"
+        f"Customer: {client_name or 'Unknown'}\n"
+        f"{loc_line}"
+        f"Customer asked: {body}\n\n"
+        f"=== {stock_info}\n\n"
+        f"Write a reply covering all products listed in STOCK INFO above. "
+        f"Use ONLY products from STOCK INFO — do NOT mention any other products:"
     )
 
     response = _oos_agent.run(prompt)
