@@ -231,6 +231,13 @@ def _strip_decorations(name: str) -> str:
     return name.strip()
 
 
+# Stock name → customer-facing name overrides.
+# Some internal product names differ from what customers know them as.
+_DISPLAY_NAME_OVERRIDES: dict[str, str] = {
+    "T Lemon": "Yellow Menthol",
+}
+
+
 def get_display_name(stock_name: str, category: str) -> str:
     """Convert DB product name + category to customer-friendly display name.
 
@@ -239,6 +246,7 @@ def get_display_name(stock_name: str, category: str) -> str:
 
     Examples:
         ("T Purple", "TEREA_JAPAN") → "Terea Purple made in Japan"
+        ("T Lemon", "TEREA_JAPAN") → "Terea Yellow Menthol made in Japan"
         ("Purple", "TEREA_EUROPE") → "Terea Purple EU"
         ("Purple", "ARMENIA") → "Terea Purple ME"
         ("Purple", "KZ_TEREA") → "Terea Purple ME"
@@ -251,7 +259,9 @@ def get_display_name(stock_name: str, category: str) -> str:
         if upper == prefix or upper.startswith(prefix + " "):
             return stock_name
 
-    core = _strip_decorations(stock_name)
+    # Check for display name overrides before stripping decorations
+    override = _DISPLAY_NAME_OVERRIDES.get(stock_name.strip())
+    core = override if override else _strip_decorations(stock_name)
 
     if category in ("TEREA_JAPAN", "УНИКАЛЬНАЯ_ТЕРЕА"):
         return f"Terea {core} made in Japan"
