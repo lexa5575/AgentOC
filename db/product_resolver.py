@@ -505,16 +505,21 @@ def resolve_product_to_catalog(
 
     # Enrich with catalog data if match found
     if result.resolved and result.confidence in ("exact", "high"):
-        resolved_norm = _normalize(result.resolved).lower()
-
-        # Expand to spelling equivalents (e.g. "sienna" ↔ "siena")
-        from db.catalog import get_equivalent_norms
-        equivalent_norms = get_equivalent_norms(resolved_norm)
-
+        # First try exact stock_name match (preserves T-prefix for Japan items)
         matching = [
             e for e in filtered
-            if _normalize(e["stock_name"]).lower() in equivalent_norms
+            if e["stock_name"].lower() == result.resolved.lower()
         ]
+
+        # Fallback: normalized match with spelling equivalents
+        if not matching:
+            resolved_norm = _normalize(result.resolved).lower()
+            from db.catalog import get_equivalent_norms
+            equivalent_norms = get_equivalent_norms(resolved_norm)
+            matching = [
+                e for e in filtered
+                if _normalize(e["stock_name"]).lower() in equivalent_norms
+            ]
 
         # Region-aware filtering: if the product name contains a region
         # indicator, narrow product_ids to only the matching category.
