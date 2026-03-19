@@ -270,6 +270,7 @@ class TestOosHandlerForbiddenTriggersFallback(unittest.TestCase):
 
         with patch("agents.handlers.stock_question.select_best_alternatives", return_value=mock_alts), \
              patch("db.stock.select_best_alternatives", return_value=mock_alts), \
+             patch("db.alternatives.select_best_alternatives", return_value=mock_alts), \
              patch.object(_oos_agent, "run") as mock_run:
             mock_response = MagicMock()
             mock_response.content = hallucinated_reply
@@ -334,6 +335,7 @@ class TestMixedHandlerForbiddenTriggersMixedFallback(unittest.TestCase):
 
         with patch("agents.handlers.stock_question.select_best_alternatives", return_value=mock_alts), \
              patch("db.stock.select_best_alternatives", return_value=mock_alts), \
+             patch("db.alternatives.select_best_alternatives", return_value=mock_alts), \
              patch.object(_oos_agent, "run") as mock_run:
             mock_response = MagicMock()
             mock_response.content = hallucinated_reply
