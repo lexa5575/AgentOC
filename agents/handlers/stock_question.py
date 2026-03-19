@@ -49,12 +49,12 @@ Reply using EXACTLY this template. Do NOT deviate:
 Hi {name}, {OOS product} is not available right now. We have {alt1}, {alt2}, {alt3} as alternatives. Would any of these work for you? Thank you!
 
 RULES:
-- Fill {OOS product} from the "NOT available" line in STOCK INFO.
-- Fill {alt1}, {alt2}, {alt3} from "alternatives" in STOCK INFO. Use 2-3 items max.
-- Do NOT mention price unless the customer asked about price.
+- Fill {OOS product} using the SHORT name from STOCK INFO (e.g. "Bronze", "Russet", "Tropical Japan"). Do NOT add "Terea" prefix.
+- Fill {alt1}, {alt2}, {alt3} from "Alternatives" in STOCK INFO. Use the names exactly as listed. 2-3 items max.
+- If multiple items are NOT available, combine: "{item1} and {item2} are not available right now. We have {alt1}, {alt2}, {alt3}..."
+- Do NOT mention price unless the customer explicitly asked about price/cost/total.
 - Do NOT add extra sentences, explanations, or questions beyond the template.
 - Do NOT mention any product not listed in STOCK INFO.
-- Always include region suffix: "Amber ME", "Lemon Japan", "Green EU".
 """
 
 _oos_agent = Agent(
@@ -565,37 +565,45 @@ def _validate_reply_products(reply: str, allowed_products: set[str]) -> tuple[bo
     return (len(forbidden) == 0, forbidden)
 
 
+def _strip_terea(name: str) -> str:
+    """Strip 'Terea ' prefix for customer-facing short names."""
+    return name[6:] if name.lower().startswith("terea ") else name
+
+
 def _build_oos_fallback(client_name, oos_display_names, alt_display_names, price_by_region, warehouse):
-    """Deterministic fallback reply when LLM hallucinates in OOS path."""
+    """Deterministic fallback — matches golden style exactly."""
     greeting = f"Hi {client_name}," if client_name else "Hi,"
-    loc = f" from our {_WAREHOUSE_DISPLAY.get(warehouse, '')} warehouse" if warehouse else ""
-    oos_str = " and ".join(oos_display_names)
-    alt_str = ", ".join(alt_display_names[:3])
+    oos_short = [_strip_terea(n) for n in oos_display_names]
+    alt_short = [_strip_terea(n) for n in alt_display_names[:3]]
+    oos_str = " and ".join(oos_short)
+    alt_str = ", ".join(alt_short)
     return (
-        f"{greeting} {oos_str} {'is' if len(oos_display_names)==1 else 'are'} "
-        f"not available{loc}. We have {alt_str} as alternatives. "
+        f"{greeting} {oos_str} {'is' if len(oos_short)==1 else 'are'} "
+        f"not available right now. We have {alt_str} as alternatives. "
         f"Would any of these work for you? Thank you!"
     )
 
 
 def _build_mixed_fallback(client_name, in_stock_sections, oos_sections, warehouse):
-    """Deterministic fallback reply when LLM hallucinates in mixed path."""
+    """Deterministic fallback for mixed path — same golden style."""
     greeting = f"Hi {client_name}," if client_name else "Hi,"
-    loc = f" from our {_WAREHOUSE_DISPLAY.get(warehouse, '')} warehouse" if warehouse else ""
-    parts = [f"{greeting} here's what we have{loc}:"]
-    # In-stock
-    for sec in in_stock_sections:
-        price_str = f" ${sec['price']:.0f}/box" if sec.get('price') else ""
-        parts.append(f"\n{sec['display_name']} — in stock{price_str}")
-    # OOS + alternatives
+    # Collect all OOS names and all alternatives
+    oos_short = []
+    all_alts = []
     for sec in oos_sections:
-        parts.append(f"\n{sec['display_name']} — not available")
-        alts = sec.get("_alternatives_raw", [])
-        if alts:
-            alt_names = [get_display_name(a["alternative"]["product_name"], a["alternative"]["category"]) for a in alts[:3]]
-            parts.append(f"Alternatives: {', '.join(alt_names)}")
-    parts.append("\nLet us know what works for you! Thank you!")
-    return "\n".join(parts)
+        oos_short.append(_strip_terea(sec["display_name"]))
+        for a in sec.get("_alternatives_raw", [])[:3]:
+            dn = get_display_name(a["alternative"]["product_name"], a["alternative"]["category"])
+            short = _strip_terea(dn)
+            if short not in all_alts:
+                all_alts.append(short)
+    oos_str = " and ".join(oos_short)
+    alt_str = ", ".join(all_alts[:3])
+    return (
+        f"{greeting} {oos_str} {'is' if len(oos_short)==1 else 'are'} "
+        f"not available right now. We have {alt_str} as alternatives. "
+        f"Would any of these work for you? Thank you!"
+    )
 
 
 def _handle_oos_reply(
@@ -637,9 +645,19 @@ def _handle_oos_reply(
         sec["_region_preference"] = _region_pref
         sec["_strict_region"] = _strict
 
-        stock_info_parts.append(f"\n{sec['display_name']} is NOT available.")
+        # Use short name for OOS item (e.g. "Bronze ME" not "Terea Bronze ME")
+        oos_short = sec["display_name"]
+        if oos_short.lower().startswith("terea "):
+            oos_short = oos_short[6:]
+        stock_info_parts.append(f"\n{oos_short} is NOT available.")
         if alternatives:
-            alt_names = [get_display_name(a["alternative"]["product_name"], a["alternative"]["category"]) for a in alternatives[:3]]
+            alt_names = []
+            for a in alternatives[:3]:
+                dn = get_display_name(a["alternative"]["product_name"], a["alternative"]["category"])
+                # Strip "Terea " for consistency with golden style
+                if dn.lower().startswith("terea "):
+                    dn = dn[6:]
+                alt_names.append(dn)
             stock_info_parts.append("Alternatives: " + ", ".join(alt_names))
         else:
             stock_info_parts.append("No alternatives available.")
@@ -761,9 +779,10 @@ def _handle_mixed_reply(
         sec["_region_preference"] = _region_pref
         sec["_strict_region"] = _strict
 
-        stock_info_parts.append(f"\n{sec['display_name']} — NOT available.")
+        oos_short = _strip_terea(sec["display_name"])
+        stock_info_parts.append(f"\n{oos_short} — NOT available.")
         if alternatives:
-            alt_names = [get_display_name(a["alternative"]["product_name"], a["alternative"]["category"]) for a in alternatives[:3]]
+            alt_names = [_strip_terea(get_display_name(a["alternative"]["product_name"], a["alternative"]["category"])) for a in alternatives[:3]]
             stock_info_parts.append("Alternatives: " + ", ".join(alt_names))
 
     stock_info = "\n".join(stock_info_parts)
