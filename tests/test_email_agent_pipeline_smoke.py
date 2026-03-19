@@ -165,6 +165,7 @@ def _install_import_stubs() -> None:
     db_catalog.get_display_name = _stub_get_display_name
     db_catalog.get_base_display_name = _stub_get_base_display_name
 
+    db_catalog.get_equivalent_norms = lambda *a, **kw: set()
     # Stub db.region_family (imported by pipeline.py, tools/stock_tools.py)
     db_region_family = types.ModuleType("db.region_family")
     db_region_family.CATEGORY_REGION_SUFFIX = {}

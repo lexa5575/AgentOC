@@ -70,16 +70,55 @@ def _mock_catalog():
 
     @contextmanager
     def _ctx():
-        # Patch in BOTH the handler module and db.catalog to handle
-        # test isolation issues (other test files may re-import modules)
-        with _patch("agents.handlers.stock_question.get_catalog_products",
-                     return_value=list(_TEST_CATALOG)), \
-             _patch("agents.handlers.stock_question.get_display_name",
-                    side_effect=_test_get_display_name), \
-             _patch("db.catalog.get_catalog_products",
-                    return_value=list(_TEST_CATALOG)), \
-             _patch("db.catalog.get_display_name",
-                    side_effect=_test_get_display_name):
+        # Patch by import path + direct function globals.
+        # The globals patch makes tests robust if another suite re-imported
+        # agents.handlers.stock_question and our imported function objects
+        # point to a different module instance.
+        with _patch(
+            "agents.handlers.stock_question.get_catalog_products",
+            return_value=list(_TEST_CATALOG),
+            create=True,
+        ), _patch(
+            "agents.handlers.stock_question.get_display_name",
+            side_effect=_test_get_display_name,
+            create=True,
+        ), _patch(
+            "db.catalog.get_catalog_products",
+            return_value=list(_TEST_CATALOG),
+            create=True,
+        ), _patch(
+            "db.catalog.get_display_name",
+            side_effect=_test_get_display_name,
+            create=True,
+        ), _patch.dict(
+            _extract_allowed_products.__globals__,
+            {
+                "get_catalog_products": lambda: list(_TEST_CATALOG),
+                "get_display_name": _test_get_display_name,
+            },
+            clear=False,
+        ), _patch.dict(
+            _validate_reply_products.__globals__,
+            {
+                "get_catalog_products": lambda: list(_TEST_CATALOG),
+                "get_display_name": _test_get_display_name,
+            },
+            clear=False,
+        ), _patch.dict(
+            _handle_oos_reply.__globals__,
+            {
+                "get_catalog_products": lambda: list(_TEST_CATALOG),
+                "get_display_name": _test_get_display_name,
+            },
+            clear=False,
+        ), _patch.dict(
+            _handle_mixed_reply.__globals__,
+            {
+                "get_catalog_products": lambda: list(_TEST_CATALOG),
+                "get_display_name": _test_get_display_name,
+            },
+            clear=False,
+        ):
             yield
 
     # Return a decorator-compatible context manager
@@ -268,10 +307,9 @@ class TestOosHandlerForbiddenTriggersFallback(unittest.TestCase):
             ]
         }
 
-        # Monkeypatch at the actual module where _handle_oos_reply lives
-        import agents.handlers.stock_question as sq_mod
-        original_sba = sq_mod.select_best_alternatives
-        sq_mod.select_best_alternatives = lambda **kw: mock_alts
+        # Patch function globals directly to avoid module re-import mismatch.
+        original_sba = _handle_oos_reply.__globals__.get("select_best_alternatives")
+        _handle_oos_reply.__globals__["select_best_alternatives"] = lambda **kw: mock_alts
 
         try:
             with patch.object(_oos_agent, "run") as mock_run:
@@ -284,7 +322,7 @@ class TestOosHandlerForbiddenTriggersFallback(unittest.TestCase):
                     oos_sections, "John", None,
                 )
         finally:
-            sq_mod.select_best_alternatives = original_sba
+            _handle_oos_reply.__globals__["select_best_alternatives"] = original_sba
 
         self.assertTrue(result["fallback_triggered"])
         # Fallback reply should NOT contain "Green EU"
@@ -338,9 +376,8 @@ class TestMixedHandlerForbiddenTriggersMixedFallback(unittest.TestCase):
             "alternatives": [_alt("Amber", "ARMENIA")]
         }
 
-        import agents.handlers.stock_question as sq_mod
-        original_sba = sq_mod.select_best_alternatives
-        sq_mod.select_best_alternatives = lambda **kw: mock_alts
+        original_sba = _handle_mixed_reply.__globals__.get("select_best_alternatives")
+        _handle_mixed_reply.__globals__["select_best_alternatives"] = lambda **kw: mock_alts
 
         try:
             with patch.object(_oos_agent, "run") as mock_run:
@@ -353,7 +390,7 @@ class TestMixedHandlerForbiddenTriggersMixedFallback(unittest.TestCase):
                     in_stock_sections, oos_sections, "John", None,
                 )
         finally:
-            sq_mod.select_best_alternatives = original_sba
+            _handle_mixed_reply.__globals__["select_best_alternatives"] = original_sba
 
         self.assertTrue(result["fallback_triggered"])
         # Fallback should preserve available section

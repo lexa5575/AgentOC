@@ -133,11 +133,14 @@ def _install_import_stubs() -> None:
     db_catalog.get_display_name = lambda *a, **kw: ""
     db_catalog.get_base_display_name = lambda *a, **kw: ""
     db_catalog._enrich_display_name_with_region = lambda *a, **kw: ""
+    db_catalog.get_equivalent_norms = lambda *a, **kw: set()
     sys.modules["db.catalog"] = db_catalog
 
     # db.product_resolver — needed by agents/handlers/stock_question.py
     db_product_resolver = types.ModuleType("db.product_resolver")
     db_product_resolver.resolve_product_to_catalog = lambda *a, **kw: []
+    db_product_resolver._normalize = lambda x: x
+    db_product_resolver._extract_region_categories = lambda *a, **kw: set()
     sys.modules["db.product_resolver"] = db_product_resolver
 
     # Only stub tools.web_search; preserve real tools package for stock_parser

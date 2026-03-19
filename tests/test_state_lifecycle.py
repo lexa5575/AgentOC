@@ -89,6 +89,7 @@ def _install_stubs():
     db_catalog = sys.modules["db.catalog"]
     db_catalog.get_display_name = lambda name, cat="": name
     db_catalog.get_base_display_name = lambda name: name
+    db_catalog.get_equivalent_norms = lambda *a, **kw: set()
     db_catalog._enrich_display_name_with_region = lambda *args: args[-1] if args else ""
     db_catalog.get_catalog_products = lambda: []
 

@@ -336,12 +336,19 @@ def main():
     parser.add_argument("--tags", nargs="+", help="Filter by tags")
     parser.add_argument("--save", action="store_true", help="Save results as baseline")
     parser.add_argument("-v", "--verbose", action="store_true", help="Show all cases")
+    parser.add_argument(
+        "--cases-path",
+        type=Path,
+        default=EVAL_CASES_PATH,
+        help="Path to eval cases JSON file (default: classifier_eval_cases.json)",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.WARNING)
 
-    cases = json.loads(EVAL_CASES_PATH.read_text())
-    print(f"Loaded {len(cases)} eval cases from {EVAL_CASES_PATH.name}")
+    cases_path = args.cases_path
+    cases = json.loads(cases_path.read_text())
+    print(f"Loaded {len(cases)} eval cases from {cases_path}")
 
     results = run_eval(cases, tags_filter=args.tags, verbose=args.verbose)
     print_report(results)
