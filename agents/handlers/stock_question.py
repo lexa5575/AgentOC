@@ -59,7 +59,7 @@ You are James, answering a product availability question for shipmecarton.com.
 _oos_agent = Agent(
     id="stock-question-oos",
     name="Stock Question OOS Handler",
-    model=OpenAIResponses(id="gpt-5-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     instructions=_oos_instructions,
     markdown=False,
 )
