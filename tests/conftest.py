@@ -13,6 +13,10 @@ from sqlalchemy.orm import Session
 from db.models import Base
 from db.warehouse_config import _reset_cache
 
+# Snapshot the real db.region_family at conftest import time (before any
+# stub test can replace it). Used by _restore_region_family fixture.
+import db.region_family as _REAL_REGION_FAMILY
+
 
 @pytest.fixture(autouse=True)
 def db_session(monkeypatch):
@@ -61,18 +65,16 @@ def db_session(monkeypatch):
 def _restore_region_family():
     """Restore real db.region_family if a test stub replaced it.
 
-    Several test files (test_handler_templates, test_email_agent_router_regression,
-    etc.) replace sys.modules["db.region_family"] with types.ModuleType stubs.
-    Their teardown should restore it, but ordering issues can leave stubs.
-    This fixture ensures lazy imports in db.stock, db.fulfillment, oos_agreement
-    always get the real module.
+    Several test files replace sys.modules["db.region_family"] with
+    types.ModuleType stubs that have empty REGION_FAMILIES. This fixture
+    restores the real module from the snapshot taken at conftest import.
+    Safe even when sys.modules["db"] is also a stub (no reimport needed).
     """
-    mod = sys.modules.get("db.region_family")
-    if mod is not None and not getattr(mod, "REGION_FAMILIES", None):
-        # Stub detected — force reimport from real source
-        del sys.modules["db.region_family"]
-        importlib.import_module("db.region_family")
     yield
+    # After each test, ensure real module is back in sys.modules
+    current = sys.modules.get("db.region_family")
+    if current is not _REAL_REGION_FAMILY:
+        sys.modules["db.region_family"] = _REAL_REGION_FAMILY
 
 
 @pytest.fixture(autouse=True)

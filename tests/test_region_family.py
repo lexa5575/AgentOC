@@ -8,33 +8,16 @@ Covers:
 - get_region_suffix()
 """
 
-import importlib
-import sys
 import unittest
 
-
-def _ensure_real_module():
-    """Force-reload db.region_family from disk if it was replaced by a test stub.
-
-    Other test files replace sys.modules["db.region_family"] with types.ModuleType
-    stubs that have empty REGION_FAMILIES. When pytest runs all tests in one process,
-    this pollution persists. We detect it by checking REGION_FAMILIES content.
-    """
-    mod_name = "db.region_family"
-    mod = sys.modules.get(mod_name)
-    if mod is None or not getattr(mod, "REGION_FAMILIES", None):
-        # Missing or stub with empty dict — force reload
-        sys.modules.pop(mod_name, None)
-    return importlib.import_module(mod_name)
-
-
-_mod = _ensure_real_module()
-CATEGORY_REGION_SUFFIX = _mod.CATEGORY_REGION_SUFFIX
-expand_to_family_ids = _mod.expand_to_family_ids
-get_family = _mod.get_family
-get_preferred_product_id = _mod.get_preferred_product_id
-get_region_suffix = _mod.get_region_suffix
-is_same_family = _mod.is_same_family
+from db.region_family import (
+    CATEGORY_REGION_SUFFIX,
+    expand_to_family_ids,
+    get_family,
+    get_preferred_product_id,
+    get_region_suffix,
+    is_same_family,
+)
 
 # Mock catalog entries for testing
 MOCK_CATALOG = [
