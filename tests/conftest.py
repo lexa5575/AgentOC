@@ -58,6 +58,24 @@ def db_session(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _restore_region_family():
+    """Restore real db.region_family if a test stub replaced it.
+
+    Several test files (test_handler_templates, test_email_agent_router_regression,
+    etc.) replace sys.modules["db.region_family"] with types.ModuleType stubs.
+    Their teardown should restore it, but ordering issues can leave stubs.
+    This fixture ensures lazy imports in db.stock, db.fulfillment, oos_agreement
+    always get the real module.
+    """
+    mod = sys.modules.get("db.region_family")
+    if mod is not None and not getattr(mod, "REGION_FAMILIES", None):
+        # Stub detected — force reimport from real source
+        del sys.modules["db.region_family"]
+        importlib.import_module("db.region_family")
+    yield
+
+
+@pytest.fixture(autouse=True)
 def active_warehouses(monkeypatch):
     """Set all 3 warehouses as active by default in tests.
 

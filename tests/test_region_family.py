@@ -13,25 +13,22 @@ import sys
 import unittest
 
 
-def _get_real_module():
-    """Re-import the real db.region_family, bypassing any test stubs.
+def _ensure_real_module():
+    """Force-reload db.region_family from disk if it was replaced by a test stub.
 
-    Other test files (test_handler_templates, test_state_lifecycle, etc.)
-    replace sys.modules["db.region_family"] with a stub ModuleType.
-    When pytest collects tests alphabetically, those stubs can pollute
-    this module's imports. Force a fresh import from the real source.
+    Other test files replace sys.modules["db.region_family"] with types.ModuleType
+    stubs that have empty REGION_FAMILIES. When pytest runs all tests in one process,
+    this pollution persists. We detect it by checking REGION_FAMILIES content.
     """
     mod_name = "db.region_family"
-    if mod_name in sys.modules:
-        mod = sys.modules[mod_name]
-        # Check if it's a stub (no __file__ or missing key functions)
-        if not hasattr(mod, "__file__") or mod.__file__ is None:
-            del sys.modules[mod_name]
-            return importlib.import_module(mod_name)
+    mod = sys.modules.get(mod_name)
+    if mod is None or not getattr(mod, "REGION_FAMILIES", None):
+        # Missing or stub with empty dict — force reload
+        sys.modules.pop(mod_name, None)
     return importlib.import_module(mod_name)
 
 
-_mod = _get_real_module()
+_mod = _ensure_real_module()
 CATEGORY_REGION_SUFFIX = _mod.CATEGORY_REGION_SUFFIX
 expand_to_family_ids = _mod.expand_to_family_ids
 get_family = _mod.get_family
