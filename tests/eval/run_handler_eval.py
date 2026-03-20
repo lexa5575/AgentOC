@@ -95,7 +95,9 @@ def _classify_email(case: dict):
     if not state and case.get("gmail_thread_id"):
         try:
             from db.conversation_state import get_state
-            state = get_state(case["gmail_thread_id"])
+            state_record = get_state(case["gmail_thread_id"])
+            if state_record and isinstance(state_record, dict):
+                state = state_record.get("state")
         except Exception:
             pass
     context_str = compose_classifier_context(conversation_state=state)
@@ -119,8 +121,9 @@ def _build_result(case: dict) -> dict:
     if not conversation_state and case.get("gmail_thread_id"):
         try:
             from db.conversation_state import get_state
-            conversation_state = get_state(case["gmail_thread_id"])
-            if conversation_state:
+            state_record = get_state(case["gmail_thread_id"])
+            if state_record and isinstance(state_record, dict):
+                conversation_state = state_record.get("state")
                 logger.info(
                     "Loaded conversation_state from DB for thread %s",
                     case["gmail_thread_id"],
