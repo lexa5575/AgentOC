@@ -6,11 +6,23 @@ Google Sheets writes are mocked — no real API calls.
 """
 
 import json
+import sys
+import types as _types
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+# Ensure tools.google_sheets is importable even without googleapiclient
+try:
+    import tools.google_sheets  # noqa: F401
+except ImportError:
+    _m = _types.ModuleType("tools.google_sheets")
+    _m.SheetsClient = MagicMock()
+    sys.modules["tools.google_sheets"] = _m
+    import tools
+    tools.google_sheets = _m
 
 from agents.formatters import format_result
 from agents.handlers.fulfillment_trigger import try_fulfillment
@@ -641,6 +653,7 @@ class TestIncrementMaksSales:
         mock_config.return_value = self._make_sheet_config()
         mock_client = MagicMock()
         mock_client.find_active_sheet.return_value = "LA MAKS FEB"
+        mock_client.get_cell_value.return_value = 5  # current maks_sales in sheet
         mock_sheets_cls.return_value = mock_client
 
         session = db_session()

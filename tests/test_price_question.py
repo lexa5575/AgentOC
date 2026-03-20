@@ -150,8 +150,17 @@ class _FakeClassification:
 class TestPriceQuestion(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        cls._modules_snapshot = dict(sys.modules)
         _install_stubs()
         cls.handler_mod = importlib.import_module("agents.handlers.price_question")
+
+    @classmethod
+    def tearDownClass(cls):
+        added = set(sys.modules) - set(cls._modules_snapshot)
+        for name in added:
+            sys.modules.pop(name, None)
+        for name, mod in cls._modules_snapshot.items():
+            sys.modules[name] = mod
 
     def setUp(self):
         # Patch Gmail-dependent functions to avoid googleapiclient import

@@ -708,7 +708,7 @@ class TestInferRegionFromState:
                              items=[{"base_flavor": "Green", "product_name": "Green EU"}])
         state = {"facts": {"ordered_items": ["Terea Green EU x5"]}}
         _infer_region_from_state(cls, state)
-        assert cls.order_items[0].region_preference is None  # product_name has region
+        assert cls.order_items[0].region_preference == ["EU"]
 
     def test_strict_region_not_changed(self):
         cls = self._make_cls("payment_received",

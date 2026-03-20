@@ -84,6 +84,13 @@ def _install_stubs():
     db_cs.get_state = lambda *a, **kw: None
     db_cs.save_state = MagicMock()
     db_cs.get_client_states = lambda *a, **kw: []
+    # Attach sub-modules on parent package so patch("db.conversation_state...") resolves
+    db_pkg = sys.modules.get("db")
+    if db_pkg is not None:
+        for sub in db_stub_modules:
+            if sub != "db" and sub in sys.modules:
+                attr = sub.split(".")[-1]
+                setattr(db_pkg, attr, sys.modules[sub])
 
     db_catalog = sys.modules["db.catalog"]
     db_catalog.get_display_name = lambda name, cat="": name
@@ -153,7 +160,65 @@ def _install_stubs():
     tg_mod.send_telegram_async = MagicMock()
 
 
-_install_stubs()
+_MODULES_BEFORE_STUBS: dict | None = None
+_MISSING = object()
+_MUTATED_ATTRS: dict[tuple[str, str], object] = {}
+
+_ATTR_LIST = [
+    ("db.catalog", "get_display_name"), ("db.catalog", "get_base_display_name"),
+    ("db.catalog", "get_equivalent_norms"), ("db.catalog", "_enrich_display_name_with_region"),
+    ("db.catalog", "get_catalog_products"),
+    ("db.region_family", "CATEGORY_REGION_SUFFIX"), ("db.region_family", "is_same_family"),
+    ("db.region_preference", "apply_region_preference"), ("db.region_preference", "apply_thread_hint"),
+    ("db.stock", "extract_variant_id"), ("db.stock", "has_ambiguous_variants"),
+    ("db.email_history", "get_full_thread_history"),
+    ("db.memory", "save_email"), ("db.memory", "save_order_items"),
+    ("db.memory", "get_client"), ("db.memory", "get_stock_summary"),
+    ("db.memory", "calculate_order_price"), ("db.memory", "check_stock_for_order"),
+    ("db.memory", "resolve_order_items"), ("db.memory", "replace_order_items"),
+    ("db.models", "get_session"), ("db.models", "ConversationState"), ("db.models", "Base"),
+    ("db.conversation_state", "get_state"), ("db.conversation_state", "save_state"),
+    ("db.conversation_state", "get_client_states"),
+]
+_PKG_ATTR_LIST = [
+    ("db", "models"), ("db", "memory"), ("db", "conversation_state"),
+    ("db", "catalog"), ("db", "region_family"), ("db", "fulfillment"),
+    ("db", "region_preference"), ("db", "stock"), ("db", "email_history"),
+]
+
+
+def setup_module():
+    """Install stubs before any test in this module runs."""
+    global _MODULES_BEFORE_STUBS, _MUTATED_ATTRS
+    _MODULES_BEFORE_STUBS = dict(sys.modules)
+    _MUTATED_ATTRS = {}
+    for mod_name, attr_name in _ATTR_LIST + _PKG_ATTR_LIST:
+        mod = sys.modules.get(mod_name)
+        if mod is not None:
+            _MUTATED_ATTRS[(mod_name, attr_name)] = getattr(mod, attr_name, _MISSING)
+    _install_stubs()
+
+
+def teardown_module():
+    """Restore sys.modules and mutated attrs so stubs don't leak."""
+    if _MODULES_BEFORE_STUBS is None:
+        return
+    # 1. Restore sys.modules
+    added = set(sys.modules) - set(_MODULES_BEFORE_STUBS)
+    for name in added:
+        sys.modules.pop(name, None)
+    for name, mod in _MODULES_BEFORE_STUBS.items():
+        sys.modules[name] = mod
+    # 2. Restore mutated attrs on real module objects
+    for (mod_name, attr_name), original in _MUTATED_ATTRS.items():
+        mod = sys.modules.get(mod_name)
+        if mod is None:
+            continue
+        if original is _MISSING:
+            if hasattr(mod, attr_name):
+                delattr(mod, attr_name)
+        else:
+            setattr(mod, attr_name, original)
 
 
 # ---------------------------------------------------------------------------

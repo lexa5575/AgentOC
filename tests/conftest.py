@@ -3,6 +3,7 @@ Shared pytest fixtures — SQLite in-memory DB for fast isolated tests.
 """
 
 import importlib
+import sys
 
 import pytest
 from sqlalchemy import create_engine

@@ -181,11 +181,20 @@ def _install_import_stubs() -> None:
 class TestEmailAgentRouterRegression(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        cls._modules_snapshot = dict(sys.modules)
         _install_import_stubs()
         cls.email_agent = importlib.import_module("agents.email_agent")
         cls.agents_pipeline = importlib.import_module("agents.pipeline")
         cls.agents_notifier = importlib.import_module("agents.notifier")
         cls.agents_classifier = importlib.import_module("agents.classifier")
+
+    @classmethod
+    def tearDownClass(cls):
+        added = set(sys.modules) - set(cls._modules_snapshot)
+        for name in added:
+            sys.modules.pop(name, None)
+        for name, mod in cls._modules_snapshot.items():
+            sys.modules[name] = mod
 
     def _classifier_payload(self, *, situation: str, needs_reply: bool = True) -> dict:
         return {

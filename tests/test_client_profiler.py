@@ -1,8 +1,20 @@
 """Tests for agents.client_profiler module."""
 
+import sys
+import types as _types
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+
+# Ensure tools.gmail is importable even without googleapiclient
+try:
+    import tools.gmail  # noqa: F401
+except ImportError:
+    _m = _types.ModuleType("tools.gmail")
+    _m.GmailClient = MagicMock()
+    sys.modules["tools.gmail"] = _m
+    import tools
+    tools.gmail = _m
 
 from agents.client_profiler import _backfill_order_items, generate_client_summary, maybe_refresh_summary
 
@@ -42,9 +54,10 @@ def test_generate_client_summary_save_failure(mock_format, mock_history):
     update_mock.assert_called_once_with("missing@example.com", "Loyal customer")
 
 
+@patch("agents.client_profiler._backfill_order_items", return_value=0)
 @patch("agents.client_profiler.get_full_email_history")
 @patch("agents.client_profiler.format_email_history", return_value="=== CONVERSATION HISTORY ===")
-def test_generate_client_summary_success(mock_format, mock_history):
+def test_generate_client_summary_success(mock_format, mock_history, mock_backfill):
     """Returns summary when generation and DB save both succeed."""
     mock_history.return_value = [
         {

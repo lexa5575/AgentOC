@@ -254,7 +254,6 @@ def increment_maks_sales(warehouse: str, matched_items: list[dict]) -> dict:
         {"updated": N, "skipped": N, "errors": [...], "details": [...]}
     """
     from db.sheet_config import load_sheet_config
-    from tools.google_sheets import SheetsClient
 
     result = {"updated": 0, "skipped": 0, "errors": [], "details": []}
 
@@ -262,6 +261,8 @@ def increment_maks_sales(warehouse: str, matched_items: list[dict]) -> dict:
     if not config:
         result["errors"].append(f"No sheet config for warehouse {warehouse}")
         return result
+
+    from tools.google_sheets import SheetsClient
 
     # category -> maks_col mapping
     cat_to_maks_col: dict[str, int] = {}

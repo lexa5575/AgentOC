@@ -25,8 +25,6 @@ def _install_stubs():
     for name in list(sys.modules):
         if name.startswith("agents.handlers") and name != "agents.handlers":
             sys.modules.pop(name, None)
-    if "agents" in sys.modules and hasattr(sys.modules["agents"], "handlers"):
-        delattr(sys.modules["agents"], "handlers")
 
     # agno stubs
     if "agno" not in sys.modules:
@@ -133,7 +131,62 @@ def _install_stubs():
     sys.modules["utils.telegram"].send_telegram_async = MagicMock()
 
 
-_install_stubs()
+_MODULES_BEFORE_STUBS: dict | None = None
+_MISSING = object()
+_MUTATED_ATTRS: dict[tuple[str, str], object] = {}
+
+# Attrs that _install_stubs() overwrites on real module objects
+_ATTR_LIST = [
+    ("db.catalog", "get_catalog_products"),
+    ("db.catalog", "get_display_name"),
+    ("db.catalog", "get_base_display_name"),
+    ("db.catalog", "_enrich_display_name_with_region"),
+    ("db.catalog", "get_equivalent_norms"),
+    ("db.region_family", "CATEGORY_REGION_SUFFIX"),
+    ("db.region_family", "is_same_family"),
+    ("db.stock", "extract_variant_id"),
+]
+# Parent-package attrs that stubs may attach
+_PKG_ATTR_LIST = [
+    ("db", "catalog"), ("db", "region_family"), ("db", "stock"),
+    ("db", "memory"), ("db", "models"), ("db", "conversation_state"),
+    ("db", "email_history"), ("db", "fulfillment"), ("db", "region_preference"),
+    ("agents", "handlers"),
+]
+
+
+def setup_module():
+    """Install stubs before any test in this module runs."""
+    global _MODULES_BEFORE_STUBS, _MUTATED_ATTRS
+    _MODULES_BEFORE_STUBS = dict(sys.modules)
+    _MUTATED_ATTRS = {}
+    for mod_name, attr_name in _ATTR_LIST + _PKG_ATTR_LIST:
+        mod = sys.modules.get(mod_name)
+        if mod is not None:
+            _MUTATED_ATTRS[(mod_name, attr_name)] = getattr(mod, attr_name, _MISSING)
+    _install_stubs()
+
+
+def teardown_module():
+    """Restore sys.modules and mutated attrs so stubs don't leak."""
+    if _MODULES_BEFORE_STUBS is None:
+        return
+    # 1. Restore sys.modules
+    added = set(sys.modules) - set(_MODULES_BEFORE_STUBS)
+    for name in added:
+        sys.modules.pop(name, None)
+    for name, mod in _MODULES_BEFORE_STUBS.items():
+        sys.modules[name] = mod
+    # 2. Restore mutated attrs on real module objects
+    for (mod_name, attr_name), original in _MUTATED_ATTRS.items():
+        mod = sys.modules.get(mod_name)
+        if mod is None:
+            continue
+        if original is _MISSING:
+            if hasattr(mod, attr_name):
+                delattr(mod, attr_name)
+        else:
+            setattr(mod, attr_name, original)
 
 
 # ---------------------------------------------------------------------------

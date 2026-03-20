@@ -34,6 +34,7 @@ def _install_stubs() -> None:
         agno = types.ModuleType("agno")
         agno.__path__ = []
         sys.modules["agno"] = agno
+        _STUBS_CREATED.append("agno")
     if "agno.agent" not in sys.modules:
         agno_agent = types.ModuleType("agno.agent")
 
@@ -46,10 +47,12 @@ def _install_stubs() -> None:
 
         agno_agent.Agent = FakeAgent
         sys.modules["agno.agent"] = agno_agent
+        _STUBS_CREATED.append("agno.agent")
     if "agno.models" not in sys.modules:
         agno_models = types.ModuleType("agno.models")
         agno_models.__path__ = []
         sys.modules["agno.models"] = agno_models
+        _STUBS_CREATED.append("agno.models")
     if "agno.models.openai" not in sys.modules:
         agno_models_openai = types.ModuleType("agno.models.openai")
 
@@ -59,6 +62,7 @@ def _install_stubs() -> None:
 
         agno_models_openai.OpenAIResponses = FakeOpenAIResponses
         sys.modules["agno.models.openai"] = agno_models_openai
+        _STUBS_CREATED.append("agno.models.openai")
 
     # db
     if "db" not in sys.modules:
@@ -66,6 +70,7 @@ def _install_stubs() -> None:
         db_mod.__path__ = []
         db_mod.get_postgres_db = lambda *a, **kw: object()
         sys.modules["db"] = db_mod
+        _STUBS_CREATED.append("db")
     if "db.memory" not in sys.modules:
         db_memory = types.ModuleType("db.memory")
         db_memory.get_client = lambda *a, **kw: None
@@ -81,17 +86,20 @@ def _install_stubs() -> None:
         db_memory.save_order_items = lambda *a, **kw: None
         db_memory.update_client = lambda *a, **kw: None
         sys.modules["db.memory"] = db_memory
+        _STUBS_CREATED.append("db.memory")
     if "db.clients" not in sys.modules:
         db_clients = types.ModuleType("db.clients")
         db_clients.get_client_profile = lambda *a, **kw: None
         db_clients.update_client_summary = lambda *a, **kw: True
         sys.modules["db.clients"] = db_clients
+        _STUBS_CREATED.append("db.clients")
     if "db.conversation_state" not in sys.modules:
         db_cs = types.ModuleType("db.conversation_state")
         db_cs.get_state = lambda *a, **kw: None
         db_cs.save_state = lambda *a, **kw: None
         db_cs.get_client_states = lambda *a, **kw: []
         sys.modules["db.conversation_state"] = db_cs
+        _STUBS_CREATED.append("db.conversation_state")
 
     # db.region_family — always reset CATEGORY_REGION_SUFFIX to real values.
     # test_handler_templates.py sets it to {} which breaks region suffix logic
@@ -110,10 +118,12 @@ def _install_stubs() -> None:
             tools_mod = types.ModuleType("tools")
             tools_mod.__path__ = []
             sys.modules["tools"] = tools_mod
+            _STUBS_CREATED.append("tools")
     if "tools.web_search" not in sys.modules:
         tools_ws = types.ModuleType("tools.web_search")
         tools_ws.get_search_tools = lambda: []
         sys.modules["tools.web_search"] = tools_ws
+        _STUBS_CREATED.append("tools.web_search")
     if "tools.email_parser" not in sys.modules:
         try:
             import tools.email_parser  # noqa: F401
@@ -123,16 +133,19 @@ def _install_stubs() -> None:
             tools_ep.try_parse_order = lambda *a, **kw: None
             tools_ep.clean_email_body = lambda body: body
             sys.modules["tools.email_parser"] = tools_ep
+            _STUBS_CREATED.append("tools.email_parser")
 
     # utils
     if "utils" not in sys.modules:
         utils_mod = types.ModuleType("utils")
         utils_mod.__path__ = []
         sys.modules["utils"] = utils_mod
+        _STUBS_CREATED.append("utils")
     if "utils.telegram" not in sys.modules:
         utils_telegram = types.ModuleType("utils.telegram")
         utils_telegram.send_telegram = lambda *a, **kw: None
         sys.modules["utils.telegram"] = utils_telegram
+        _STUBS_CREATED.append("utils.telegram")
 
 
 class _FakeClassification:
@@ -151,6 +164,28 @@ class _FakeClassification:
         self.items = kwargs.get("items", None)
         self.order_items = kwargs.get("order_items", None)
         self.parser_used = kwargs.get("parser_used", False)
+
+
+_MODULES_BEFORE_STUBS: dict | None = None
+_STUBS_CREATED: list[str] = []
+
+
+def setup_module():
+    """Snapshot sys.modules at execution time (not collection time)."""
+    global _MODULES_BEFORE_STUBS
+    _MODULES_BEFORE_STUBS = dict(sys.modules)
+
+
+def teardown_module():
+    """Restore sys.modules — only remove stubs WE created, not others' modules."""
+    # Remove only modules that _install_stubs() created
+    for name in _STUBS_CREATED:
+        sys.modules.pop(name, None)
+    _STUBS_CREATED.clear()
+    # Restore original entries from snapshot
+    if _MODULES_BEFORE_STUBS is not None:
+        for name, mod in _MODULES_BEFORE_STUBS.items():
+            sys.modules[name] = mod
 
 
 class TestOOSFollowupIntents(unittest.TestCase):

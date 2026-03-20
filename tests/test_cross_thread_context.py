@@ -116,12 +116,38 @@ def _ensure_stubs():
         sys.modules["agents"] = agents_mod
 
 
-_ensure_stubs()
+_MODULES_BEFORE_STUBS: dict | None = None
 
-# Now safe to import production code
-from agents.classifier import _extract_sender_email
-from agents.context import EmailContext, format_context_for_prompt
-from agents.formatters import format_other_threads as _format_other_threads
+# Module-level references filled by setup_module
+_extract_sender_email = None
+EmailContext = None
+format_context_for_prompt = None
+_format_other_threads = None
+
+
+def setup_module():
+    global _MODULES_BEFORE_STUBS, _extract_sender_email, EmailContext
+    global format_context_for_prompt, _format_other_threads
+    _MODULES_BEFORE_STUBS = dict(sys.modules)
+    _ensure_stubs()
+    from agents.classifier import _extract_sender_email as _ese
+    from agents.context import EmailContext as _EC, format_context_for_prompt as _fcp
+    from agents.formatters import format_other_threads as _fot
+    _extract_sender_email = _ese
+    EmailContext = _EC
+    format_context_for_prompt = _fcp
+    _format_other_threads = _fot
+
+
+def teardown_module():
+    """Restore sys.modules so stubs don't leak to other test files."""
+    if _MODULES_BEFORE_STUBS is None:
+        return
+    added = set(sys.modules) - set(_MODULES_BEFORE_STUBS)
+    for name in added:
+        sys.modules.pop(name, None)
+    for name, mod in _MODULES_BEFORE_STUBS.items():
+        sys.modules[name] = mod
 
 
 # ---------------------------------------------------------------------------

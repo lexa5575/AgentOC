@@ -74,11 +74,20 @@ def _install_stubs() -> None:
 class TestTryParseOrder(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        cls._modules_snapshot = dict(sys.modules)
         _install_stubs()
         from tools.email_parser import try_parse_order, _extract_base_flavor
 
         cls.try_parse_order = staticmethod(try_parse_order)
         cls._extract_base_flavor = staticmethod(_extract_base_flavor)
+
+    @classmethod
+    def tearDownClass(cls):
+        added = set(sys.modules) - set(cls._modules_snapshot)
+        for name in added:
+            sys.modules.pop(name, None)
+        for name, mod in cls._modules_snapshot.items():
+            sys.modules[name] = mod
 
     def test_clean_website_order(self):
         """Standard website order notification → parsed correctly."""
@@ -313,10 +322,19 @@ class TestTryParseOrder(unittest.TestCase):
 class TestCleanEmailBody(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        cls._modules_snapshot = dict(sys.modules)
         _install_stubs()
         from tools.email_parser import clean_email_body
 
         cls.clean_email_body = staticmethod(clean_email_body)
+
+    @classmethod
+    def tearDownClass(cls):
+        added = set(sys.modules) - set(cls._modules_snapshot)
+        for name in added:
+            sys.modules.pop(name, None)
+        for name, mod in cls._modules_snapshot.items():
+            sys.modules[name] = mod
 
     def test_strips_quoted_block(self):
         """'On ... wrote:' and everything after removed."""
