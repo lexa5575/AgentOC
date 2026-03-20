@@ -67,7 +67,6 @@ def _install_stubs():
         "db", "db.models", "db.memory", "db.conversation_state",
         "db.catalog", "db.region_family", "db.fulfillment",
         "db.region_preference", "db.stock", "db.email_history",
-        "db.shipping",
     ]
     for mod_name in db_stub_modules:
         if mod_name not in sys.modules:
@@ -118,8 +117,8 @@ def _install_stubs():
     db_memory.resolve_order_items = lambda items, **kw: (items, [])
     db_memory.replace_order_items = MagicMock()
 
-    db_shipping = sys.modules["db.shipping"]
-    db_shipping.save_order_shipping_address = MagicMock()
+    import db.shipping as _db_shipping
+    _db_shipping.save_order_shipping_address = MagicMock()
 
     # tools stubs
     for mod_name in ["tools", "tools.email_parser"]:

@@ -60,7 +60,6 @@ def _install_stubs():
         "db", "db.models", "db.memory", "db.conversation_state",
         "db.catalog", "db.region_family", "db.fulfillment",
         "db.region_preference", "db.stock", "db.email_history",
-        "db.shipping",
     ]:
         if mod_name not in sys.modules:
             m = types.ModuleType(mod_name)

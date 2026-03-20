@@ -6,7 +6,7 @@ Covers:
 3. _validate_reply_products — clean reply passes
 4. _validate_reply_products — empty allowed → fail-closed
 5. _handle_oos_reply — forbidden triggers fallback (integration, mock LLM)
-6. _handle_mixed_reply — forbidden triggers mixed fallback (integration, mock LLM)
+6. _handle_mixed_reply — deterministic template includes correct products
 7. _validate_reply_products — cross-region rejection
 """
 
@@ -331,17 +331,12 @@ class TestOosHandlerForbiddenTriggersFallback(unittest.TestCase):
         self.assertIn("Thank you!", result["draft_reply"])
 
 
-class TestMixedHandlerForbiddenTriggersMixedFallback(unittest.TestCase):
-    """test_mixed_handler_forbidden_triggers_mixed_fallback: mock LLM returns reply
-    with forbidden product → fallback preserves AVAILABLE section."""
+class TestMixedReplyDeterministic(unittest.TestCase):
+    """Mixed reply is now fully deterministic (0 LLM tokens).
+    Verify the template includes in-stock and OOS sections correctly."""
 
     @_mock_catalog()
-    def test_mixed_fallback_preserves_available(self):
-        hallucinated_reply = (
-            "Hi John, Tropical Japan is in stock. Silver ME is not available. "
-            "We have Terea Sienna ME as an alternative. Thank you!"
-        )
-
+    def test_mixed_reply_includes_available_and_alternatives(self):
         classification = MagicMock()
         classification.order_items = []
 
@@ -370,7 +365,6 @@ class TestMixedHandlerForbiddenTriggersMixedFallback(unittest.TestCase):
             },
         ]
 
-        # Only Amber ME as alternative (Sienna ME is NOT in alternatives)
         mock_alts = {
             "alternatives": [_alt("Amber", "ARMENIA")]
         }
@@ -379,27 +373,21 @@ class TestMixedHandlerForbiddenTriggersMixedFallback(unittest.TestCase):
         _handle_mixed_reply.__globals__["select_best_alternatives"] = lambda **kw: mock_alts
 
         try:
-            with patch.object(_oos_agent, "run") as mock_run:
-                mock_response = MagicMock()
-                mock_response.content = hallucinated_reply
-                mock_run.return_value = mock_response
-
-                result = _handle_mixed_reply(
-                    classification, result, "Body: Do you have Tropical and Silver?",
-                    in_stock_sections, oos_sections, "John", None,
-                )
+            result = _handle_mixed_reply(
+                classification, result, "Body: Do you have Tropical and Silver?",
+                in_stock_sections, oos_sections, "John", None,
+            )
         finally:
             _handle_mixed_reply.__globals__["select_best_alternatives"] = original_sba
 
-        self.assertTrue(result["fallback_triggered"])
-        # Fallback should preserve available section
+        # Deterministic — no LLM fallback needed
+        self.assertFalse(result["fallback_triggered"])
+        # Template should include in-stock product
         self.assertIn("Tropical", result["draft_reply"])
-        self.assertIn("in stock", result["draft_reply"])
-        # Should contain allowed alternative
+        # Template should include alternative for OOS
         self.assertIn("Amber", result["draft_reply"])
-        # Should NOT contain hallucinated Sienna
+        # Should NOT contain products not in alternatives
         self.assertNotIn("Sienna", result["draft_reply"])
-        self.assertIn("Thank you!", result["draft_reply"])
 
 
 if __name__ == "__main__":
