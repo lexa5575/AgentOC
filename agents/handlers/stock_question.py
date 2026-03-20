@@ -615,17 +615,26 @@ def _build_mixed_reply_template(client_name, in_stock_sections, oos_sections, wa
 
     # OOS items with alternatives
     for sec in oos_sections:
-        name = _strip_terea(sec["display_name"])
-        # Add region if known from display_name
-        regions = sorted({CATEGORY_REGION_SUFFIX.get(cat, "") for cat in
-                         {sec.get("_lookup_category", "")} if cat} - {""})
+        # Resolve region from catalog — OOS items have no stock items to derive region from,
+        # so we use the product resolver to find which categories this flavor exists in.
+        oos_display = sec["display_name"]
+        oos_name = _strip_terea(oos_display)
+        catalog_result = resolve_product_to_catalog(sec["flavor"], original_product_name=oos_display)
+        if catalog_result.product_ids:
+            catalog = get_catalog_products()
+            id_to_cat = {p["id"]: p["category"] for p in catalog}
+            oos_cats = {id_to_cat.get(pid, "") for pid in catalog_result.product_ids}
+            oos_regions = sorted({CATEGORY_REGION_SUFFIX.get(c, "") for c in oos_cats} - {""})
+            if len(oos_regions) == 1 and not _flavor_has_region(oos_name, oos_regions[0]):
+                oos_name = f"{oos_name} {oos_regions[0]}"
+
         alts = sec.get("_alternatives_raw", [])
         if alts:
             alt_names = [_strip_terea(get_display_name(a["alternative"]["product_name"], a["alternative"]["category"])) for a in alts[:3]]
             alt_str = ", ".join(alt_names)
-            lines.append(f"\n{name} — not available. Alternatives: {alt_str}")
+            lines.append(f"\n{oos_name} — not available. Alternatives: {alt_str}")
         else:
-            lines.append(f"\n{name} — not available at the moment")
+            lines.append(f"\n{oos_name} — not available at the moment")
 
     lines.append("\nLet us know what combination works for you. Thank you!")
     return "\n".join(lines)
