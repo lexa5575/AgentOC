@@ -39,13 +39,9 @@ jobs:
 
       - name: Debug db.shipping import
         if: always()
-        run: docker exec agentos-api python -c "import db.shipping; print('OK')" || docker exec agentos-api python -c "
-import traceback
-try:
-    import db.shipping
-except Exception:
-    traceback.print_exc()
-"
+        run: |
+          docker exec agentos-api python -c "import db.shipping; print('OK')" || \
+          docker exec agentos-api python -c "import traceback; exec(\"try:\\n import db.shipping\\nexcept Exception:\\n traceback.print_exc()\")"
 
       - name: Run full test suite
         run: docker exec agentos-api python -m pytest -q tests
