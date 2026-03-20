@@ -627,6 +627,11 @@ def _build_mixed_reply_template(client_name, in_stock_sections, oos_sections, wa
             oos_regions = sorted({CATEGORY_REGION_SUFFIX.get(c, "") for c in oos_cats} - {""})
             if len(oos_regions) == 1 and not _flavor_has_region(oos_name, oos_regions[0]):
                 oos_name = f"{oos_name} {oos_regions[0]}"
+            elif len(oos_regions) > 1:
+                oos_name = ", ".join(
+                    oos_name if _flavor_has_region(oos_name, r) else f"{oos_name} {r}"
+                    for r in oos_regions
+                )
 
         alts = sec.get("_alternatives_raw", [])
         if alts:
