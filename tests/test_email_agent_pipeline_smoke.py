@@ -169,7 +169,15 @@ def _install_import_stubs() -> None:
     # Stub db.region_family (imported by pipeline.py, tools/stock_tools.py)
     db_region_family = types.ModuleType("db.region_family")
     db_region_family.CATEGORY_REGION_SUFFIX = {}
-    db_region_family.is_same_family = lambda a, b: a == b
+    db_region_family.REGION_FAMILIES = {}
+    db_region_family.PREFERRED_CATEGORY = {}
+    db_region_family.is_same_family = lambda a, b=None: a == b
+    db_region_family.get_family = lambda cat: None
+    db_region_family.get_region_suffix = lambda cat: None
+    db_region_family.get_family_suffix = lambda fam: None
+    db_region_family.get_preferred_product_id = lambda *a, **kw: None
+    db_region_family.expand_to_family_ids = lambda ids, catalog: list(ids) if ids else []
+    db_region_family.extract_region_from_text = lambda text: None
 
     sys.modules["db"] = db_mod
     sys.modules["db.memory"] = db_memory
