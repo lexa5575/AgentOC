@@ -168,12 +168,18 @@ class _FakeClassification:
 
 _MODULES_BEFORE_STUBS: dict | None = None
 _STUBS_CREATED: list[str] = []
+_MISSING = object()
+_ORIGINAL_REGION_SUFFIX = _MISSING
 
 
 def setup_module():
     """Snapshot sys.modules at execution time (not collection time)."""
-    global _MODULES_BEFORE_STUBS
+    global _MODULES_BEFORE_STUBS, _ORIGINAL_REGION_SUFFIX
     _MODULES_BEFORE_STUBS = dict(sys.modules)
+    # Snapshot attr that _install_stubs() mutates on real module
+    mod = sys.modules.get("db.region_family")
+    if mod is not None:
+        _ORIGINAL_REGION_SUFFIX = getattr(mod, "CATEGORY_REGION_SUFFIX", _MISSING)
 
 
 def teardown_module():
@@ -186,6 +192,11 @@ def teardown_module():
     if _MODULES_BEFORE_STUBS is not None:
         for name, mod in _MODULES_BEFORE_STUBS.items():
             sys.modules[name] = mod
+    # Restore mutated attr on real module
+    if _ORIGINAL_REGION_SUFFIX is not _MISSING:
+        mod = sys.modules.get("db.region_family")
+        if mod is not None:
+            mod.CATEGORY_REGION_SUFFIX = _ORIGINAL_REGION_SUFFIX
 
 
 class TestOOSFollowupIntents(unittest.TestCase):
