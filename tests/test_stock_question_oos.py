@@ -19,7 +19,6 @@ from agents.handlers.stock_question import (
     _extract_allowed_products,
     _validate_reply_products,
     _build_oos_fallback,
-    _build_mixed_fallback,
     _handle_oos_reply,
     _handle_mixed_reply,
     _oos_agent,
