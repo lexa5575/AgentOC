@@ -197,3 +197,40 @@ def expand_to_family_ids(
 def get_region_suffix(category: str) -> str | None:
     """Return customer-facing region suffix for a category."""
     return CATEGORY_REGION_SUFFIX.get(category)
+
+
+# Family → customer-facing suffix
+_FAMILY_SUFFIX: dict[str, str] = {"EU": "EU", "ME": "ME", "JAPAN": "Japan"}
+
+
+def get_family_suffix(family: str) -> str | None:
+    """Family name → customer-facing suffix. E.g. "EU" → "EU", "JAPAN" → "Japan"."""
+    return _FAMILY_SUFFIX.get(family)
+
+
+_REGION_KEYWORDS: dict[str, str] = {
+    "made in europe": "EU",
+    "made in middle east": "ME",
+    "made in armenia": "ME",
+    "made in japan": "JAPAN",
+    "european": "EU",
+}
+
+
+def extract_region_from_text(text: str) -> str | None:
+    """Extract a single region family from free-form email text.
+
+    Scans for region keywords anywhere in text (not just suffixes).
+    Returns None if 0 or >1 families detected.
+
+    Examples:
+        "I'll do Blue made in Europe please" → "EU"
+        "Blue" → None
+    """
+    text_lower = text.lower()
+    found: set[str] = set()
+    # Check longer phrases first
+    for phrase, family in sorted(_REGION_KEYWORDS.items(), key=lambda x: -len(x[0])):
+        if phrase in text_lower:
+            found.add(family)
+    return found.pop() if len(found) == 1 else None

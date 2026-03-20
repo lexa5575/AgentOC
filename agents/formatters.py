@@ -230,10 +230,19 @@ def format_result(result: dict) -> str:
             lines.append(f"Updated rows: {ur.get('updated', 0)}")
             for detail in ur.get("details", []):
                 if "old_maks" in detail:
-                    lines.append(
-                        f"- {detail['product_name']}: "
+                    cat = detail.get("category", "")
+                    cat_tag = f" [{cat}]" if cat else ""
+                    line = (
+                        f"- {detail['product_name']}{cat_tag}: "
                         f"{detail['old_maks']} -> {detail['new_maks']}"
                     )
+                    if detail.get("cross_category"):
+                        orig = detail.get("original_available", "?")
+                        qty = detail.get("ordered_qty", "?")
+                        agreed = detail.get("display_name", "")
+                        agreed_tag = f"agreed: {agreed}, " if agreed else ""
+                        line += f"  \u26a0\ufe0f cross-category ({agreed_tag}original had {orig}/{qty})"
+                    lines.append(line)
         elif ff["status"] in ("skipped_split", "skipped_out_of_stock"):
             if ff["status"] == "skipped_out_of_stock":
                 lines.append("Reason: requested items not fully available across active warehouses")

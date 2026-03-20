@@ -172,6 +172,8 @@ def _try_warehouse(
     """Check if one warehouse can fulfill ALL items.
 
     Sums quantities across matching stock entries (not first()).
+    When item has exact_region=True, prefers entries matching the original
+    product_ids over highest-qty family siblings.
 
     Returns:
         List of matched items with source info for increment, or None.
@@ -195,8 +197,22 @@ def _try_warehouse(
         if total_available < ordered_qty:
             return None
 
-        # Pick primary entry (highest quantity) for maks_sales increment
-        primary = max(entries, key=lambda e: e.quantity)
+        # Primary selection: prefer original product_ids when item has
+        # explicit region agreement (exact_region=True) and original can cover.
+        # Without the flag, use existing max-qty behavior.
+        original_ids = set(product_ids)
+        original_entries = [e for e in entries if e.product_id in original_ids]
+        original_available = sum(max(e.quantity, 0) for e in original_entries)
+
+        if item.get("exact_region") and original_available >= ordered_qty and original_entries:
+            primary = max(original_entries, key=lambda e: e.quantity)
+            cross_category = False
+        else:
+            primary = max(entries, key=lambda e: e.quantity)
+            cross_category = (
+                bool(original_entries)
+                and primary.product_id not in original_ids
+            )
 
         matched.append({
             "base_flavor": base_flavor,
@@ -207,6 +223,9 @@ def _try_warehouse(
             "maks_sales": primary.maks_sales,
             "stock_item_id": primary.id,
             "total_available": total_available,
+            "cross_category": cross_category,
+            "original_available": original_available if cross_category else None,
+            "display_name": item.get("display_name"),
         })
 
     return matched
@@ -335,13 +354,21 @@ def increment_maks_sales(warehouse: str, matched_items: list[dict]) -> dict:
                     session.flush()
 
                 result["updated"] += 1
-                result["details"].append({
+                detail = {
                     "product_name": item["product_name"],
+                    "category": item["category"],
                     "old_maks": old_maks,
                     "new_maks": new_maks,
                     "source_row": source_row,
                     "maks_col": maks_col,
-                })
+                    "ordered_qty": item["ordered_qty"],
+                }
+                if item.get("cross_category"):
+                    detail["cross_category"] = True
+                    detail["original_available"] = item.get("original_available")
+                if item.get("display_name"):
+                    detail["display_name"] = item["display_name"]
+                result["details"].append(detail)
                 logger.info(
                     "maks_sales updated: %s [%s] %d -> %d (row=%d, col=%d)",
                     item["product_name"], warehouse,
@@ -470,6 +497,7 @@ def get_order_items_for_fulfillment(
                     "product_name": item.product_name,
                     "quantity": item.quantity,
                     "product_ids": [item.variant_id],
+                    "display_name": item.display_name_snapshot,
                 })
                 continue
 
@@ -486,6 +514,7 @@ def get_order_items_for_fulfillment(
                     "product_name": item.product_name,
                     "quantity": item.quantity,
                     "product_ids": product_ids,
+                    "display_name": item.display_name_snapshot,
                 })
                 continue
 

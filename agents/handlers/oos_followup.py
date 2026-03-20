@@ -154,6 +154,10 @@ def _apply_confirmation_flags(
 
     result["confirmation_source"] = source
     result["canonical_confirmed_items"] = stock_result["items"]
+    # Mark items with explicit region agreement for fulfillment prefer-original
+    for item in resolved_items:
+        if item.get("region_preference"):
+            item["exact_region"] = True
     result["_stock_check_items"] = resolved_items
 
     # Phase 3 ambiguity gate: block fulfillment if any item has
@@ -300,6 +304,8 @@ def handle_oos_followup(
             if status == "ok" and confirmed_items:
                 try:
                     resolved, _ = resolve_order_items(confirmed_items)
+                    from db.region_preference import apply_region_preference
+                    resolved = apply_region_preference(resolved)
                     stock_result = check_stock_for_order(resolved)
                     if stock_result["all_in_stock"]:
                         calc_price = calculate_order_price(stock_result["items"])

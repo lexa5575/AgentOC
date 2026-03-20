@@ -2844,3 +2844,134 @@ class TestFormatOutOfStock:
         assert "not fully available across active warehouses" in output
         assert "NOT updated" in output
         assert "Tried:" in output
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Prefer-original + cross-category tests
+# ══════════════════════════════════════════════════════════════════════
+
+class TestPreferOriginalVariant:
+    """_try_warehouse prefers original product_ids when exact_region=True."""
+
+    def test_prefer_original_with_exact_region(self, db_session):
+        """Original sufficient + exact_region → original category used."""
+        session = db_session()
+        arm_id = _add_catalog(session, "ARMENIA", "silver", "Silver")
+        kz_id = _add_catalog(session, "KZ_TEREA", "silver", "Silver")
+        _add_stock(session, "LA_MAKS", "ARMENIA", "Silver", qty=5, product_id=arm_id)
+        _add_stock(session, "LA_MAKS", "KZ_TEREA", "Silver", qty=10, product_id=kz_id)
+        session.commit()
+
+        order_items = [{
+            "base_flavor": "Silver", "quantity": 2,
+            "product_ids": [arm_id],
+            "exact_region": True,
+        }]
+        result = select_fulfillment_warehouse(order_items, "Los Angeles, CA 90001")
+        assert result["status"] == STATUS_UPDATED
+        # Should pick ARMENIA (original) not KZ (higher qty)
+        matched = result["matched_items"][0]
+        assert matched["category"] == "ARMENIA"
+        assert matched["cross_category"] is False
+
+    def test_no_prefer_without_exact_region(self, db_session):
+        """Without exact_region flag → existing max-qty behavior."""
+        session = db_session()
+        arm_id = _add_catalog(session, "ARMENIA", "silver", "Silver")
+        kz_id = _add_catalog(session, "KZ_TEREA", "silver", "Silver")
+        _add_stock(session, "LA_MAKS", "ARMENIA", "Silver", qty=5, product_id=arm_id)
+        _add_stock(session, "LA_MAKS", "KZ_TEREA", "Silver", qty=10, product_id=kz_id)
+        session.commit()
+
+        order_items = [{
+            "base_flavor": "Silver", "quantity": 2,
+            "product_ids": [arm_id],
+            # No exact_region flag
+        }]
+        result = select_fulfillment_warehouse(order_items, "Los Angeles, CA 90001")
+        assert result["status"] == STATUS_UPDATED
+        # Without flag, picks highest qty (KZ_TEREA)
+        matched = result["matched_items"][0]
+        assert matched["category"] == "KZ_TEREA"
+
+    def test_cross_category_fallback_exact_region(self, db_session):
+        """Original insufficient + exact_region → sibling used, cross_category=True."""
+        session = db_session()
+        arm_id = _add_catalog(session, "ARMENIA", "silver", "Silver")
+        kz_id = _add_catalog(session, "KZ_TEREA", "silver", "Silver")
+        _add_stock(session, "LA_MAKS", "ARMENIA", "Silver", qty=1, product_id=arm_id)
+        _add_stock(session, "LA_MAKS", "KZ_TEREA", "Silver", qty=10, product_id=kz_id)
+        session.commit()
+
+        order_items = [{
+            "base_flavor": "Silver", "quantity": 2,
+            "product_ids": [arm_id],
+            "exact_region": True,
+        }]
+        result = select_fulfillment_warehouse(order_items, "Los Angeles, CA 90001")
+        assert result["status"] == STATUS_UPDATED
+        matched = result["matched_items"][0]
+        assert matched["category"] == "KZ_TEREA"  # fallback to higher
+        assert matched["cross_category"] is True
+        assert matched["original_available"] == 1
+
+
+class TestCategoryInDetails:
+    """increment_maks_sales includes category and ordered_qty in details."""
+
+    def test_category_in_details(self):
+        result = _base_result()
+        result["fulfillment"] = {
+            "status": "updated",
+            "warehouse": "LA_MAKS",
+            "trigger_type": "new_order_postpay",
+            "tried_warehouses": ["LA_MAKS"],
+            "update_result": {
+                "updated": 1,
+                "skipped": 0,
+                "errors": [],
+                "details": [{
+                    "product_name": "Silver",
+                    "category": "ARMENIA",
+                    "old_maks": 5,
+                    "new_maks": 7,
+                    "source_row": 10,
+                    "maks_col": 8,
+                    "ordered_qty": 2,
+                }],
+            },
+        }
+        output = format_result(result)
+        assert "[ARMENIA]" in output
+        assert "5 -> 7" in output
+
+    def test_cross_category_warning_in_formatter(self):
+        result = _base_result()
+        result["fulfillment"] = {
+            "status": "updated",
+            "warehouse": "LA_MAKS",
+            "trigger_type": "new_order_postpay",
+            "tried_warehouses": ["LA_MAKS"],
+            "update_result": {
+                "updated": 1,
+                "skipped": 0,
+                "errors": [],
+                "details": [{
+                    "product_name": "Silver",
+                    "category": "KZ_TEREA",
+                    "old_maks": 5,
+                    "new_maks": 7,
+                    "source_row": 10,
+                    "maks_col": 8,
+                    "ordered_qty": 2,
+                    "cross_category": True,
+                    "original_available": 1,
+                    "display_name": "Terea Silver ME",
+                }],
+            },
+        }
+        output = format_result(result)
+        assert "cross-category" in output
+        assert "agreed: Terea Silver ME" in output
+        assert "original had 1/2" in output
+        assert "[KZ_TEREA]" in output

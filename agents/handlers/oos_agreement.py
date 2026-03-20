@@ -9,15 +9,26 @@ from classifier, and clearing pending OOS state.
 import logging
 
 from db.catalog import get_display_name
-from db.region_family import CATEGORY_REGION_SUFFIX as _CATEGORY_TO_REGION_SUFFIX
+from db.region_family import (
+    CATEGORY_REGION_SUFFIX as _CATEGORY_TO_REGION_SUFFIX,
+    extract_region_from_text,
+    get_family,
+    get_family_suffix,
+)
 
 logger = logging.getLogger(__name__)
 
 
-def _match_alternative_from_text(email_text: str, alternatives: list[dict]) -> dict | None:
+def _match_alternative_from_text(
+    email_text: str,
+    alternatives: list[dict],
+    customer_region: str | None = None,
+) -> dict | None:
     """Try to find which alternative the customer mentioned in their email.
 
     Returns the match only if exactly 1 product_name found in text.
+    When multiple name-matches exist and customer_region is known,
+    filters by region family for disambiguation.
     """
     email_lower = email_text.lower()
     matches = []
@@ -25,9 +36,56 @@ def _match_alternative_from_text(email_text: str, alternatives: list[dict]) -> d
         name = alt.get("product_name", "")
         if name and name.lower() in email_lower:
             matches.append(alt)
+
     if len(matches) == 1:
         return matches[0]
+
+    # Multiple name-matches + explicit region → filter by family
+    if len(matches) > 1 and customer_region:
+        region_filtered = [
+            alt for alt in matches
+            if get_family(alt.get("category", "")) == customer_region
+        ]
+        if len(region_filtered) == 1:
+            return region_filtered[0]
+
     return None
+
+
+def _build_confirmed_item(
+    alt: dict,
+    requested_qty: int,
+    email_text: str,
+    customer_region: str | None,
+) -> dict:
+    """Build a confirmed item dict with correct region suffix and preference.
+
+    If customer explicitly stated a region in their reply, uses that region
+    (primary signal via region_preference, compatibility suffix in product_name).
+    Otherwise falls back to the suggestion's category.
+    """
+    alt_name = alt["product_name"]
+
+    if customer_region:
+        # Customer explicitly stated a region — override suggestion's category
+        suffix = get_family_suffix(customer_region)
+        product_name = f"{alt_name} {suffix}" if suffix else alt_name
+        region_pref = [customer_region]
+    else:
+        # No explicit region from customer — use suggestion's category
+        alt_cat = alt.get("category", "")
+        region_suffix = _CATEGORY_TO_REGION_SUFFIX.get(alt_cat)
+        product_name = f"{alt_name} {region_suffix}" if region_suffix else alt_name
+        region_pref = None
+
+    item = {
+        "base_flavor": alt_name,
+        "product_name": product_name,
+        "quantity": requested_qty,
+    }
+    if region_pref:
+        item["region_preference"] = region_pref
+    return item
 
 
 def _resolve_oos_agreement(
@@ -35,6 +93,9 @@ def _resolve_oos_agreement(
     email_text: str,
 ) -> tuple[list[dict] | None, str]:
     """Try to resolve OOS items to confirmed items for the order.
+
+    Respects customer's explicit region when it differs from the suggested
+    alternative's region (e.g. customer says "made in Europe" for a ME suggestion).
 
     Returns:
         (confirmed_items, "ok") — all items resolved
@@ -47,6 +108,9 @@ def _resolve_oos_agreement(
     pending = facts.get("pending_oos_resolution")
     if not pending:
         return None, "no_data"
+
+    # Detect customer's explicit region from their reply text
+    customer_region = extract_region_from_text(email_text)
 
     confirmed = []
 
@@ -78,32 +142,19 @@ def _resolve_oos_agreement(
                 return None, "no_alternatives"
 
             if len(alts) == 1:
-                # Only one alternative — auto-pick with region from category
-                alt = alts[0]
-                alt_pn = alt["product_name"]
-                alt_cat = alt.get("category", "")
-                region_suffix = _CATEGORY_TO_REGION_SUFFIX.get(alt_cat)
-                if region_suffix:
-                    alt_pn = f"{alt_pn} {region_suffix}"
-                confirmed.append({
-                    "base_flavor": alt["product_name"],
-                    "product_name": alt_pn,
-                    "quantity": item["requested_qty"],
-                })
+                # Only one alternative — auto-pick
+                confirmed.append(_build_confirmed_item(
+                    alts[0], item["requested_qty"], email_text, customer_region,
+                ))
             else:
                 # Multiple alternatives — try to match from email text
-                matched = _match_alternative_from_text(email_text, alts)
+                matched = _match_alternative_from_text(
+                    email_text, alts, customer_region=customer_region,
+                )
                 if matched:
-                    m_pn = matched["product_name"]
-                    m_cat = matched.get("category", "")
-                    region_suffix = _CATEGORY_TO_REGION_SUFFIX.get(m_cat)
-                    if region_suffix:
-                        m_pn = f"{m_pn} {region_suffix}"
-                    confirmed.append({
-                        "base_flavor": matched["product_name"],
-                        "product_name": m_pn,
-                        "quantity": item["requested_qty"],
-                    })
+                    confirmed.append(_build_confirmed_item(
+                        matched, item["requested_qty"], email_text, customer_region,
+                    ))
                 else:
                     return None, "clarify"
 
