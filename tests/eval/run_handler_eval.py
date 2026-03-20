@@ -91,6 +91,13 @@ def _classify_email(case: dict):
 
     email_text = case.get("inbound_text") or case.get("email_text") or ""
     state = case.get("conversation_state")
+    # For oos_followup: load conversation_state from DB if not in case
+    if not state and case.get("gmail_thread_id"):
+        try:
+            from db.conversation_state import get_state
+            state = get_state(case["gmail_thread_id"])
+        except Exception:
+            pass
     context_str = compose_classifier_context(conversation_state=state)
 
     classification = run_classification(email_text, context_str, conversation_state=state)
@@ -106,6 +113,21 @@ def _build_result(case: dict) -> dict:
     """Build the result dict that process_classified_email would produce."""
     client_profile = case.get("client_profile") or {}
 
+    # For oos_followup: try to load conversation_state from DB (server-only)
+    # This gives the handler real pending_oos_resolution, offered_alternatives, etc.
+    conversation_state = case.get("conversation_state")
+    if not conversation_state and case.get("gmail_thread_id"):
+        try:
+            from db.conversation_state import get_state
+            conversation_state = get_state(case["gmail_thread_id"])
+            if conversation_state:
+                logger.info(
+                    "Loaded conversation_state from DB for thread %s",
+                    case["gmail_thread_id"],
+                )
+        except Exception:
+            pass  # DB not available (local run), fall back to None
+
     return {
         "needs_reply": True,
         "situation": case.get("situation", "stock_question"),
@@ -119,7 +141,7 @@ def _build_result(case: dict) -> dict:
         "stock_issue": None,
         "gmail_thread_id": case.get("gmail_thread_id"),
         "gmail_account": "default",
-        "conversation_state": case.get("conversation_state"),
+        "conversation_state": conversation_state,
     }
 
 
@@ -189,10 +211,21 @@ def _llm_judge(actual: str, expected: str, case: dict) -> dict:
     # Extract just body for judge context
     body = inbound.split("Body:", 1)[1].strip()[:300] if "Body:" in inbound else inbound[:300]
 
+    # For oos_followup: include thread context so judge understands what was offered
+    thread_info = ""
+    oos_body = case.get("oos_email_body")
+    thread_ctx = case.get("thread_context")
+    if oos_body:
+        thread_info = f"\n\nOUR OOS EMAIL (what we offered):\n{oos_body[:500]}"
+    elif thread_ctx:
+        thread_info = "\n\nTHREAD CONTEXT (preceding messages):\n" + "\n---\n".join(
+            m[:300] for m in thread_ctx[-3:]
+        )
+
     judge_prompt = f"""You are a strict QA judge for an ecommerce customer service system.
 Compare ACTUAL reply vs EXPECTED reply. Be STRICT — score reflects real business impact.
 
-CUSTOMER ASKED: {body}
+CUSTOMER ASKED: {body}{thread_info}
 
 EXPECTED REPLY (gold standard):
 {expected}

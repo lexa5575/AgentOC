@@ -111,7 +111,7 @@ CRITICAL RULES:
 oos_followup_agent = Agent(
     id="oos-followup-handler",
     name="OOS Followup Handler",
-    model=OpenAIResponses(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=oos_followup_instructions,
     tools=[search_stock_tool],
     markdown=False,

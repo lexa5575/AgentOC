@@ -22,7 +22,13 @@
       "outbound_reply": "Hello!\nThank you very much for placing an order\nWe will ship your package ASAP\nTotal is $330.00 FREE shipping applied\nPay when received as always via Zelle or Cash App\nZELLE IS OUR PREFERRED METHOD OF PAYMENT\nWhen order is received and you are ready to pay ( In memo or comments don't put anything please ! )\n\nHere is your confirmation.\nTracking With USPS will be updated on the USPS website till midnight on the day of the shipping\n[tracking URL pending]\n\nNicole Hyland\n1929 Zonny Moss Drive\nJohns Island, SC 29455",
       "reply_situation": "oos_followup",
       "gmail_thread_id": "19461085b553eafe",
-      "created_at": "2026-03-17 16:38:57.839515"
+      "created_at": "2026-03-17 16:38:57.839515",
+      "thread_context": [
+        "[CLIENT] (id=1149, sit=new_order):\nFrom: Nicole Hyland <nicolemariehyland3@gmail.com>\nSubject: Re: Order\nBody: Good morning,\n\nI'd like to order 4 cartons of Terea turquoise, please. I am looking for\nthe least expensive thank you.\n\nSame address as always\n*Nicole Hyland*\n*1929 Zonny Moss Drive*\n*Johns Island, SC*\n*29455*\n(908) 420-1109\n\nOn Mon, Feb 9, 2026 at 8:10 AM Iqos Tilda <iqostilda2@gmail.com> wrote:\n\n> Received as agreed!\n> We appreciate having such a reliable customer.\n>\n",
+        "[US] (id=1150, sit=new_order):\nHi!\nHow are you?\nUnfortunately, we just ran out of Terea Turquoise EU\n\nWhat can we offer? Please choose one of the options below.\n1. We have 4 x Terea Turquoise ME (same product, different region), 4 x Terea Green EU, 4 x Terea Menthol made in Japan\n2. Check our website for substitutions and ready to ship sticks.\n\nLink for the sticks substitution\nhttps://shipmecarton.com\n\nPlease let us know what you think"
+      ],
+      "oos_email_id": 1150,
+      "oos_email_body": "Hi!\nHow are you?\nUnfortunately, we just ran out of Terea Turquoise EU\n\nWhat can we offer? Please choose one of the options below.\n1. We have 4 x Terea Turquoise ME (same product, different region), 4 x Terea Green EU, 4 x Terea Menthol made in Japan\n2. Check our website for substitutions and ready to ship sticks.\n\nLink for the sticks substitution\nhttps://shipmecarton.com\n\nPlease let us know what you think"
     },
     {
       "id": 1147,
@@ -46,7 +52,11 @@
       "outbound_reply": "Hello!\nThank you very much for placing an order\nWe will ship your package ASAP\nTotal is $330.00 FREE shipping applied\nPay when received as always via Zelle or Cash App\nZELLE IS OUR PREFERRED METHOD OF PAYMENT\nWhen order is received and you are ready to pay ( In memo or comments don't put anything please ! )\n\nHere is your confirmation.\nTracking With USPS will be updated on the USPS website till midnight on the day of the shipping\n[tracking URL pending]\n\nEugene Vayserberg\n716 San Conrado Ter Unit 8\nSunnyvale CA 94085-2532",
       "reply_situation": "oos_followup",
       "gmail_thread_id": "19cf82ed1755f137",
-      "created_at": "2026-03-17 16:13:45.849728"
+      "created_at": "2026-03-17 16:13:45.849728",
+      "thread_context": [
+        "[CLIENT] (id=1117, sit=new_order):\nFrom: Eugene Vayserberg <eugene.vayserberg@gmail.com>\nSubject: Re: PAYMENT REMINDER\nBody: Can I get 3 more purple?\n\nEugene\n\nOn Sun, Mar 8, 2026 at 5:24 PM Iqos Tilda <iqostilda2@gmail.com> wrote:\n\n> Received as agreed!\n> We appreciate having such a reliable customer.\n>\n",
+        "[US] (id=1118, sit=new_order):\nHi Eugene, yes we can do 3 more — which one did you mean: Terea Purple ME or one of the Japan purples (T Purple Japan / Black Purple Menthol Japan)? Reply with the exact one you want and I’ll confirm the total and send the Zelle/Cash App payment details (no memo), then we ship via USPS Priority (2–4 days) once payment is in. Thank you!"
+      ]
     },
     {
       "id": 1139,
@@ -70,7 +80,13 @@
       "outbound_reply": "Hello!\nThank you very much for placing an order\nWe will ship your package ASAP\nTotal is $110.00 FREE shipping applied\nPay when received as always via Zelle or Cash App\nZELLE IS OUR PREFERRED METHOD OF PAYMENT\nWhen order is received and you are ready to pay ( In memo or comments don't put anything please ! )\n\nHere is your confirmation.\nTracking With USPS will be updated on the USPS website till midnight on the day of the shipping\n[tracking URL pending]\n\nSteven Coran\n7713 Rydal Ter\nRockville, Maryland 20855",
       "reply_situation": "oos_followup",
       "gmail_thread_id": "19cfb13e7a3076a5",
-      "created_at": "2026-03-17 16:00:07.968524"
+      "created_at": "2026-03-17 16:00:07.968524",
+      "thread_context": [
+        "[CLIENT] (id=1129, sit=new_order):\nFrom: Shipmecarton <order@shipmecarton.com>\nReply-To: sjc276@yahoo.com\nSubject: Shipmecarton - Order 23658\nBody: #\n\t\t\tImage\n\t\t\tName\n\t\t\tPrice\n\t\t\tQnt\n\t\t\tAmount\n\t\t\n\t\t\t\t\t\n\t\t\t\t1\n\t\t\t\t\n\t\t\t\tTera YELLOW made in Europe \n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\n\t\t\t\t$110.00\n\t\t\t\t1\n\t\t\t\t$110.00\n\t\t\t\n\n\t\t \n\t\t\n\t\t\t\n\t\t\t\n\t\t\t\n\t\t\t\n\t\t\tTotals:\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t$110.00\n\t\t\t\t\t\t\t \n\t\t\n\t\n\nPayment information:\nOrder ID: 23658\nPayment amount: \t$110.00\n \nOrder Status: Processing\nDate Added: 17/03/2026\n\nPurchser information:\nFirstname: Steven Coran\nStree",
+        "[US] (id=1130, sit=new_order):\nHi!\nHow are you?\nUnfortunately, we just ran out of Terea Yellow EU\n\nWhat can we offer? Please choose one of the options below.\n1. We have Terea Yellow ME (same product, different region), Terea Sun Pearl ME, Terea BLUE ME\n2. Check our website for substitutions and ready to ship sticks.\n\nLink for the sticks substitution\nhttps://shipmecarton.com\n\nPlease let us know what you think"
+      ],
+      "oos_email_id": 1130,
+      "oos_email_body": "Hi!\nHow are you?\nUnfortunately, we just ran out of Terea Yellow EU\n\nWhat can we offer? Please choose one of the options below.\n1. We have Terea Yellow ME (same product, different region), Terea Sun Pearl ME, Terea BLUE ME\n2. Check our website for substitutions and ready to ship sticks.\n\nLink for the sticks substitution\nhttps://shipmecarton.com\n\nPlease let us know what you think"
     },
     {
       "id": 1109,
@@ -94,7 +110,13 @@
       "outbound_reply": "Hello!\nThank you very much for placing an order\nWe will ship your package ASAP\nTotal is $330.00 FREE shipping applied\nPay when received as always via Zelle or Cash App\nZELLE IS OUR PREFERRED METHOD OF PAYMENT\nWhen order is received and you are ready to pay ( In memo or comments don't put anything please ! )\n\nHere is your confirmation.\nTracking With USPS will be updated on the USPS website till midnight on the day of the shipping\n[tracking URL pending]\n\nFrancesco Spadea\n153 Northwood Cmns\nLivermore, California 94551",
       "reply_situation": "oos_followup",
       "gmail_thread_id": "19cf7a7dd1507956",
-      "created_at": "2026-03-16 18:45:35.107975"
+      "created_at": "2026-03-16 18:45:35.107975",
+      "thread_context": [
+        "[CLIENT] (id=1099, sit=new_order):\nFrom: Shipmecarton <order@shipmecarton.com>\nReply-To: fra78s@hotmail.it\nSubject: Shipmecarton - Order 23650\nBody: #\n\t\t\tImage\n\t\t\tName\n\t\t\tPrice\n\t\t\tQnt\n\t\t\tAmount\n\t\t\n\t\t\t\t\t\n\t\t\t\t1\n\t\t\t\t\n\t\t\t\tTera Turquoise made in Europe \n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\n\t\t\t\t$110.00\n\t\t\t\t3\n\t\t\t\t$330.00\n\t\t\t\n\n\t\t \n\t\t\n\t\t\t\n\t\t\t\n\t\t\t\n\t\t\t\n\t\t\tTotals:\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t$330.00\n\t\t\t\t\t\t\t \n\t\t\n\t\n\nPayment information:\nOrder ID: 23650\nPayment amount: \t$330.00\n \nOrder Status: Processing\nDate Added: 16/03/2026\n\nPurchser information:\nFirstname: Francesco Spad",
+        "[US] (id=1100, sit=new_order):\nHi!\nHow are you?\nUnfortunately, we just ran out of Terea Turquoise EU\n\nWhat can we offer? Please choose one of the options below.\n1. We have 3 x Terea Turquoise ME (same product, different region), 3 x Terea Menthol made in Japan, 3 x Terea Fusion Menthol made in Japan\n2. Check our website for substitutions and ready to ship sticks.\n\nLink for the sticks substitution\nhttps://shipmecarton.com\n\nPlease let us know what you think"
+      ],
+      "oos_email_id": 1100,
+      "oos_email_body": "Hi!\nHow are you?\nUnfortunately, we just ran out of Terea Turquoise EU\n\nWhat can we offer? Please choose one of the options below.\n1. We have 3 x Terea Turquoise ME (same product, different region), 3 x Terea Menthol made in Japan, 3 x Terea Fusion Menthol made in Japan\n2. Check our website for substitutions and ready to ship sticks.\n\nLink for the sticks substitution\nhttps://shipmecarton.com\n\nPlease let us know what you think"
     },
     {
       "id": 1107,
@@ -118,7 +140,13 @@
       "outbound_reply": "Hello!\nThank you very much for placing an order\nWe will ship your package ASAP\nTotal is $220.00 FREE shipping applied\nPay when received as always via Zelle or Cash App\nZELLE IS OUR PREFERRED METHOD OF PAYMENT\nWhen order is received and you are ready to pay ( In memo or comments don't put anything please ! )\n\nHere is your confirmation.\nTracking With USPS will be updated on the USPS website till midnight on the day of the shipping\n[tracking URL pending]\n\nIvanka Ilieva\n19842 San Miguel Ave.\nCastro Valley, California 94546",
       "reply_situation": "oos_followup",
       "gmail_thread_id": "19cf347e13d54f6e",
-      "created_at": "2026-03-16 18:43:03.835019"
+      "created_at": "2026-03-16 18:43:03.835019",
+      "thread_context": [
+        "[CLIENT] (id=1057, sit=new_order):\nFrom: Shipmecarton <order@shipmecarton.com>\nReply-To: ivanka_ilieva74@yahoo.com\nSubject: Shipmecarton - Order 23646\nBody: #\n\t\t\tImage\n\t\t\tName\n\t\t\tPrice\n\t\t\tQnt\n\t\t\tAmount\n\t\t\n\t\t\t\t\t\n\t\t\t\t1\n\t\t\t\t\n\t\t\t\tTera Silver made in Europe \n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\n\t\t\t\t$110.00\n\t\t\t\t2\n\t\t\t\t$220.00\n\t\t\t\n\n\t\t \n\t\t\n\t\t\t\n\t\t\t\n\t\t\t\n\t\t\t\n\t\t\tTotals:\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t$220.00\n\t\t\t\t\t\t\t \n\t\t\n\t\n\nPayment information:\nOrder ID: 23646\nPayment amount: \t$220.00\n \nOrder Status: Processing\nDate Added: 15/03/2026\n\nPurchser information:\nFirstname: IVANKA IL",
+        "[US] (id=1058, sit=new_order):\nHi!\nHow are you?\nUnfortunately, we just ran out of Terea Silver EU\n\nWhat can we offer? Please choose one of the options below.\n1. We have 2 x Terea Silver ME (same product, different region), 2 x Terea Sun Pearl ME, 2 x Terea Yellow ME\n2. Check our website for substitutions and ready to ship sticks.\n\nLink for the sticks substitution\nhttps://shipmecarton.com\n\nPlease let us know what you think"
+      ],
+      "oos_email_id": 1058,
+      "oos_email_body": "Hi!\nHow are you?\nUnfortunately, we just ran out of Terea Silver EU\n\nWhat can we offer? Please choose one of the options below.\n1. We have 2 x Terea Silver ME (same product, different region), 2 x Terea Sun Pearl ME, 2 x Terea Yellow ME\n2. Check our website for substitutions and ready to ship sticks.\n\nLink for the sticks substitution\nhttps://shipmecarton.com\n\nPlease let us know what you think"
     },
     {
       "id": 1101,
@@ -142,7 +170,8 @@
       "outbound_reply": "Thank you so much for placing an order\nYour total is $115.00 FREE shipping\n\n!!! Zelle ( In memo or comments don't put anything please ! ) use email below\n\namazingparts123@gmail.com\n\nIf paid today, We will ship your order Tonight from USA\nYour order will be delivered in 2-4 days max.\nThank you!",
       "reply_situation": "oos_followup",
       "gmail_thread_id": "19cf7836f7c03282",
-      "created_at": "2026-03-16 17:44:39.440418"
+      "created_at": "2026-03-16 17:44:39.440418",
+      "thread_context": []
     },
     {
       "id": 1097,
@@ -166,7 +195,15 @@
       "outbound_reply": "Hello!\nThank you very much for placing an order\nWe will ship your package ASAP\nTotal is $220.00 FREE shipping applied\nPay when received as always via Zelle or Cash App\nZELLE IS OUR PREFERRED METHOD OF PAYMENT\nWhen order is received and you are ready to pay ( In memo or comments don't put anything please ! )\n\nHere is your confirmation.\nTracking With USPS will be updated on the USPS website till midnight on the day of the shipping\n[tracking URL pending]\n\nGeorge Sammour\n1411 E Iron Bridge Way, Apt 333\nSpokane, WA 99202",
       "reply_situation": "oos_followup",
       "gmail_thread_id": "19cf56e578eba2c3",
-      "created_at": "2026-03-16 17:31:24.466879"
+      "created_at": "2026-03-16 17:31:24.466879",
+      "thread_context": [
+        "[CLIENT] (id=1079, sit=new_order):\nFrom: George Sammour <georgiossammour@gmail.com>\nSubject: Terea order\nBody: Hey,\n\nI would like to order 2 turquoise cartons EU please.\n\nShipping address:\n\nGeorge Sammour\n1411 E Iron Bridge Way, Apt 333\nSpokane, WA 99202\n\nCheers,\nG\n",
+        "[US] (id=1080, sit=new_order):\nHi!\nHow are you?\nUnfortunately, we just ran out of Terea Turquoise EU\n\nWhat can we offer? Please choose one of the options below.\n1. We have 2 x Terea Turquoise ME (same product, different region), 2 x Terea Menthol made in Japan, 2 x Terea Fusion Menthol made in Japan\n2. Check our website for substitutions and ready to ship sticks.\n\nLink for the sticks substitution\nhttps://shipmecarton.com\n\nPlease let us know what you think",
+        "[CLIENT] (id=1095, sit=oos_followup):\nFrom: George Sammour <georgiossammour@gmail.com>\nSubject: Re: Terea order\nBody: Hi,\n\nIs the Terea Green EU close/similar to turquoise?\n\n\n\nOn Mon, Mar 16, 2026 at 6:01 AM Iqos Tilda <iqostilda2@gmail.com> wrote:\n\n> Hi!\n> How are you?\n> Unfortunately, we just ran out of Terea Turquoise EU\n>\n> What can we offer? Please choose one of the options below.\n> 1. We have 2 x Terea Turquoise ME (same product, different region), 2\n> x Terea Menthol made in Japan, 2 x Terea Green EU\n> 2. Check our website fo",
+        "[US] (id=1096, sit=oos_followup):\nHi George,\n\nThanks for reaching out! Terea Green EU is a bit different in flavor compared to Turquoise, as Green has more herbal notes while Turquoise is milder. If you'd like to proceed with Terea Green EU, let me know! We have it in stock.\n\nIf you choose Terea Green EU, your total will be $220 for 2 cartons. We’ll ship your order ASAP, and you can pay via Zelle or Cash App upon receipt.\n\nLet me know how you'd like to proceed!\n\nThank you!"
+      ],
+      "oos_email_id": 1080,
+      "oos_email_body": "Hi!\nHow are you?\nUnfortunately, we just ran out of Terea Turquoise EU\n\nWhat can we offer? Please choose one of the options below.\n1. We have 2 x Terea Turquoise ME (same product, different region), 2 x Terea Menthol made in Japan, 2 x Terea Fusion Menthol made in Japan\n2. Check our website for substitutions and ready to ship sticks.\n\nLink for the sticks substitution\nhttps://shipmecarton.com\n\nPlease let us know what you think"
     },
     {
       "id": 1095,
@@ -190,7 +227,13 @@
       "outbound_reply": "Hi George,\n\nThanks for reaching out! Terea Green EU is a bit different in flavor compared to Turquoise, as Green has more herbal notes while Turquoise is milder. If you'd like to proceed with Terea Green EU, let me know! We have it in stock.\n\nIf you choose Terea Green EU, your total will be $220 for 2 cartons. We’ll ship your order ASAP, and you can pay via Zelle or Cash App upon receipt.\n\nLet me know how you'd like to proceed!\n\nThank you!",
       "reply_situation": "oos_followup",
       "gmail_thread_id": "19cf56e578eba2c3",
-      "created_at": "2026-03-16 16:44:01.571128"
+      "created_at": "2026-03-16 16:44:01.571128",
+      "thread_context": [
+        "[CLIENT] (id=1079, sit=new_order):\nFrom: George Sammour <georgiossammour@gmail.com>\nSubject: Terea order\nBody: Hey,\n\nI would like to order 2 turquoise cartons EU please.\n\nShipping address:\n\nGeorge Sammour\n1411 E Iron Bridge Way, Apt 333\nSpokane, WA 99202\n\nCheers,\nG\n",
+        "[US] (id=1080, sit=new_order):\nHi!\nHow are you?\nUnfortunately, we just ran out of Terea Turquoise EU\n\nWhat can we offer? Please choose one of the options below.\n1. We have 2 x Terea Turquoise ME (same product, different region), 2 x Terea Menthol made in Japan, 2 x Terea Fusion Menthol made in Japan\n2. Check our website for substitutions and ready to ship sticks.\n\nLink for the sticks substitution\nhttps://shipmecarton.com\n\nPlease let us know what you think"
+      ],
+      "oos_email_id": 1080,
+      "oos_email_body": "Hi!\nHow are you?\nUnfortunately, we just ran out of Terea Turquoise EU\n\nWhat can we offer? Please choose one of the options below.\n1. We have 2 x Terea Turquoise ME (same product, different region), 2 x Terea Menthol made in Japan, 2 x Terea Fusion Menthol made in Japan\n2. Check our website for substitutions and ready to ship sticks.\n\nLink for the sticks substitution\nhttps://shipmecarton.com\n\nPlease let us know what you think"
     },
     {
       "id": 1093,
@@ -214,7 +257,15 @@
       "outbound_reply": "Hello!\nThank you very much for placing an order\nWe will ship your package ASAP\nTotal is $440.00 FREE shipping applied\nPay when received as always via Zelle or Cash App\nZELLE IS OUR PREFERRED METHOD OF PAYMENT\nWhen order is received and you are ready to pay ( In memo or comments don't put anything please ! )\n\nHere is your confirmation.\nTracking With USPS will be updated on the USPS website till midnight on the day of the shipping\n[tracking URL pending]\n\nAna Sarovsky\n12449 Heatherton Ct apt 278\nSan Diego CA 92128",
       "reply_situation": "oos_followup",
       "gmail_thread_id": "195a12b4605e4a12",
-      "created_at": "2026-03-16 16:39:31.472497"
+      "created_at": "2026-03-16 16:39:31.472497",
+      "thread_context": [
+        "[CLIENT] (id=608, sit=payment_received):\nFrom: Ana Sarovsky <anasarovsky@gmail.com>\nSubject: Re: Order\nBody: Thank you, order received and payment was sent\n\nOn Tue, Mar 3, 2026 at 10:00 AM Ana Sarovsky <anasarovsky@gmail.com> wrote:\n\n> Thank you, that is correct\n>\n> On Tue, Mar 3, 2026 at 8:38 AM Iqos Tilda <iqostilda2@gmail.com> wrote:\n>\n>> Ana Sarovsky\n>> 12449 Heatherton Ct apt 278\n>> <https://www.google.com/maps/search/12449+Heatherton+Ct+apt+278+San+Diego+CA+92128?entry=gmail&source=g>\n>> San Diego CA 92128\n>> <https://www.google.",
+        "[US] (id=609, sit=payment_received):\n(Клиент не в базе — авто-ответ не генерируется)",
+        "[CLIENT] (id=1077, sit=oos_followup):\nFrom: Ana Sarovsky <anasarovsky@gmail.com>\nSubject: Re: Order\nBody: Do you have turquoise back in stock?\n\nOn Sat, Mar 7, 2026 at 6:51 AM Iqos Tilda <iqostilda2@gmail.com> wrote:\n\n> Thank you for your prompt payment!\n> We value your business and look forward to working with you again!\n>\n",
+        "[US] (id=1078, sit=oos_followup):\nHello Ana,\n\nUnfortunately, the Turquoise is still out of stock. If you’re interested in exploring other options or need help finding alternatives, let me know how I can assist you!\n\nThank you!"
+      ],
+      "oos_email_id": 1078,
+      "oos_email_body": "Hello Ana,\n\nUnfortunately, the Turquoise is still out of stock. If you’re interested in exploring other options or need help finding alternatives, let me know how I can assist you!\n\nThank you!"
     },
     {
       "id": 1091,
@@ -238,7 +289,13 @@
       "outbound_reply": "Hello!\nThank you very much for placing an order\nWe will ship your package ASAP\nTotal is $330.00 FREE shipping applied\nPay when received as always via Zelle or Cash App\nZELLE IS OUR PREFERRED METHOD OF PAYMENT\nWhen order is received and you are ready to pay ( In memo or comments don't put anything please ! )\n\nHere is your confirmation.\nTracking With USPS will be updated on the USPS website till midnight on the day of the shipping\n[tracking URL pending]\n\nPatricia Carey\n221 West 5th Street\nShip Bottom, New Jersey 08008",
       "reply_situation": "oos_followup",
       "gmail_thread_id": "19cf33d10512f0ae",
-      "created_at": "2026-03-16 16:11:37.433596"
+      "created_at": "2026-03-16 16:11:37.433596",
+      "thread_context": [
+        "[CLIENT] (id=1055, sit=new_order):\nFrom: Shipmecarton <order@shipmecarton.com>\nReply-To: triciacarey221@aol.com\nSubject: Shipmecarton - Order 23645\nBody: #\n\t\t\tImage\n\t\t\tName\n\t\t\tPrice\n\t\t\tQnt\n\t\t\tAmount\n\t\t\n\t\t\t\t\t\n\t\t\t\t1\n\t\t\t\t\n\t\t\t\tTera Turquoise made in Europe \n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\n\t\t\t\t$110.00\n\t\t\t\t3\n\t\t\t\t$330.00\n\t\t\t\n\n\t\t \n\t\t\n\t\t\t\n\t\t\t\n\t\t\t\n\t\t\t\n\t\t\tTotals:\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t$330.00\n\t\t\t\t\t\t\t \n\t\t\n\t\n\nPayment information:\nOrder ID: 23645\nPayment amount: \t$330.00\n \nOrder Status: Processing\nDate Added: 15/03/2026\n\nPurchser information:\nFirstname: Patricia ",
+        "[US] (id=1056, sit=new_order):\nHi!\nHow are you?\nUnfortunately, we just ran out of Terea Turquoise EU\n\nWhat can we offer? Please choose one of the options below.\n1. We have 3 x Terea Turquoise ME (same product, different region), 3 x Terea Menthol made in Japan, 3 x Terea Green EU\n2. Check our website for substitutions and ready to ship sticks.\n\nLink for the sticks substitution\nhttps://shipmecarton.com\n\nPlease let us know what you think"
+      ],
+      "oos_email_id": 1056,
+      "oos_email_body": "Hi!\nHow are you?\nUnfortunately, we just ran out of Terea Turquoise EU\n\nWhat can we offer? Please choose one of the options below.\n1. We have 3 x Terea Turquoise ME (same product, different region), 3 x Terea Menthol made in Japan, 3 x Terea Green EU\n2. Check our website for substitutions and ready to ship sticks.\n\nLink for the sticks substitution\nhttps://shipmecarton.com\n\nPlease let us know what you think"
     },
     {
       "id": 1087,
@@ -262,7 +319,11 @@
       "outbound_reply": "Hello!\nThank you very much for placing an order\nWe will ship your package ASAP\nTotal is $550.00 FREE shipping applied\nPay when received as always via Zelle or Cash App\nZELLE IS OUR PREFERRED METHOD OF PAYMENT\nWhen order is received and you are ready to pay ( In memo or comments don't put anything please ! )\n\nHere is your confirmation.\nTracking With USPS will be updated on the USPS website till midnight on the day of the shipping\n[tracking URL pending]\n\nTihomir Zecevic\n4101 Hanover Ave\nRichmond, VA 23221",
       "reply_situation": "oos_followup",
       "gmail_thread_id": "19abb2b083f4fd4a",
-      "created_at": "2026-03-16 16:04:41.651238"
+      "created_at": "2026-03-16 16:04:41.651238",
+      "thread_context": [
+        "[CLIENT] (id=1067, sit=new_order):\nFrom: Tihomir Zecevic <tihomir_zecevic@yahoo.com>\nSubject: Re: Shipmecarton - Order 22521\nBody: Hi there,\n\nDo you have any silver, yellow or amber ? Need 5 or combination of them\n\nThanks \n\nSent from my iPhone\n\n> On Feb 26, 2026, at 8:25 AM, Tihomir Zecevic <tihomir_zecevic@yahoo.com> wrote:\n> \n> ﻿Thank you\n> \n> Sent from my iPhone\n> \n>>> On Feb 26, 2026, at 8:20 AM, James Harris <getorderstick@gmail.com> wrote:\n>>> \n>> ﻿\n>> Got it!\n>> Thank you for your honesty and trust.\n>> It’s a pleasure doin",
+        "[US] (id=1068, sit=new_order):\nSilver/Yellow/Amber are available right now: **Terea Silver ME**, **Terea Yellow ME**, and **Terea Amber ME**. We also have **Terea Black Yellow Menthol Japan** if you meant that one. Tell me which 5 you want (example: 2 Silver ME + 2 Yellow ME + 1 Amber ME) and I’ll get it shipped out asap (pay when received via Zelle or Cash App). Thank you!"
+      ]
     },
     {
       "id": 1077,
@@ -286,7 +347,11 @@
       "outbound_reply": "Hello Ana,\n\nUnfortunately, the Turquoise is still out of stock. If you’re interested in exploring other options or need help finding alternatives, let me know how I can assist you!\n\nThank you!",
       "reply_situation": "oos_followup",
       "gmail_thread_id": "195a12b4605e4a12",
-      "created_at": "2026-03-16 12:57:00.850069"
+      "created_at": "2026-03-16 12:57:00.850069",
+      "thread_context": [
+        "[CLIENT] (id=608, sit=payment_received):\nFrom: Ana Sarovsky <anasarovsky@gmail.com>\nSubject: Re: Order\nBody: Thank you, order received and payment was sent\n\nOn Tue, Mar 3, 2026 at 10:00 AM Ana Sarovsky <anasarovsky@gmail.com> wrote:\n\n> Thank you, that is correct\n>\n> On Tue, Mar 3, 2026 at 8:38 AM Iqos Tilda <iqostilda2@gmail.com> wrote:\n>\n>> Ana Sarovsky\n>> 12449 Heatherton Ct apt 278\n>> <https://www.google.com/maps/search/12449+Heatherton+Ct+apt+278+San+Diego+CA+92128?entry=gmail&source=g>\n>> San Diego CA 92128\n>> <https://www.google.",
+        "[US] (id=609, sit=payment_received):\n(Клиент не в базе — авто-ответ не генерируется)"
+      ]
     },
     {
       "id": 1075,
@@ -310,7 +375,13 @@
       "outbound_reply": "Hello!\nThank you very much for placing an order\nWe will ship your package ASAP\nTotal is $440.00 - 5% = $418.00 FREE shipping applied\nPay when received as always via Zelle or Cash App\nZELLE IS OUR PREFERRED METHOD OF PAYMENT\nWhen order is received and you are ready to pay ( In memo or comments don't put anything please ! )\n\nHere is your confirmation.\nTracking With USPS will be updated on the USPS website till midnight on the day of the shipping\n[tracking URL pending]\n\nSam Khoury\n633 Terrace Lake Dr.\nCovington, LA 70435",
       "reply_situation": "oos_followup",
       "gmail_thread_id": "1931c38de9754fc7",
-      "created_at": "2026-03-16 12:54:10.810806"
+      "created_at": "2026-03-16 12:54:10.810806",
+      "thread_context": [
+        "[CLIENT] (id=1026, sit=new_order):\nFrom: \"S. K.\" <sam_khoury@msn.com>\nSubject: Re: {{FirstName}} {{LastName}} sam_khoury@msn.com\nBody: How are you my friend. Hope all is ok.\n\nCan you ship me 4 of the silver  TEREA ?  Thanks\n\nSam Khoury\n633 Terrace Lake Dr.\nCovington, LA 70435\n\n612.839.5620\n\n\n________________________________\nFrom: Iqos Tilda <iqostilda2@gmail.com>\nSent: Monday, February 23, 2026 1:56 PM\nTo: S. K. <sam_khoury@msn.com>\nSubject: Re: {{FirstName}} {{LastName}} sam_khoury@msn.com\n\nPayment received.\nWe sincerely appreci",
+        "[US] (id=1027, sit=new_order):\nHi!\nHow are you?\nUnfortunately, we just ran out of Terea Silver EU\n\nWhat can we offer? Please choose one of the options below.\n1. We have 4 x Terea Silver ME (same product, different region), 4 x Terea Sun Pearl ME, 4 x Terea Yellow ME\n2. Check our website for substitutions and ready to ship sticks.\n\nLink for the sticks substitution\nhttps://shipmecarton.com\n\nPlease let us know what you think"
+      ],
+      "oos_email_id": 1027,
+      "oos_email_body": "Hi!\nHow are you?\nUnfortunately, we just ran out of Terea Silver EU\n\nWhat can we offer? Please choose one of the options below.\n1. We have 4 x Terea Silver ME (same product, different region), 4 x Terea Sun Pearl ME, 4 x Terea Yellow ME\n2. Check our website for substitutions and ready to ship sticks.\n\nLink for the sticks substitution\nhttps://shipmecarton.com\n\nPlease let us know what you think"
     },
     {
       "id": 1061,
@@ -334,7 +405,15 @@
       "outbound_reply": "Hello!\nThank you very much for placing an order\nWe will ship your package ASAP\nTotal is $110.00 FREE shipping applied\nPay when received as always via Zelle or Cash App\nZELLE IS OUR PREFERRED METHOD OF PAYMENT\nWhen order is received and you are ready to pay ( In memo or comments don't put anything please ! )\n\nHere is your confirmation.\nTracking With USPS will be updated on the USPS website till midnight on the day of the shipping\n[tracking URL pending]\n\nIpek Gurdal\n401 Golden Isles Drive #407\nHallandale, FL 33009",
       "reply_situation": "oos_followup",
       "gmail_thread_id": "195f7919f8c0357f",
-      "created_at": "2026-03-16 12:03:57.133534"
+      "created_at": "2026-03-16 12:03:57.133534",
+      "thread_context": [
+        "[CLIENT] (id=1001, sit=stock_question):\nFrom: Ipek Gurdal <gurdalipek@gmail.com>\nSubject: Re: Terea order\nBody: Hello James how are you?\n\nI am in states and need sone tereas. Do you have availability?\n\nThanks\nSent from my iPhone\n\n> On 4 Apr 2025, at 10:49, Ipek Gurdal <gurdalipek@gmail.com> wrote:\n> \n> ﻿Hello James,\n> \n> I found/put an order with a different person since our communication was a bit slow. I will be in touch for my next stay in Florida 🙏🏻\n> \n> Thank you,\n> Ipek\n> Sent from my iPhone\n> \n>>> On 4 Apr 2025, at 09:28, James",
+        "[US] (id=1002, sit=stock_question):\nHi Ipek Gurdal, here's what we currently have in stock:\n- Middle East (ME) — $110/box (6 flavors)\n- European (EU) — $110/box (4 flavors)\n\nWhich region are you interested in? We'll send you the full list! Thank you!",
+        "[CLIENT] (id=1011, sit=stock_question):\nFrom: Ipek Gurdal <gurdalipek@gmail.com>\nSubject: Re: Terea order\nBody: Hey James, I am in Florida. Would love to have Terea Amber or Teak if you have. \n\nYhanks,\nIpek\nSent from my iPhone\n\n> On 13 Mar 2026, at 15:59, James Harris <getorderstick@gmail.com> wrote:\n> \n> ﻿Hi, here's what we currently have in stock:\n> - Terea Amber, Silver, Yellow Middle East — $110\n> \n> Which region are you interested in?\n> We'll send you the full list! Thank you!\n",
+        "[US] (id=1012, sit=stock_question):\nHi Ipek Tanır, we have Terea Amber ME available for $110/box. Teak ME is not available right now, but we can do BLUE ME ($110/box), SUMMER ME ($110/box), or Beige ME ($110/box) instead. Do you want to go with Terea Amber ME or one of those Teak ME alternatives, and how many boxes? Thank you!"
+      ],
+      "oos_email_id": 1012,
+      "oos_email_body": "Hi Ipek Tanır, we have Terea Amber ME available for $110/box. Teak ME is not available right now, but we can do BLUE ME ($110/box), SUMMER ME ($110/box), or Beige ME ($110/box) instead. Do you want to go with Terea Amber ME or one of those Teak ME alternatives, and how many boxes? Thank you!"
     },
     {
       "id": 1047,
@@ -358,7 +437,14 @@
       "outbound_reply": "Hello Bahareh,\n\nThanks for asking! By \"boxes,\" I meant the larger containers, not individual packs. Both the Terea Yellow ME and Yellow (ARMENIA) are in stock, priced at $110 per box. \n\nSince you're interested in 2 boxes of Yellow, and if Yellow ME is still light as you'd like, you can go ahead with that option.\n\nWe'll ship your package ASAP, and as usual, you can pay when you receive it via Zelle or Cash App. \n\nThank you!",
       "reply_situation": "oos_followup",
       "gmail_thread_id": "186ca1f37abff975",
-      "created_at": "2026-03-15 19:27:17.872458"
+      "created_at": "2026-03-15 19:27:17.872458",
+      "thread_context": [
+        "[CLIENT] (id=1028, sit=skipped_stale):\n(stale unread — skipped, outside merge window)",
+        "[CLIENT] (id=1029, sit=new_order):\nFrom: bahareh roodgari <bahareh_roodgari@yahoo.com>\nSubject: Re: Iqos heets\nBody: Hi again. Actually if it’s not too late, I need 2 boxes of silver Terea. Thanks\n\n> On Mar 14, 2026, at 12:03 PM, bahareh roodgari <bahareh_roodgari@yahoo.com> wrote:\n> \n> ﻿\n> Hi there, can you please mail me one pack of silver Terea? Thanks\n> 1066 Noria street\n> Laguna Beach, ca. 92651\n> \n>>> On Jan 23, 2026, at 7:33 AM, bahareh roodgari <bahareh_roodgari@yahoo.com> wrote:\n>>> \n>> ﻿\n>> Done. Thank you very much for",
+        "[US] (id=1030, sit=new_order):\nHi!\nHow are you?\nUnfortunately, we just ran out of Terea Silver EU\n\nWhat can we offer? Please choose one of the options below.\n1. We have 2 x Terea Silver ME (same product, different region), 2 x Terea Sun Pearl ME, 2 x Terea Yellow ME\n2. Check our website for substitutions and ready to ship sticks.\n\nLink for the sticks substitution\nhttps://shipmecarton.com\n\nPlease let us know what you think"
+      ],
+      "oos_email_id": 1030,
+      "oos_email_body": "Hi!\nHow are you?\nUnfortunately, we just ran out of Terea Silver EU\n\nWhat can we offer? Please choose one of the options below.\n1. We have 2 x Terea Silver ME (same product, different region), 2 x Terea Sun Pearl ME, 2 x Terea Yellow ME\n2. Check our website for substitutions and ready to ship sticks.\n\nLink for the sticks substitution\nhttps://shipmecarton.com\n\nPlease let us know what you think"
     },
     {
       "id": 1045,
@@ -382,7 +468,15 @@
       "outbound_reply": "Hello!\nThank you very much for placing an order\nWe will ship your package ASAP\nTotal is $225.00 FREE shipping applied\nPay when received as always via Zelle or Cash App\nZELLE IS OUR PREFERRED METHOD OF PAYMENT\nWhen order is received and you are ready to pay ( In memo or comments don't put anything please ! )\n\nHere is your confirmation.\nTracking With USPS will be updated on the USPS website till midnight on the day of the shipping\n[tracking URL pending]\n\nAhlam Samad\n2926 Oak Point Dr\nGarland, TX 75044-7814",
       "reply_situation": "oos_followup",
       "gmail_thread_id": "196f8a98d120dd6e",
-      "created_at": "2026-03-15 18:02:55.472966"
+      "created_at": "2026-03-15 18:02:55.472966",
+      "thread_context": [
+        "[CLIENT] (id=1009, sit=new_order):\nFrom: Ahlam Samad <ahlamasamad@gmail.com>\nSubject: Re: PAYMENT REMINDER\nBody: Hi, hope all is well!!\nCan you please send 2 cartons of Sienna Terea to usual address?\n\nThanks!\n\nOn Sat, May 31, 2025 at 8:17 AM Iqos Tilda <iqostilda2@gmail.com> wrote:\n\n> Payment received.\n> We sincerely appreciate your responsibility.\n> Thank you!\n>\n",
+        "[US] (id=1010, sit=new_order):\nHi!\nHow are you?\nUnfortunately, we just ran out of Terea Siena\n\nWhat can we offer? Please choose one of the options below.\n1. We have 2 x Terea Sun Pearl ME, 2 x Terea Silver ME, 2 x Terea Yellow ME\n2. Check our website for substitutions and ready to ship sticks.\n\nLink for the sticks substitution\nhttps://shipmecarton.com\n\nPlease let us know what you think",
+        "[CLIENT] (id=1039, sit=oos_followup):\nFrom: Ahlam Samad <ahlamasamad@gmail.com>\nSubject: Re: Re: PAYMENT REMINDER\nBody: Do you have Amber ME and Balanced regular?\n\nOn Sat, Mar 14, 2026 at 10:53 AM Iqos Tilda <iqostilda2@gmail.com> wrote:\n\n> Hi!\n> How are you?\n> Unfortunately, we just ran out of Terea Siena\n>\n> What can we offer? Please choose one of the options below.\n> 1. We have  2 x Terea Silver ME, 2 x Terea Yellow ME\n> 2. Check our website for substitutions and ready to ship sticks.\n>\n> Link for the sticks substitution\n> https:",
+        "[US] (id=1040, sit=oos_followup):\nHello,\n\nGreat news! Both Amber ME and Balanced regular are available. Here's the breakdown for your order:\n\n- Amber ME x1 carton: $110\n- Balanced regular x1 carton: $115\n\nTotal: $225\n\nWe will ship your package ASAP, and you can pay via Zelle or Cash App when it arrives at your usual address. \n\nThank you!"
+      ],
+      "oos_email_id": 1010,
+      "oos_email_body": "Hi!\nHow are you?\nUnfortunately, we just ran out of Terea Siena\n\nWhat can we offer? Please choose one of the options below.\n1. We have 2 x Terea Sun Pearl ME, 2 x Terea Silver ME, 2 x Terea Yellow ME\n2. Check our website for substitutions and ready to ship sticks.\n\nLink for the sticks substitution\nhttps://shipmecarton.com\n\nPlease let us know what you think"
     },
     {
       "id": 1041,
@@ -406,7 +500,13 @@
       "outbound_reply": "Hello!\nThank you very much for placing an order\nWe will ship your package ASAP\nTotal is $330.00 FREE shipping applied\nPay when received as always via Zelle or Cash App\nZELLE IS OUR PREFERRED METHOD OF PAYMENT\nWhen order is received and you are ready to pay ( In memo or comments don't put anything please ! )\n\nHere is your confirmation.\nTracking With USPS will be updated on the USPS website till midnight on the day of the shipping\n[tracking URL pending]\n\nElena Tomova\n2922 Western Ave 612\nSeattle, Washington 98121",
       "reply_situation": "oos_followup",
       "gmail_thread_id": "19cef05b212e24a8",
-      "created_at": "2026-03-15 17:49:38.377640"
+      "created_at": "2026-03-15 17:49:38.377640",
+      "thread_context": [
+        "[CLIENT] (id=1020, sit=new_order):\nFrom: Shipmecarton <order@shipmecarton.com>\nReply-To: tomova.elen@gmail.com\nSubject: Shipmecarton - Order 23642\nBody: #\n\t\t\tImage\n\t\t\tName\n\t\t\tPrice\n\t\t\tQnt\n\t\t\tAmount\n\t\t\n\t\t\t\t\t\n\t\t\t\t1\n\t\t\t\t\n\t\t\t\tTera BRONZE made in Europe \n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\n\t\t\t\t$110.00\n\t\t\t\t3\n\t\t\t\t$330.00\n\t\t\t\n\n\t\t \n\t\t\n\t\t\t\n\t\t\t\n\t\t\t\n\t\t\t\n\t\t\tTotals:\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t$330.00\n\t\t\t\t\t\t\t \n\t\t\n\t\n\nPayment information:\nOrder ID: 23642\nPayment amount: \t$330.00\n \nOrder Status: Processing\nDate Added: 15/03/2026\n\nPurchser information:\nFirstname: Elena Tomova\n",
+        "[US] (id=1021, sit=new_order):\nHi!\nHow are you?\nUnfortunately, we just ran out of Terea Bronze EU\n\nWhat can we offer? Please choose one of the options below.\n1. We have 3 x Terea Silver ME, 3 x Terea Amber ME, 3 x Terea Black made in Japan\n2. Check our website for substitutions and ready to ship sticks.\n\nLink for the sticks substitution\nhttps://shipmecarton.com\n\nPlease let us know what you think"
+      ],
+      "oos_email_id": 1021,
+      "oos_email_body": "Hi!\nHow are you?\nUnfortunately, we just ran out of Terea Bronze EU\n\nWhat can we offer? Please choose one of the options below.\n1. We have 3 x Terea Silver ME, 3 x Terea Amber ME, 3 x Terea Black made in Japan\n2. Check our website for substitutions and ready to ship sticks.\n\nLink for the sticks substitution\nhttps://shipmecarton.com\n\nPlease let us know what you think"
     },
     {
       "id": 1039,
@@ -430,7 +530,13 @@
       "outbound_reply": "Hello,\n\nGreat news! Both Amber ME and Balanced regular are available. Here's the breakdown for your order:\n\n- Amber ME x1 carton: $110\n- Balanced regular x1 carton: $115\n\nTotal: $225\n\nWe will ship your package ASAP, and you can pay via Zelle or Cash App when it arrives at your usual address. \n\nThank you!",
       "reply_situation": "oos_followup",
       "gmail_thread_id": "196f8a98d120dd6e",
-      "created_at": "2026-03-15 15:56:46.728378"
+      "created_at": "2026-03-15 15:56:46.728378",
+      "thread_context": [
+        "[CLIENT] (id=1009, sit=new_order):\nFrom: Ahlam Samad <ahlamasamad@gmail.com>\nSubject: Re: PAYMENT REMINDER\nBody: Hi, hope all is well!!\nCan you please send 2 cartons of Sienna Terea to usual address?\n\nThanks!\n\nOn Sat, May 31, 2025 at 8:17 AM Iqos Tilda <iqostilda2@gmail.com> wrote:\n\n> Payment received.\n> We sincerely appreciate your responsibility.\n> Thank you!\n>\n",
+        "[US] (id=1010, sit=new_order):\nHi!\nHow are you?\nUnfortunately, we just ran out of Terea Siena\n\nWhat can we offer? Please choose one of the options below.\n1. We have 2 x Terea Sun Pearl ME, 2 x Terea Silver ME, 2 x Terea Yellow ME\n2. Check our website for substitutions and ready to ship sticks.\n\nLink for the sticks substitution\nhttps://shipmecarton.com\n\nPlease let us know what you think"
+      ],
+      "oos_email_id": 1010,
+      "oos_email_body": "Hi!\nHow are you?\nUnfortunately, we just ran out of Terea Siena\n\nWhat can we offer? Please choose one of the options below.\n1. We have 2 x Terea Sun Pearl ME, 2 x Terea Silver ME, 2 x Terea Yellow ME\n2. Check our website for substitutions and ready to ship sticks.\n\nLink for the sticks substitution\nhttps://shipmecarton.com\n\nPlease let us know what you think"
     },
     {
       "id": 1024,
@@ -454,7 +560,13 @@
       "outbound_reply": "Thank you so much for placing an order\nYour total is $110.00 FREE shipping\n\n!!! Zelle ( In memo or comments don't put anything please ! ) use email below\n\nzellepaytoday@gmail.com\n\nIf paid today, We will ship your order Tonight from USA\nYour order will be delivered in 2-4 days max.\nThank you!",
       "reply_situation": "oos_followup",
       "gmail_thread_id": "19cedb104d550275",
-      "created_at": "2026-03-15 15:19:05.016314"
+      "created_at": "2026-03-15 15:19:05.016314",
+      "thread_context": [
+        "[CLIENT] (id=1015, sit=new_order):\nFrom: Shipmecarton <order@shipmecarton.com>\nReply-To: aibassov@gmail.com\nSubject: Shipmecarton - Order 23641\nBody: #\n\t\t\tImage\n\t\t\tName\n\t\t\tPrice\n\t\t\tQnt\n\t\t\tAmount\n\t\t\n\t\t\t\t\t\n\t\t\t\t1\n\t\t\t\t\n\t\t\t\tTera Turquoise made in Europe \n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\n\t\t\t\t$110.00\n\t\t\t\t1\n\t\t\t\t$110.00\n\t\t\t\n\n\t\t \n\t\t\n\t\t\t\n\t\t\t\n\t\t\t\n\t\t\t\n\t\t\tTotals:\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t$110.00\n\t\t\t\t\t\t\t \n\t\t\n\t\n\nPayment information:\nOrder ID: 23641\nPayment amount: \t$110.00\n \nOrder Status: Processing\nDate Added: 14/03/2026\n\nPurchser information:\nFirstname: Temirlan Aiba",
+        "[US] (id=1016, sit=new_order):\nHi!\nHow are you?\nUnfortunately, we just ran out of Terea Turquoise EU\n\nWhat can we offer? Please choose one of the options below.\n1. We have Terea Turquoise ME (same product, different region), Terea Menthol made in Japan, Terea Mint made in Japan\n2. Check our website for substitutions and ready to ship sticks.\n\nLink for the sticks substitution\nhttps://shipmecarton.com\n\nPlease let us know what you think"
+      ],
+      "oos_email_id": 1016,
+      "oos_email_body": "Hi!\nHow are you?\nUnfortunately, we just ran out of Terea Turquoise EU\n\nWhat can we offer? Please choose one of the options below.\n1. We have Terea Turquoise ME (same product, different region), Terea Menthol made in Japan, Terea Mint made in Japan\n2. Check our website for substitutions and ready to ship sticks.\n\nLink for the sticks substitution\nhttps://shipmecarton.com\n\nPlease let us know what you think"
     },
     {
       "id": 1013,
@@ -478,7 +590,13 @@
       "outbound_reply": "Hello!\nThank you very much for placing an order\nWe will ship your package ASAP\nTotal is $440.00 FREE shipping applied\nPay when received as always via Zelle or Cash App\nZELLE IS OUR PREFERRED METHOD OF PAYMENT\nWhen order is received and you are ready to pay ( In memo or comments don't put anything please ! )\n\nHere is your confirmation.\nTracking With USPS will be updated on the USPS website till midnight on the day of the shipping\n[tracking URL pending]\n\nAissan Alam\n1430 S Beverly Glen blvd Apt 202\nLos Angeles, California 90024",
       "reply_situation": "oos_followup",
       "gmail_thread_id": "19ce9c5b60dfcd82",
-      "created_at": "2026-03-15 14:53:37.014883"
+      "created_at": "2026-03-15 14:53:37.014883",
+      "thread_context": [
+        "[CLIENT] (id=1005, sit=new_order):\nFrom: Shipmecarton <order@shipmecarton.com>\nReply-To: Aissanalam@gmail.com\nSubject: Shipmecarton - Order 23639\nBody: #\n\t\t\tImage\n\t\t\tName\n\t\t\tPrice\n\t\t\tQnt\n\t\t\tAmount\n\t\t\n\t\t\t\t\t\n\t\t\t\t1\n\t\t\t\t\n\t\t\t\tTera AMBER made in Europe \n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\n\t\t\t\t$110.00\n\t\t\t\t4\n\t\t\t\t$440.00\n\t\t\t\n\n\t\t \n\t\t\n\t\t\t\n\t\t\t\n\t\t\t\n\t\t\t\n\t\t\tTotals:\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t$440.00\n\t\t\t\t\t\t\t \n\t\t\n\t\n\nPayment information:\nOrder ID: 23639\nPayment amount: \t$440.00\n \nOrder Status: Processing\nDate Added: 14/03/2026\n\nPurchser information:\nFirstname: Aissan alam\nStr",
+        "[US] (id=1006, sit=new_order):\nHi!\nHow are you?\nUnfortunately, we just ran out of Terea Amber EU\n\nWhat can we offer? Please choose one of the options below.\n1. We have 4 x Terea Amber ME (same product, different region), 4 x Terea Silver ME, 4 x Terea Black made in Japan\n2. Check our website for substitutions and ready to ship sticks.\n\nLink for the sticks substitution\nhttps://shipmecarton.com\n\nPlease let us know what you think"
+      ],
+      "oos_email_id": 1006,
+      "oos_email_body": "Hi!\nHow are you?\nUnfortunately, we just ran out of Terea Amber EU\n\nWhat can we offer? Please choose one of the options below.\n1. We have 4 x Terea Amber ME (same product, different region), 4 x Terea Silver ME, 4 x Terea Black made in Japan\n2. Check our website for substitutions and ready to ship sticks.\n\nLink for the sticks substitution\nhttps://shipmecarton.com\n\nPlease let us know what you think"
     }
   ],
   "new_order": [
@@ -983,7 +1101,7 @@
       },
       "subject": "Re: Shipmecarton - Order 23656",
       "inbound_text": "From: mariah ezz <mar92a@yahoo.com>\nSubject: Re: Shipmecarton - Order 23656\nBody: Hello ! Do you have in stock any terra russet or bronze ?\r\n\r\n\r\nSent from Yahoo Mail for iPhone\r\n\r\n\r\nOn Tuesday, March 17, 2026, 8:04 AM, James Harris <getorderstick@gmail.com> wrote:\r\n\r\nHi!\r\nHow are you?\r\nUnfortunately, we just ran out of Terea Siena ME\r\n\r\nWhat can we offer? Please choose one of the options below.\r\n1. We have Terea Beige ME, Terea Silver ME, Terea Yellow ME\r\n2. Check our website for substitutions and ready to ship sticks.\r\n\r\nLink for the sticks substitution\r\nhttps://shipmecarton.com\r\n\r\nPlease let us know what you think\r\n\r\n\r\n\r\n",
-      "outbound_reply": "Hi Maria Hannah, Russet ME and Bronze ME are not available right now. We can swap with Beige ME, Silver ME, Yellow ME. Do any of those work for you? Thank you!",
+      "outbound_reply": "Hi Maria Hannah, Russet and Bronze are not available right now. We can swap with Beige ME, Silver ME, Yellow ME. Do any of those work for you? Thank you!",
       "reply_situation": "stock_question",
       "gmail_thread_id": "19cfa0982696d191",
       "created_at": "2026-03-17 16:08:23.162007"
