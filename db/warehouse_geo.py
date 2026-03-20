@@ -153,11 +153,17 @@ def _extract_state_code(text: str) -> str | None:
     return None
 
 
-def resolve_warehouse_from_address(city_state_zip: str) -> list[str]:
+def resolve_warehouse_from_address(
+    city_state_zip: str,
+    active_warehouses: list[str] | None = None,
+) -> list[str]:
     """Return warehouse priority list based on client address.
 
     Args:
         city_state_zip: Client address string (e.g. "Roseville, CA 95747").
+        active_warehouses: If provided, filter output to only include these
+            warehouses. Static mappings are preserved — filtering happens
+            at output time only.
 
     Returns:
         Ordered list of warehouse names, closest first.
@@ -169,7 +175,8 @@ def resolve_warehouse_from_address(city_state_zip: str) -> list[str]:
             "Could not parse state from address '%s', using default fallback",
             city_state_zip,
         )
-        return list(DEFAULT_FALLBACK)
+        result = list(DEFAULT_FALLBACK)
+        return _filter_active(result, active_warehouses)
 
     home_wh = STATE_TO_WAREHOUSE.get(state_code)
     if not home_wh:
@@ -177,11 +184,30 @@ def resolve_warehouse_from_address(city_state_zip: str) -> list[str]:
             "State code %s not mapped to warehouse, using default fallback",
             state_code,
         )
-        return list(DEFAULT_FALLBACK)
+        result = list(DEFAULT_FALLBACK)
+        return _filter_active(result, active_warehouses)
 
     priority = WAREHOUSE_PROXIMITY.get(home_wh, DEFAULT_FALLBACK)
     logger.debug(
         "Address '%s' → state=%s → warehouse priority=%s",
         city_state_zip, state_code, priority,
     )
-    return list(priority)
+    result = list(priority)
+    return _filter_active(result, active_warehouses)
+
+
+def _filter_active(
+    priority: list[str],
+    active_warehouses: list[str] | None,
+) -> list[str]:
+    """Filter priority list to only include active warehouses."""
+    if active_warehouses is None:
+        return priority
+    active_set = set(active_warehouses)
+    filtered = [w for w in priority if w in active_set]
+    if not filtered and priority:
+        logger.warning(
+            "All warehouses filtered out from priority %s (active=%s)",
+            priority, active_warehouses,
+        )
+    return filtered

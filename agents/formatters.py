@@ -234,8 +234,11 @@ def format_result(result: dict) -> str:
                         f"- {detail['product_name']}: "
                         f"{detail['old_maks']} -> {detail['new_maks']}"
                     )
-        elif ff["status"] == "skipped_split":
-            lines.append("Reason: no single warehouse can fulfill all items")
+        elif ff["status"] in ("skipped_split", "skipped_out_of_stock"):
+            if ff["status"] == "skipped_out_of_stock":
+                lines.append("Reason: requested items not fully available across active warehouses")
+            else:
+                lines.append("Reason: no single warehouse can fulfill all items")
             lines.append("maks_sales was NOT updated")
             breakdown = ff.get("split_breakdown")
             if breakdown:

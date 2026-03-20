@@ -424,9 +424,11 @@ def stock_summary(warehouse: str = "") -> str:
             f"- Last synced: {summary['synced_at'] or 'never'}"
         )
 
-    # Show per-warehouse breakdown
+    # Show per-warehouse breakdown (active warehouses only)
+    from db.warehouse_config import get_active_warehouses
+    active = get_active_warehouses()
     lines = ["Stock summary (all warehouses):", ""]
-    for w in ("LA_MAKS", "CHICAGO_MAX", "MIAMI_MAKS"):
+    for w in active:
         s = db_get_stock_summary(warehouse=w)
         lines.append(f"{w}: {s['total']} products, {s['available']} in stock")
     total = db_get_stock_summary()

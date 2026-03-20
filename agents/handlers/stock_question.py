@@ -223,6 +223,21 @@ _WAREHOUSE_DISPLAY = {
 }
 
 
+def _handle_disabled_warehouse(result: dict, client_name: str | None, disabled_wh: str) -> dict:
+    """Return explicit message when customer asks about a disabled warehouse."""
+    display = _WAREHOUSE_DISPLAY.get(disabled_wh, disabled_wh)
+    greeting = f"Hi {client_name}," if client_name else "Hi,"
+    result["draft_reply"] = (
+        f"{greeting} our {display} warehouse is temporarily unavailable. "
+        f"We're unable to provide an estimated reopening date at this time. "
+        f"Please let us know if you'd like us to check availability from our other locations."
+    )
+    result["template_used"] = True
+    result["needs_routing"] = False
+    logger.info("Disabled warehouse reply for %s (warehouse=%s)", result["client_email"], disabled_wh)
+    return result
+
+
 def _is_region_query(flavor: str) -> bool:
     """Check if flavor is a region name (Japan, EU, Armenia, etc.)."""
     from db.stock import _REGION_CATEGORY_MAP
@@ -382,14 +397,22 @@ def handle_stock_question(
             "Stock question: general availability query for %s",
             result["client_email"],
         )
-        warehouse = resolve_warehouse(email_text)
+        wh_match = resolve_warehouse(email_text)
         client_name = result.get("client_name") or (
             result.get("client_data") or {}
         ).get("name")
-        return _handle_general_availability(result, client_name, warehouse)
+        if wh_match["disabled"]:
+            return _handle_disabled_warehouse(result, client_name, wh_match["disabled"])
+        return _handle_general_availability(result, client_name, wh_match["warehouse"])
 
     # Optional warehouse filter (e.g. "from CA" → LA_MAKS)
-    warehouse = resolve_warehouse(email_text)
+    wh_match = resolve_warehouse(email_text)
+    if wh_match["disabled"]:
+        client_name = result.get("client_name") or (
+            result.get("client_data") or {}
+        ).get("name")
+        return _handle_disabled_warehouse(result, client_name, wh_match["disabled"])
+    warehouse = wh_match["warehouse"]
     if warehouse:
         logger.info("Stock question: warehouse filter=%s for %s", warehouse, result["client_email"])
 

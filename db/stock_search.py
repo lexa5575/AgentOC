@@ -4,6 +4,9 @@ Stock Search and Availability
 
 Region/warehouse mapping, stock search by name/id/category,
 stock summary, and order availability check.
+
+Active warehouse filtering: queries automatically exclude disabled warehouses
+(fail-closed via _apply_warehouse_filter).
 """
 
 import logging
@@ -14,6 +17,7 @@ from sqlalchemy import or_
 from db.catalog import get_equivalent_norms
 from db.models import StockItem, get_session
 from db.stock import get_product_type, _get_allowed_categories
+from db.warehouse_config import get_active_warehouses, is_warehouse_active
 
 logger = logging.getLogger(__name__)
 
@@ -49,18 +53,39 @@ WAREHOUSE_ALIASES: dict[str, str] = {
 }
 
 
-def resolve_warehouse(text: str) -> str | None:
+def _apply_warehouse_filter(query, warehouse: str | None):
+    """Apply active-warehouse filter to a SQLAlchemy query.
+
+    Fail-closed: empty active list or disabled explicit warehouse = no results.
+    """
+    active = get_active_warehouses()
+    if not active:
+        return query.filter(False)
+    if warehouse:
+        if warehouse not in active:
+            return query.filter(False)
+        return query.filter_by(warehouse=warehouse)
+    return query.filter(StockItem.warehouse.in_(active))
+
+
+def resolve_warehouse(text: str) -> dict:
     """Extract warehouse from free text by matching location keywords.
 
-    Checks longer aliases first, uses word boundaries to prevent
-    false positives (e.g. "la" inside "balanced").
+    Returns:
+        {"warehouse": str|None, "disabled": str|None}
+        - If resolved and active:   {"warehouse": "LA_MAKS", "disabled": None}
+        - If resolved but disabled:  {"warehouse": None, "disabled": "LA_MAKS"}
+        - If not resolved:           {"warehouse": None, "disabled": None}
     """
     text_lower = text.lower()
     # Check longest keys first to match "los angeles" before "la"
     for alias in sorted(WAREHOUSE_ALIASES, key=len, reverse=True):
         if re.search(rf"\b{re.escape(alias)}\b", text_lower):
-            return WAREHOUSE_ALIASES[alias]
-    return None
+            resolved = WAREHOUSE_ALIASES[alias]
+            if is_warehouse_active(resolved):
+                return {"warehouse": resolved, "disabled": None}
+            return {"warehouse": None, "disabled": resolved}
+    return {"warehouse": None, "disabled": None}
 
 
 def search_stock(query: str, warehouse: str | None = None) -> list[dict]:
@@ -81,8 +106,7 @@ def search_stock(query: str, warehouse: str | None = None) -> list[dict]:
             q = session.query(StockItem).filter(
                 StockItem.category.in_(region_cats),
             )
-            if warehouse:
-                q = q.filter_by(warehouse=warehouse)
+            q = _apply_warehouse_filter(q, warehouse)
             return [item.to_dict() for item in q.order_by(StockItem.product_name).all()]
 
         # Strip common prefixes that aren't in stock names
@@ -98,8 +122,7 @@ def search_stock(query: str, warehouse: str | None = None) -> list[dict]:
                 filters.append(StockItem.product_name.ilike(f"%{norm}%"))
 
         q = session.query(StockItem).filter(or_(*filters))
-        if warehouse:
-            q = q.filter_by(warehouse=warehouse)
+        q = _apply_warehouse_filter(q, warehouse)
         results = q.all()
 
         # Fallback: if no results with full phrase, try individual words.
@@ -116,8 +139,7 @@ def search_stock(query: str, warehouse: str | None = None) -> list[dict]:
                     if wn != word.lower():
                         word_filters.append(StockItem.product_name.ilike(f"%{wn}%"))
                 wq = session.query(StockItem).filter(or_(*word_filters))
-                if warehouse:
-                    wq = wq.filter_by(warehouse=warehouse)
+                wq = _apply_warehouse_filter(wq, warehouse)
                 results = wq.all()
                 if results:
                     break
@@ -139,8 +161,7 @@ def search_stock_by_ids(
         q = session.query(StockItem).filter(
             StockItem.product_id.in_(product_ids),
         )
-        if warehouse:
-            q = q.filter_by(warehouse=warehouse)
+        q = _apply_warehouse_filter(q, warehouse)
         return [item.to_dict() for item in q.all()]
     finally:
         session.close()
@@ -154,20 +175,30 @@ def get_available_by_category(category: str, warehouse: str | None = None) -> li
             StockItem.category == category,
             StockItem.quantity > 0,
         )
-        if warehouse:
-            q = q.filter_by(warehouse=warehouse)
+        q = _apply_warehouse_filter(q, warehouse)
         return [item.to_dict() for item in q.order_by(StockItem.product_name).all()]
     finally:
         session.close()
 
 
-def get_stock_summary(warehouse: str | None = None) -> dict:
-    """Get stock statistics: total items, available, fallback count, last sync time."""
+def get_stock_summary(
+    warehouse: str | None = None,
+    bypass_active_filter: bool = False,
+) -> dict:
+    """Get stock statistics: total items, available, fallback count, last sync time.
+
+    Args:
+        warehouse: Optional warehouse filter.
+        bypass_active_filter: If True and warehouse is set, skip active-warehouse
+            check. Used by stock_sync validation to read any warehouse.
+    """
     session = get_session()
     try:
         q = session.query(StockItem)
-        if warehouse:
+        if bypass_active_filter and warehouse:
             q = q.filter_by(warehouse=warehouse)
+        else:
+            q = _apply_warehouse_filter(q, warehouse)
         items = q.all()
 
         if not items:
@@ -231,8 +262,7 @@ def check_stock_for_order(
                     flavor,
                 )
                 stock_entries = session.query(StockItem).filter(False)  # empty
-            if warehouse:
-                stock_entries = stock_entries.filter_by(warehouse=warehouse)
+            stock_entries = _apply_warehouse_filter(stock_entries, warehouse)
             stock_entries = stock_entries.all()
 
             total_available = sum(

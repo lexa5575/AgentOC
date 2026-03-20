@@ -24,6 +24,7 @@ from db.fulfillment import (
     STATUS_ERROR,
     STATUS_PROCESSING,
     STATUS_SKIPPED_DUPLICATE,
+    STATUS_SKIPPED_OUT_OF_STOCK,
     STATUS_SKIPPED_SPLIT,
     STATUS_SKIPPED_UNRESOLVED,
     STATUS_UPDATED,
@@ -301,6 +302,37 @@ def try_fulfillment(
         status = fulfillment["status"]
         wh = fulfillment["warehouse"]
 
+        # 4b. Handle infra error (no active warehouses)
+        if status == STATUS_ERROR and fulfillment.get("reason") == "no_active_warehouses":
+            claim = claim_fulfillment_event(
+                client_email=client_email,
+                order_id=order_id,
+                trigger_type=trigger_type,
+                status=STATUS_ERROR,
+                warehouse=None,
+                gmail_message_id=msg_id,
+                details={"v": 2, "reason": "no_active_warehouses"},
+            )
+            result["fulfillment"] = {
+                "status": STATUS_ERROR,
+                "warehouse": None,
+                "trigger_type": trigger_type,
+                "error": "no active warehouses configured",
+            }
+            if claim.get("error"):
+                result["fulfillment"]["error"] += f"; claim error: {claim['error']}"
+            elif claim.get("created"):
+                # First time seeing this — alert operator
+                from utils.telegram import send_telegram
+                send_telegram(
+                    "\u26a0\ufe0f <b>Fulfillment blocked</b>\n\n"
+                    f"Client: {client_email}\nOrder: {order_id}\n"
+                    "Reason: no active warehouses configured.\n"
+                    "Check STOCK_WAREHOUSES env var."
+                )
+            # duplicate or retried → no alert (already sent on first occurrence)
+            return
+
         # 5. Atomic claim
         # For "updated" path: claim as "processing" first, finalize after Sheets write
         # For skip paths: claim with final status directly
@@ -315,7 +347,11 @@ def try_fulfillment(
             details=(
                 {"matched_count": len(fulfillment["matched_items"])}
                 if fulfillment.get("matched_items")
-                else None
+                else {
+                    "v": 2,
+                    "split_breakdown": fulfillment.get("split_breakdown"),
+                    "tried_warehouses": fulfillment.get("tried_warehouses", []),
+                }
             ),
         )
 
@@ -448,12 +484,12 @@ def try_fulfillment(
             # Clear event_id — finalized successfully, no cleanup needed
             event_id = None
 
-        elif status == STATUS_SKIPPED_SPLIT:
+        elif status in (STATUS_SKIPPED_SPLIT, STATUS_SKIPPED_OUT_OF_STOCK):
             # Skip paths claim with final status directly, no finalize needed
             event_id = None
             logger.warning(
-                "Split warehouse for %s — maks_sales NOT updated",
-                client_email,
+                "%s for %s — maks_sales NOT updated",
+                status, client_email,
             )
 
     except Exception as e:

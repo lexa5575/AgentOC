@@ -1070,3 +1070,87 @@ def test_same_flavor_deduped_by_family(
     assert len(result["alternatives"]) <= 3
     # Amber should be in fallback
     assert any(a["alternative"]["product_name"] == "T Amber" for a in fallback_alts)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Active warehouse filtering tests
+# ══════════════════════════════════════════════════════════════════════
+
+import json
+from db.warehouse_config import _reset_cache
+
+
+def test_search_excludes_disabled_warehouse(monkeypatch):
+    """search_stock without warehouse filter excludes disabled warehouses."""
+    sync_stock("LA_MAKS", [
+        {"category": "ARMENIA", "product_name": "Green", "quantity": 5},
+    ])
+    sync_stock("CHICAGO_MAX", [
+        {"category": "ARMENIA", "product_name": "Green", "quantity": 3},
+    ])
+
+    # With both active → both returned
+    results = search_stock("Green")
+    warehouses = {r["warehouse"] for r in results}
+    assert "LA_MAKS" in warehouses
+    assert "CHICAGO_MAX" in warehouses
+
+    # Disable LA_MAKS
+    monkeypatch.setenv("STOCK_WAREHOUSES", json.dumps([
+        {"name": "CHICAGO_MAX", "spreadsheet_id": "test"},
+        {"name": "MIAMI_MAKS", "spreadsheet_id": "test"},
+        {"name": "main", "spreadsheet_id": "test"},
+        {"name": "backup", "spreadsheet_id": "test"},
+        {"name": "wh_region", "spreadsheet_id": "test"},
+    ]))
+    _reset_cache()
+
+    results = search_stock("Green")
+    warehouses = {r["warehouse"] for r in results}
+    assert "LA_MAKS" not in warehouses
+    assert "CHICAGO_MAX" in warehouses
+
+
+def test_search_explicit_disabled_warehouse_empty(monkeypatch):
+    """search_stock with explicit disabled warehouse returns empty."""
+    sync_stock("LA_MAKS", [
+        {"category": "ARMENIA", "product_name": "Green", "quantity": 5},
+    ])
+
+    # Disable LA_MAKS
+    monkeypatch.setenv("STOCK_WAREHOUSES", json.dumps([
+        {"name": "CHICAGO_MAX", "spreadsheet_id": "test"},
+        {"name": "main", "spreadsheet_id": "test"},
+    ]))
+    _reset_cache()
+
+    results = search_stock("Green", warehouse="LA_MAKS")
+    assert results == []
+
+
+def test_fail_closed_empty_config(monkeypatch):
+    """No active warehouses → all queries return empty."""
+    sync_stock("main", [
+        {"category": "ARMENIA", "product_name": "Green", "quantity": 5},
+    ])
+
+    monkeypatch.setenv("STOCK_WAREHOUSES", "")
+    monkeypatch.delenv("STOCK_WAREHOUSE_NAME", raising=False)
+    monkeypatch.delenv("STOCK_SPREADSHEET_ID", raising=False)
+    _reset_cache()
+
+    assert search_stock("Green") == []
+    assert get_available_by_category("ARMENIA") == []
+    summary = get_stock_summary()
+    assert summary["total"] == 0
+
+
+def test_get_stock_summary_bypass():
+    """bypass_active_filter=True returns data even for non-active warehouse."""
+    sync_stock("main", [
+        {"category": "ARMENIA", "product_name": "Green", "quantity": 5},
+    ])
+
+    # "main" is in active list (via conftest), verify bypass works
+    summary = get_stock_summary(warehouse="main", bypass_active_filter=True)
+    assert summary["total"] >= 1

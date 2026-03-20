@@ -31,6 +31,7 @@ from db.fulfillment import (
     STATUS_ERROR,
     STATUS_PROCESSING,
     STATUS_SKIPPED_DUPLICATE,
+    STATUS_SKIPPED_OUT_OF_STOCK,
     STATUS_SKIPPED_SPLIT,
     STATUS_SKIPPED_UNRESOLVED,
     STATUS_UPDATED,
@@ -194,7 +195,7 @@ class TestSelectFulfillmentWarehouse:
         ]
         result = select_fulfillment_warehouse(order_items, "Los Angeles, CA 90001")
 
-        assert result["status"] == STATUS_SKIPPED_SPLIT
+        assert result["status"] == STATUS_SKIPPED_OUT_OF_STOCK
 
     def test_geographic_priority(self, db_session):
         """FL address should try MIAMI_MAKS first."""
@@ -1634,7 +1635,8 @@ class TestSplitBreakdown:
         ]
         result = select_fulfillment_warehouse(order_items, "Los Angeles, CA 90001")
 
-        assert result["status"] == STATUS_SKIPPED_SPLIT
+        # Silver needs 8 but only 7 globally → out_of_stock (not split)
+        assert result["status"] == STATUS_SKIPPED_OUT_OF_STOCK
         bd = result["split_breakdown"]
         silver = bd[0]
         assert silver["availability"]["LA_MAKS"] == 7  # 3 + 4
@@ -2025,7 +2027,7 @@ class TestFamilyExpansionInQueryStock:
             {"base_flavor": "Silver", "quantity": 2, "product_ids": [arm_id]},
         ]
         result = select_fulfillment_warehouse(order_items, "Los Angeles, CA 90001")
-        assert result["status"] == STATUS_SKIPPED_SPLIT  # can't find ARMENIA stock
+        assert result["status"] == STATUS_SKIPPED_OUT_OF_STOCK  # can't find ARMENIA stock anywhere
 
     def test_expansion_respects_name_norm(self, db_session, monkeypatch):
         """Silver(ARMENIA) must NOT pull Bronze(KZ_TEREA) — different name_norm."""
@@ -2043,8 +2045,8 @@ class TestFamilyExpansionInQueryStock:
             {"base_flavor": "Silver", "quantity": 1, "product_ids": [arm_silver_id]},
         ]
         result = select_fulfillment_warehouse(order_items, "Los Angeles, CA 90001")
-        # No KZ_TEREA Silver in stock, only Bronze → split
-        assert result["status"] == STATUS_SKIPPED_SPLIT
+        # No Silver stock anywhere (only Bronze) → out_of_stock
+        assert result["status"] == STATUS_SKIPPED_OUT_OF_STOCK
 
 
 class TestLegacySameFamilyNotSkipped:
@@ -2297,7 +2299,7 @@ class TestQueryStockEntriesNoIlike:
         ]
         result = select_fulfillment_warehouse(order_items, "Los Angeles, CA 90001")
         # No warehouse can fulfill because _query_stock_entries returns []
-        assert result["status"] == STATUS_SKIPPED_SPLIT
+        assert result["status"] == STATUS_SKIPPED_OUT_OF_STOCK
 
 
 # ── Idempotency retry tests ─────────────────────────────────────────
@@ -2763,3 +2765,82 @@ class TestFulfillmentThreadHint:
             )
 
         mock_thread.assert_called_once_with("thread_703", gmail_account="tilda")
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Active warehouse filtering tests
+# ══════════════════════════════════════════════════════════════════════
+
+import json
+from db.warehouse_config import _reset_cache
+
+
+class TestNoActiveWarehouses:
+    """Fulfillment when no active warehouses configured."""
+
+    def test_no_active_warehouses_returns_error(self, monkeypatch, db_session):
+        monkeypatch.setenv("STOCK_WAREHOUSES", "")
+        monkeypatch.delenv("STOCK_WAREHOUSE_NAME", raising=False)
+        monkeypatch.delenv("STOCK_SPREADSHEET_ID", raising=False)
+        _reset_cache()
+
+        order_items = [
+            {"base_flavor": "Silver", "quantity": 1, "product_ids": [1]},
+        ]
+        result = select_fulfillment_warehouse(order_items, "Los Angeles, CA 90001")
+        assert result["status"] == STATUS_ERROR
+        assert result["reason"] == "no_active_warehouses"
+        assert result["tried_warehouses"] == []
+
+
+class TestRealSplitVsOutOfStock:
+    """Distinguish split (items across warehouses) from OOS (globally unavailable)."""
+
+    def test_real_split_items_across_warehouses(self, db_session):
+        """Item A only in WH1, item B only in WH2 → STATUS_SKIPPED_SPLIT."""
+        session = db_session()
+        cat_a = _add_catalog(session, "TEREA_JAPAN", "t silver", "T Silver")
+        cat_b = _add_catalog(session, "TEREA_EUROPE", "amber", "Amber")
+        # Silver in LA only, Amber in Chicago only — both available
+        _add_stock(session, "LA_MAKS", "TEREA_JAPAN", "T Silver", qty=10, product_id=cat_a)
+        _add_stock(session, "CHICAGO_MAX", "TEREA_EUROPE", "Amber", qty=10, product_id=cat_b)
+        session.commit()
+
+        order_items = [
+            {"base_flavor": "T Silver", "quantity": 1, "product_ids": [cat_a]},
+            {"base_flavor": "Amber", "quantity": 1, "product_ids": [cat_b]},
+        ]
+        result = select_fulfillment_warehouse(order_items, "Los Angeles, CA 90001")
+        # Both items available globally but split → STATUS_SKIPPED_SPLIT
+        assert result["status"] == STATUS_SKIPPED_SPLIT
+
+    def test_globally_unavailable_returns_out_of_stock(self, db_session):
+        """Item not available anywhere → STATUS_SKIPPED_OUT_OF_STOCK."""
+        session = db_session()
+        cat_a = _add_catalog(session, "TEREA_JAPAN", "t silver", "T Silver")
+        _add_stock(session, "LA_MAKS", "TEREA_JAPAN", "T Silver", qty=0, product_id=cat_a)
+        session.commit()
+
+        order_items = [
+            {"base_flavor": "T Silver", "quantity": 1, "product_ids": [cat_a]},
+        ]
+        result = select_fulfillment_warehouse(order_items, "Los Angeles, CA 90001")
+        assert result["status"] == STATUS_SKIPPED_OUT_OF_STOCK
+
+
+class TestFormatOutOfStock:
+    """Formatter renders out_of_stock status correctly."""
+
+    def test_format_out_of_stock(self):
+        result = _base_result()
+        result["fulfillment"] = {
+            "status": "skipped_out_of_stock",
+            "warehouse": None,
+            "trigger_type": "new_order_postpay",
+            "tried_warehouses": ["CHICAGO_MAX", "MIAMI_MAKS"],
+        }
+        output = format_result(result)
+        assert "skipped_out_of_stock" in output
+        assert "not fully available across active warehouses" in output
+        assert "NOT updated" in output
+        assert "Tried:" in output

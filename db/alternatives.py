@@ -11,6 +11,7 @@ import logging
 from db.models import ProductCatalog, StockItem, get_session
 from db.stock import get_product_type, _get_allowed_categories
 from db.order_items import get_client_flavor_history
+from db.warehouse_config import get_active_warehouses
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,9 @@ def _get_available_items(
     """
     session = get_session()
     try:
+        active = get_active_warehouses()
+        if not active:
+            return []  # fail-closed
         q = session.query(StockItem, ProductCatalog.flavor_family).outerjoin(
             ProductCatalog, StockItem.product_id == ProductCatalog.id,
         ).filter(
@@ -38,7 +42,11 @@ def _get_available_items(
         if exclude_product_ids:
             q = q.filter(~StockItem.product_id.in_(exclude_product_ids))
         if warehouse:
+            if warehouse not in active:
+                return []  # disabled warehouse
             q = q.filter(StockItem.warehouse == warehouse)
+        else:
+            q = q.filter(StockItem.warehouse.in_(active))
         results = []
         for item, flavor_family in q.order_by(StockItem.quantity.desc()).all():
             d = item.to_dict()

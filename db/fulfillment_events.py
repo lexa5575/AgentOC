@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 STATUS_UPDATED = "updated"
 STATUS_SKIPPED_SPLIT = "skipped_split"
+STATUS_SKIPPED_OUT_OF_STOCK = "skipped_out_of_stock"
 STATUS_SKIPPED_UNRESOLVED = "skipped_unresolved_order"
 STATUS_SKIPPED_DUPLICATE = "skipped_duplicate"
 STATUS_BLOCKED_AMBIGUOUS = "blocked_ambiguous_variant"
@@ -31,6 +32,7 @@ _BLOCKING_STATUSES = frozenset({STATUS_UPDATED, STATUS_PROCESSING, STATUS_SKIPPE
 # Statuses that allow retry (retriable business failures)
 _RETRIABLE_STATUSES = frozenset({
     STATUS_SKIPPED_SPLIT,
+    STATUS_SKIPPED_OUT_OF_STOCK,
     STATUS_SKIPPED_UNRESOLVED,
     STATUS_BLOCKED_AMBIGUOUS,
     STATUS_ERROR,

@@ -13,11 +13,9 @@ Usage:
     results = sync_stock_from_sheets()  # returns {"status": ..., "warehouses": [...]}
 """
 
-import json
 import logging
 import threading
 from dataclasses import dataclass
-from os import getenv
 
 from db.memory import get_stock_summary, sync_stock
 from db.sheet_config import load_sheet_config, save_sheet_config
@@ -49,47 +47,36 @@ class WarehouseConfig:
 
 
 def _load_warehouse_configs() -> list[WarehouseConfig]:
-    """Load warehouse configurations from environment.
+    """Load warehouse configurations from centralized config.
 
-    Supports two formats:
-    1. JSON array in STOCK_WAREHOUSES env var (multi-warehouse)
-    2. Legacy single-warehouse via STOCK_SPREADSHEET_ID + STOCK_WAREHOUSE_NAME
+    Delegates to db.warehouse_config which handles STOCK_WAREHOUSES env var
+    parsing and legacy fallback.
     """
-    warehouses_json = getenv("STOCK_WAREHOUSES", "").strip()
+    from os import getenv
 
-    if warehouses_json:
-        try:
-            configs = json.loads(warehouses_json)
-            result = [
-                WarehouseConfig(
-                    name=cfg["name"],
-                    spreadsheet_id=cfg["spreadsheet_id"],
-                    sheet_pattern=cfg.get("sheet_pattern", cfg["name"].replace("_", " ")),
-                )
-                for cfg in configs
-            ]
-            logger.info("Loaded %d warehouse configs from STOCK_WAREHOUSES", len(result))
-            return result
-        except (json.JSONDecodeError, KeyError) as e:
-            logger.error("Invalid STOCK_WAREHOUSES JSON: %s", e)
+    from db.warehouse_config import get_warehouse_configs, _load as _wh_load
+
+    configs = get_warehouse_configs()
+    if configs:
+        logger.info("Loaded %d warehouse configs", len(configs))
+    else:
+        state = _wh_load()
+        parse_error = state.get("parse_error")
+        if parse_error:
+            logger.error("STOCK_WAREHOUSES parse error: %s", parse_error)
             send_telegram(
-                f"\U0001f6a8 <b>Invalid STOCK_WAREHOUSES config!</b>\n\n"
-                f"<b>Error:</b> {e}\n\n"
-                f"Check .env STOCK_WAREHOUSES JSON syntax."
+                "\U0001f6a8 <b>Invalid STOCK_WAREHOUSES config!</b>\n\n"
+                f"<b>Error:</b> {parse_error}\n\n"
+                "Check .env STOCK_WAREHOUSES JSON syntax."
             )
-            return []
-
-    # Legacy single-warehouse fallback
-    spreadsheet_id = getenv("STOCK_SPREADSHEET_ID", "")
-    if spreadsheet_id:
-        warehouse_name = getenv("STOCK_WAREHOUSE_NAME", "LA_MAKS")
-        return [WarehouseConfig(
-            name=warehouse_name,
-            spreadsheet_id=spreadsheet_id,
-            sheet_pattern=warehouse_name.replace("_", " "),
-        )]
-
-    return []
+    return [
+        WarehouseConfig(
+            name=cfg["name"],
+            spreadsheet_id=cfg["spreadsheet_id"],
+            sheet_pattern=cfg["sheet_pattern"],
+        )
+        for cfg in configs
+    ]
 
 
 def _get_client() -> SheetsClient:
@@ -125,8 +112,9 @@ def _validate_parse(
             f"Found: {result.sections_found}"
         )
 
-    # Item count drop check vs previous sync
-    prev = get_stock_summary(warehouse)
+    # Item count drop check vs previous sync (bypass active filter — sync
+    # needs to read any warehouse's data for validation, even disabled ones)
+    prev = get_stock_summary(warehouse, bypass_active_filter=True)
     if prev["total"] > 0:
         ratio = len(result.records) / prev["total"]
         if ratio < MAX_ITEM_DROP_RATIO:

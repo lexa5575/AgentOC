@@ -3,6 +3,7 @@ Shared pytest fixtures — SQLite in-memory DB for fast isolated tests.
 """
 
 import importlib
+import json
 import sys
 
 import pytest
@@ -10,6 +11,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from db.models import Base
+from db.warehouse_config import _reset_cache
 
 
 @pytest.fixture(autouse=True)
@@ -53,3 +55,23 @@ def db_session(monkeypatch):
     yield _get_session
 
     engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+def active_warehouses(monkeypatch):
+    """Set all 3 warehouses as active by default in tests.
+
+    Individual tests can override STOCK_WAREHOUSES via monkeypatch + _reset_cache().
+    """
+    monkeypatch.setenv("STOCK_WAREHOUSES", json.dumps([
+        {"name": "LA_MAKS", "spreadsheet_id": "test_la"},
+        {"name": "CHICAGO_MAX", "spreadsheet_id": "test_chi"},
+        {"name": "MIAMI_MAKS", "spreadsheet_id": "test_mia"},
+        # Synthetic names used by test_stock.py and other test suites
+        {"name": "main", "spreadsheet_id": "test_main"},
+        {"name": "backup", "spreadsheet_id": "test_backup"},
+        {"name": "wh_region", "spreadsheet_id": "test_wh_region"},
+    ]))
+    _reset_cache()
+    yield
+    _reset_cache()

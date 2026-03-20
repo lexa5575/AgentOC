@@ -10,11 +10,14 @@ Architecture constraints:
 - Uses public APIs: db.sheet_config, tools.google_sheets, db.warehouse_geo
 """
 
-import json
 import logging
 from os import getenv
 
 from db.models import ClientOrderItem, StockItem, get_session
+from db.warehouse_config import (
+    get_active_warehouses,
+    get_warehouse_spreadsheet_id,
+)
 from db.warehouse_geo import resolve_warehouse_from_address
 
 logger = logging.getLogger(__name__)
@@ -33,6 +36,7 @@ def _use_family_fulfillment() -> bool:
 from db.fulfillment_events import (
     STATUS_UPDATED,
     STATUS_SKIPPED_SPLIT,
+    STATUS_SKIPPED_OUT_OF_STOCK,
     STATUS_SKIPPED_UNRESOLVED,
     STATUS_SKIPPED_DUPLICATE,
     STATUS_BLOCKED_AMBIGUOUS,
@@ -47,25 +51,8 @@ from db.fulfillment_events import (
 )
 
 
-# ── Warehouse config accessor (reads env var, no private imports) ────
-
-def get_warehouse_spreadsheet_id(warehouse: str) -> str | None:
-    """Get spreadsheet_id for a warehouse from STOCK_WAREHOUSES env var."""
-    raw = getenv("STOCK_WAREHOUSES", "").strip()
-    if raw:
-        try:
-            configs = json.loads(raw)
-            for cfg in configs:
-                if cfg["name"] == warehouse:
-                    return cfg["spreadsheet_id"]
-        except (json.JSONDecodeError, KeyError):
-            pass
-        return None
-
-    # Legacy single-warehouse fallback
-    if warehouse == getenv("STOCK_WAREHOUSE_NAME", "LA_MAKS"):
-        return getenv("STOCK_SPREADSHEET_ID", "") or None
-    return None
+# get_warehouse_spreadsheet_id is imported from db.warehouse_config above
+# and re-exported here for backward compatibility (tests patch this path).
 
 
 # ── Warehouse selection ──────────────────────────────────────────────
@@ -100,7 +87,18 @@ def select_fulfillment_warehouse(
             "tried_warehouses": [],
         }
 
-    priority = resolve_warehouse_from_address(city_state_zip)
+    active = get_active_warehouses()
+    if not active:
+        logger.error("No active warehouses configured — fulfillment blocked")
+        return {
+            "status": STATUS_ERROR,
+            "warehouse": None,
+            "matched_items": None,
+            "tried_warehouses": [],
+            "reason": "no_active_warehouses",
+        }
+
+    priority = resolve_warehouse_from_address(city_state_zip, active_warehouses=active)
     tried = []
 
     session = get_session()
@@ -117,8 +115,14 @@ def select_fulfillment_warehouse(
                 }
 
         breakdown = _collect_split_breakdown(session, priority, order_items)
+        # Distinguish: globally unavailable item vs actual split
+        has_globally_unavailable = any(
+            sum(bd["availability"].values()) < bd["ordered_qty"]
+            for bd in breakdown
+        )
+        status = STATUS_SKIPPED_OUT_OF_STOCK if has_globally_unavailable else STATUS_SKIPPED_SPLIT
         return {
-            "status": STATUS_SKIPPED_SPLIT,
+            "status": status,
             "warehouse": None,
             "matched_items": None,
             "tried_warehouses": tried,
