@@ -62,7 +62,7 @@ def test_validate_parse_missing_sections(monkeypatch):
     monkeypatch.setattr(
         stock_sync,
         "get_stock_summary",
-        lambda warehouse=None: {"total": 0, "available": 0, "fallback": 0, "synced_at": None},
+        lambda warehouse=None, bypass_active_filter=False: {"total": 0, "available": 0, "fallback": 0, "synced_at": None},
     )
     result = ParseResult(records=[object()], sections_found=["KZ_TEREA"], sections_missing=[], warnings=[])
     ok, reason = stock_sync._validate_parse(result, "LA_MAKS", ["KZ_TEREA", "ARMENIA"])
@@ -74,7 +74,7 @@ def test_validate_parse_drop_ratio(monkeypatch):
     monkeypatch.setattr(
         stock_sync,
         "get_stock_summary",
-        lambda warehouse=None: {"total": 100, "available": 50, "fallback": 0, "synced_at": None},
+        lambda warehouse=None, bypass_active_filter=False: {"total": 100, "available": 50, "fallback": 0, "synced_at": None},
     )
     result = ParseResult(records=[object()] * 10, sections_found=["KZ_TEREA"], sections_missing=[], warnings=[])
     ok, reason = stock_sync._validate_parse(result, "LA_MAKS", ["KZ_TEREA"])
@@ -86,7 +86,7 @@ def test_validate_parse_ok(monkeypatch):
     monkeypatch.setattr(
         stock_sync,
         "get_stock_summary",
-        lambda warehouse=None: {"total": 0, "available": 0, "fallback": 0, "synced_at": None},
+        lambda warehouse=None, bypass_active_filter=False: {"total": 0, "available": 0, "fallback": 0, "synced_at": None},
     )
     result = ParseResult(records=[object()] * 3, sections_found=["KZ_TEREA"], sections_missing=[], warnings=[])
     ok, reason = stock_sync._validate_parse(result, "LA_MAKS", ["KZ_TEREA"])
