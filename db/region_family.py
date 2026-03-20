@@ -208,29 +208,39 @@ def get_family_suffix(family: str) -> str | None:
     return _FAMILY_SUFFIX.get(family)
 
 
-_REGION_KEYWORDS: dict[str, str] = {
-    "made in europe": "EU",
-    "made in middle east": "ME",
-    "made in armenia": "ME",
-    "made in japan": "JAPAN",
-    "european": "EU",
-}
-
-
 def extract_region_from_text(text: str) -> str | None:
     """Extract a single region family from free-form email text.
 
-    Scans for region keywords anywhere in text (not just suffixes).
-    Returns None if 0 or >1 families detected.
+    Tries each sentence/phrase in the text through the resolver's
+    _extract_region_categories() which handles all forms:
+    suffix ("Blue EU", "Silver made in Europe"), prefix ("EU Blue"),
+    and full names ("European Bronze", "Japan Smooth").
+
+    Returns family name ("EU"/"ME"/"JAPAN") if exactly one family detected.
+    Returns None if 0 or >1 families (ambiguous).
 
     Examples:
-        "I'll do Blue made in Europe please" → "EU"
+        "I'll do Blue EU please" → "EU"
+        "2X Tera Blue made in Europe" → "EU"
+        "Blue ME" → "ME"
         "Blue" → None
     """
-    text_lower = text.lower()
-    found: set[str] = set()
-    # Check longer phrases first
-    for phrase, family in sorted(_REGION_KEYWORDS.items(), key=lambda x: -len(x[0])):
-        if phrase in text_lower:
-            found.add(family)
-    return found.pop() if len(found) == 1 else None
+    from db.product_resolver import _extract_region_categories
+
+    # Try the full text and progressively smaller windows
+    # to find region indicators anywhere in the text
+    families: set[str] = set()
+
+    # Strategy 1: try each word-group (bigrams, trigrams, etc.) for region
+    words = text.split()
+    for window in range(min(5, len(words)), 0, -1):
+        for start in range(len(words) - window + 1):
+            chunk = " ".join(words[start:start + window])
+            cats = _extract_region_categories(chunk)
+            if cats:
+                for cat in cats:
+                    fam = get_family(cat)
+                    if fam:
+                        families.add(fam)
+
+    return families.pop() if len(families) == 1 else None

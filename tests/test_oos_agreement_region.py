@@ -13,17 +13,26 @@ from db.region_family import extract_region_from_text, get_family_suffix
 # ── Region helpers ───────────────────────────────────────────────────
 
 class TestExtractRegionFromText:
-    def test_eu(self):
+    def test_eu_long(self):
         assert extract_region_from_text("2X Tera Blue made in Europe") == "EU"
 
-    def test_eu_explicit(self):
-        assert extract_region_from_text("I want Blue made in Europe") == "EU"
+    def test_eu_suffix_short(self):
+        assert extract_region_from_text("Blue EU please") == "EU"
 
-    def test_me(self):
+    def test_eu_prefix(self):
+        assert extract_region_from_text("EU Blue") == "EU"
+
+    def test_eu_long_sentence(self):
+        assert extract_region_from_text("I want Blue made in Europe please") == "EU"
+
+    def test_me_suffix(self):
+        assert extract_region_from_text("Blue ME") == "ME"
+
+    def test_me_long(self):
         assert extract_region_from_text("Silver made in Middle East") == "ME"
 
     def test_japan(self):
-        assert extract_region_from_text("Black made in Japan") == "JAPAN"
+        assert extract_region_from_text("Smooth Japan") == "JAPAN"
 
     def test_european(self):
         assert extract_region_from_text("I want European Blue") == "EU"
@@ -31,9 +40,7 @@ class TestExtractRegionFromText:
     def test_none(self):
         assert extract_region_from_text("yes Blue please") is None
 
-    def test_multi_returns_none(self):
-        """Ambiguous multi-region → None (safety)."""
-        # "EU" alone would match, but check edge cases
+    def test_plain_flavor(self):
         assert extract_region_from_text("Blue") is None
 
 
