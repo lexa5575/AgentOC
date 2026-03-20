@@ -8,16 +8,36 @@ Covers:
 - get_region_suffix()
 """
 
+import importlib
+import sys
 import unittest
 
-from db.region_family import (
-    CATEGORY_REGION_SUFFIX,
-    expand_to_family_ids,
-    get_family,
-    get_preferred_product_id,
-    get_region_suffix,
-    is_same_family,
-)
+
+def _get_real_module():
+    """Re-import the real db.region_family, bypassing any test stubs.
+
+    Other test files (test_handler_templates, test_state_lifecycle, etc.)
+    replace sys.modules["db.region_family"] with a stub ModuleType.
+    When pytest collects tests alphabetically, those stubs can pollute
+    this module's imports. Force a fresh import from the real source.
+    """
+    mod_name = "db.region_family"
+    if mod_name in sys.modules:
+        mod = sys.modules[mod_name]
+        # Check if it's a stub (no __file__ or missing key functions)
+        if not hasattr(mod, "__file__") or mod.__file__ is None:
+            del sys.modules[mod_name]
+            return importlib.import_module(mod_name)
+    return importlib.import_module(mod_name)
+
+
+_mod = _get_real_module()
+CATEGORY_REGION_SUFFIX = _mod.CATEGORY_REGION_SUFFIX
+expand_to_family_ids = _mod.expand_to_family_ids
+get_family = _mod.get_family
+get_preferred_product_id = _mod.get_preferred_product_id
+get_region_suffix = _mod.get_region_suffix
+is_same_family = _mod.is_same_family
 
 # Mock catalog entries for testing
 MOCK_CATALOG = [

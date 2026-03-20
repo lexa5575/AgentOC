@@ -9,12 +9,7 @@ from classifier, and clearing pending OOS state.
 import logging
 
 from db.catalog import get_display_name
-from db.region_family import (
-    CATEGORY_REGION_SUFFIX as _CATEGORY_TO_REGION_SUFFIX,
-    extract_region_from_text,
-    get_family,
-    get_family_suffix,
-)
+from db.region_family import CATEGORY_REGION_SUFFIX as _CATEGORY_TO_REGION_SUFFIX
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +37,7 @@ def _match_alternative_from_text(
 
     # Multiple name-matches + explicit region → filter by family
     if len(matches) > 1 and customer_region:
+        from db.region_family import get_family
         region_filtered = [
             alt for alt in matches
             if get_family(alt.get("category", "")) == customer_region
@@ -68,6 +64,7 @@ def _build_confirmed_item(
 
     if customer_region:
         # Customer explicitly stated a region — override suggestion's category
+        from db.region_family import get_family_suffix
         suffix = get_family_suffix(customer_region)
         product_name = f"{alt_name} {suffix}" if suffix else alt_name
         region_pref = [customer_region]
@@ -110,6 +107,7 @@ def _resolve_oos_agreement(
         return None, "no_data"
 
     # Detect customer's explicit region from their reply text
+    from db.region_family import extract_region_from_text
     customer_region = extract_region_from_text(email_text)
 
     confirmed = []
