@@ -589,9 +589,26 @@ def _build_mixed_reply_template(client_name, in_stock_sections, oos_sections, wa
     greeting = f"Hi {client_name}," if client_name else "Hi,"
     lines = [f"{greeting} here's what we have:"]
 
+    def _flavor_has_region(f: str, r: str) -> bool:
+        fl = f.lower()
+        return fl.endswith(r.lower()) or f"made in {r.lower()}" in fl
+
+    def _name_with_region(display_name: str, available: list[dict]) -> str:
+        """Add region suffix to display name based on stock items."""
+        name = _strip_terea(display_name)
+        regions = sorted({CATEGORY_REGION_SUFFIX.get(it["category"], "") for it in available} - {""})
+        if len(regions) == 1 and not _flavor_has_region(name, regions[0]):
+            return f"{name} {regions[0]}"
+        if len(regions) > 1:
+            return ", ".join(
+                name if _flavor_has_region(name, r) else f"{name} {r}"
+                for r in regions
+            )
+        return name
+
     # Available items
     for sec in in_stock_sections:
-        name = _strip_terea(sec["display_name"])
+        name = _name_with_region(sec["display_name"], sec["available"])
         price = sec["price"]
         price_str = f", ${price:.0f}/box" if price is not None else ""
         lines.append(f"\n{name} — in stock{price_str}")
@@ -599,6 +616,9 @@ def _build_mixed_reply_template(client_name, in_stock_sections, oos_sections, wa
     # OOS items with alternatives
     for sec in oos_sections:
         name = _strip_terea(sec["display_name"])
+        # Add region if known from display_name
+        regions = sorted({CATEGORY_REGION_SUFFIX.get(cat, "") for cat in
+                         {sec.get("_lookup_category", "")} if cat} - {""})
         alts = sec.get("_alternatives_raw", [])
         if alts:
             alt_names = [_strip_terea(get_display_name(a["alternative"]["product_name"], a["alternative"]["category"])) for a in alts[:3]]
