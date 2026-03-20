@@ -91,7 +91,8 @@ def _install_stubs():
     db_catalog.get_equivalent_norms = lambda *a, **kw: set()
     db_catalog.get_catalog_products = lambda: []
 
-    db_region = sys.modules["db.region_family"]
+    # Always create a fresh stub — never mutate the real module object
+    db_region = types.ModuleType("db.region_family")
     db_region.CATEGORY_REGION_SUFFIX = {}
     db_region.REGION_FAMILIES = {}
     db_region.PREFERRED_CATEGORY = {}
@@ -102,6 +103,7 @@ def _install_stubs():
     db_region.get_preferred_product_id = lambda *a, **kw: None
     db_region.expand_to_family_ids = lambda ids, catalog: list(ids) if ids else []
     db_region.extract_region_from_text = lambda text: None
+    sys.modules["db.region_family"] = db_region
 
     db_stock = sys.modules["db.stock"]
     db_stock.extract_variant_id = lambda *a, **kw: None

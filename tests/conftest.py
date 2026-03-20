@@ -65,15 +65,14 @@ def db_session(monkeypatch):
 def _restore_region_family():
     """Restore real db.region_family if a test stub replaced it.
 
-    Several test files replace sys.modules["db.region_family"] with
-    types.ModuleType stubs that have empty REGION_FAMILIES. This fixture
-    restores the real module from the snapshot taken at conftest import.
-    Safe even when sys.modules["db"] is also a stub (no reimport needed).
+    Stub test files create fresh types.ModuleType stubs and put them
+    in sys.modules. This fixture restores the real module from the
+    snapshot taken at conftest import time. Since stubs are separate
+    objects (not mutations of the real module), restoring the reference
+    is sufficient.
     """
     yield
-    # After each test, ensure real module is back in sys.modules
-    current = sys.modules.get("db.region_family")
-    if current is not _REAL_REGION_FAMILY:
+    if sys.modules.get("db.region_family") is not _REAL_REGION_FAMILY:
         sys.modules["db.region_family"] = _REAL_REGION_FAMILY
 
 

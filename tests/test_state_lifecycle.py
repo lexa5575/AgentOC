@@ -99,7 +99,8 @@ def _install_stubs():
     db_catalog._enrich_display_name_with_region = lambda *args: args[-1] if args else ""
     db_catalog.get_catalog_products = lambda: []
 
-    db_region = sys.modules["db.region_family"]
+    # Always create a fresh stub — never mutate the real module object
+    db_region = types.ModuleType("db.region_family")
     db_region.CATEGORY_REGION_SUFFIX = dict()
     db_region.REGION_FAMILIES = {}
     db_region.PREFERRED_CATEGORY = {}
@@ -110,6 +111,7 @@ def _install_stubs():
     db_region.get_preferred_product_id = lambda *a, **kw: None
     db_region.expand_to_family_ids = lambda ids, catalog: list(ids) if ids else []
     db_region.extract_region_from_text = lambda text: None
+    sys.modules["db.region_family"] = db_region
 
     db_region_pref = sys.modules["db.region_preference"]
     db_region_pref.apply_region_preference = lambda items, **kw: items
