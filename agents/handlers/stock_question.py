@@ -584,26 +584,31 @@ def _build_oos_fallback(client_name, oos_display_names, alt_display_names, price
     )
 
 
-def _build_mixed_fallback(client_name, in_stock_sections, oos_sections, warehouse):
-    """Deterministic fallback for mixed path — same golden style."""
+def _build_mixed_reply_template(client_name, in_stock_sections, oos_sections, warehouse):
+    """Deterministic mixed reply — covers both available and OOS items (0 LLM tokens)."""
     greeting = f"Hi {client_name}," if client_name else "Hi,"
-    # Collect all OOS names and all alternatives
-    oos_short = []
-    all_alts = []
+    lines = [f"{greeting} here's what we have:"]
+
+    # Available items
+    for sec in in_stock_sections:
+        name = _strip_terea(sec["display_name"])
+        price = sec["price"]
+        price_str = f", ${price:.0f}/box" if price is not None else ""
+        lines.append(f"\n{name} — in stock{price_str}")
+
+    # OOS items with alternatives
     for sec in oos_sections:
-        oos_short.append(_strip_terea(sec["display_name"]))
-        for a in sec.get("_alternatives_raw", [])[:3]:
-            dn = get_display_name(a["alternative"]["product_name"], a["alternative"]["category"])
-            short = _strip_terea(dn)
-            if short not in all_alts:
-                all_alts.append(short)
-    oos_str = " and ".join(oos_short)
-    alt_str = ", ".join(all_alts[:3])
-    return (
-        f"{greeting} {oos_str} {'is' if len(oos_short)==1 else 'are'} "
-        f"not available right now. We have {alt_str} as alternatives. "
-        f"Would any of these work for you? Thank you!"
-    )
+        name = _strip_terea(sec["display_name"])
+        alts = sec.get("_alternatives_raw", [])
+        if alts:
+            alt_names = [_strip_terea(get_display_name(a["alternative"]["product_name"], a["alternative"]["category"])) for a in alts[:3]]
+            alt_str = ", ".join(alt_names)
+            lines.append(f"\n{name} — not available. Alternatives: {alt_str}")
+        else:
+            lines.append(f"\n{name} — not available at the moment")
+
+    lines.append("\nLet us know what combination works for you. Thank you!")
+    return "\n".join(lines)
 
 
 def _handle_oos_reply(
@@ -797,41 +802,19 @@ def _handle_mixed_reply(
             alt_names = [_strip_terea(get_display_name(a["alternative"]["product_name"], a["alternative"]["category"])) for a in alternatives[:3]]
             stock_info_parts.append("Alternatives: " + ", ".join(alt_names))
 
-    stock_info = "\n".join(stock_info_parts)
-
-    # Compute allowed products from structured data
-    allowed_products = _extract_allowed_products(oos_sections, in_stock_sections)
-
-    prompt = (
-        f"=== {stock_info}\n\n"
-        f"Customer name: {client_name or 'Customer'}\n"
-        f"Reply using the template from your instructions."
+    # Mixed reply is fully deterministic (0 LLM tokens for formatting).
+    # Alternatives were already selected by LLM in select_best_alternatives() above.
+    reply = _build_mixed_reply_template(
+        client_name, in_stock_sections, oos_sections, warehouse,
     )
 
-    response = _oos_agent.run(prompt)
-    reply = response.content
-
-    # Validate LLM reply — check for hallucinated products
-    is_valid, forbidden = _validate_reply_products(reply, allowed_products)
-    if not is_valid:
-        logger.warning(
-            "Mixed reply validation FAILED for %s — forbidden products: %s. Using fallback.",
-            result["client_email"], forbidden,
-        )
-        reply = _build_mixed_fallback(
-            client_name, in_stock_sections, oos_sections, warehouse,
-        )
-        result["fallback_triggered"] = True
-    else:
-        result["fallback_triggered"] = False
-
     result["draft_reply"] = reply
-    result["template_used"] = False
+    result["template_used"] = True
     result["needs_routing"] = False
+    result["fallback_triggered"] = False
 
     logger.info(
-        "Stock question: mixed reply (%d in stock, %d OOS) for %s (fallback=%s)",
+        "Stock question: mixed reply (%d in stock, %d OOS) for %s (0 tokens, deterministic)",
         len(in_stock_sections), len(oos_sections), result["client_email"],
-        result["fallback_triggered"],
     )
     return result
