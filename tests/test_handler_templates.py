@@ -93,9 +93,14 @@ def _install_stubs():
 
     db_region = sys.modules["db.region_family"]
     db_region.CATEGORY_REGION_SUFFIX = {}
-    db_region.is_same_family = lambda a, b: False
+    db_region.REGION_FAMILIES = {}
+    db_region.PREFERRED_CATEGORY = {}
+    db_region.is_same_family = lambda a, b=None: False
     db_region.get_family = lambda cat: None
+    db_region.get_region_suffix = lambda cat: None
     db_region.get_family_suffix = lambda fam: None
+    db_region.get_preferred_product_id = lambda *a, **kw: None
+    db_region.expand_to_family_ids = lambda ids, catalog: list(ids) if ids else []
     db_region.extract_region_from_text = lambda text: None
 
     db_stock = sys.modules["db.stock"]

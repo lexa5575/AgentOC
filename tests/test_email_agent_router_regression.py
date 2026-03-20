@@ -111,9 +111,18 @@ def _install_import_stubs() -> None:
         "ME": frozenset({"ARMENIA", "KZ_TEREA"}),
         "JAPAN": frozenset({"TEREA_JAPAN"}),
     }
+    db_region_family.REGION_FAMILIES = {
+        "ME": frozenset({"ARMENIA", "KZ_TEREA"}),
+        "EU": frozenset({"TEREA_EUROPE"}),
+        "JAPAN": frozenset({"TEREA_JAPAN"}),
+    }
+    db_region_family.PREFERRED_CATEGORY = {"ME": "ARMENIA", "EU": "TEREA_EUROPE", "JAPAN": "TEREA_JAPAN"}
     db_region_family.get_family = lambda cat: None
     db_region_family.get_region_suffix = lambda cat: None
     db_region_family.get_family_suffix = lambda fam: None
+    db_region_family.get_preferred_product_id = lambda *a, **kw: None
+    db_region_family.is_same_family = lambda cats: True
+    db_region_family.expand_to_family_ids = lambda ids, catalog: list(ids)
     db_region_family.extract_region_from_text = lambda text: None
     sys.modules["db.region_family"] = db_region_family
 
