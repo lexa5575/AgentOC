@@ -113,6 +113,8 @@ def _install_import_stubs() -> None:
     }
     db_region_family.get_family = lambda cat: None
     db_region_family.get_region_suffix = lambda cat: None
+    db_region_family.get_family_suffix = lambda fam: None
+    db_region_family.extract_region_from_text = lambda text: None
     sys.modules["db.region_family"] = db_region_family
 
     # db.stock — needed by tools/stock_tools.py and agents/handlers/stock_question.py

@@ -94,6 +94,9 @@ def _install_stubs():
     db_region = sys.modules["db.region_family"]
     db_region.CATEGORY_REGION_SUFFIX = {}
     db_region.is_same_family = lambda a, b: False
+    db_region.get_family = lambda cat: None
+    db_region.get_family_suffix = lambda fam: None
+    db_region.extract_region_from_text = lambda text: None
 
     db_stock = sys.modules["db.stock"]
     db_stock.extract_variant_id = lambda *a, **kw: None
