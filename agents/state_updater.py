@@ -51,6 +51,8 @@ def _empty_state() -> dict:
             "final_price": None,
             "discount_applied": None,
             "payment_method": None,
+            "payment_request_sent": None,
+            "payment_confirmed": None,
             "shipped_at": None,
             "tracking_number": None,
         },
@@ -101,6 +103,8 @@ Return ONLY a valid JSON object. No explanation, no markdown, no code fences.
     "final_price": "$209" or null,
     "discount_applied": "5%" or null,
     "payment_method": "Zelle" or null,
+    "payment_request_sent": true/false or null,
+    "payment_confirmed": true/false or null,
     "shipped_at": "2024-01-15" or null,
     "tracking_number": "9400111..." or null
   },
@@ -120,16 +124,17 @@ Return ONLY a valid JSON object. No explanation, no markdown, no code fences.
    - new → awaiting_payment (after we send payment info)
    - awaiting_payment → shipped (after payment confirmed)
    - awaiting_oos_decision → new (after client chooses alternative)
-3. EXTRACT facts from emails:
+3. PRESERVE payment_request_sent and payment_confirmed flags — these are set by pipeline, do not modify
+4. EXTRACT facts from emails:
    - Order IDs, prices, items from order notifications
    - Tracking numbers from shipping confirmations
    - Payment confirmations
-4. TRACK promises we make — these are important for consistency
-5. IDENTIFY open questions — things the customer asked that we haven't answered
-6. Keep summary under 100 words — it's for quick context
-7. If direction is "outbound", update "we_said" in last_exchange
-8. If direction is "inbound", update "they_said" in last_exchange
-9. Do NOT invent facts — if you don't know something, leave it null
+5. TRACK promises we make — these are important for consistency
+6. IDENTIFY open questions — things the customer asked that we haven't answered
+7. Keep summary under 100 words — it's for quick context
+8. If direction is "outbound", update "we_said" in last_exchange
+9. If direction is "inbound", update "they_said" in last_exchange
+10. Do NOT invent facts — if you don't know something, leave it null
 
 ## Example
 
@@ -387,7 +392,8 @@ def _derive_facts(current_facts: dict, classification, order_id, price, result) 
     # Preserve all other fields from current — never overwrite with None
     for key in (
         "oos_items", "offered_alternatives", "final_price", "discount_applied",
-        "payment_method", "shipped_at", "tracking_number",
+        "payment_method", "payment_request_sent", "payment_confirmed",
+        "shipped_at", "tracking_number",
         "confirmed_order_items", "pending_order_items",
         "pending_oos_resolution",  # CRITICAL: always preserve
     ):

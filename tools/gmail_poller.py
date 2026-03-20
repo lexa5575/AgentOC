@@ -53,6 +53,14 @@ def _format_email_text(msg: dict) -> str:
         parts.append(f"Reply-To: {msg['reply_to']}")
 
     parts.append(f"Subject: {msg.get('subject', '')}")
+
+    attachments = msg.get("attachments") or []
+    if attachments:
+        att_desc = ", ".join(
+            f"{a.get('filename', '?')} ({a.get('mime_type', '?')})" for a in attachments
+        )
+        parts.append(f"Attachments: {att_desc}")
+
     parts.append(f"Body: {msg.get('body', '')}")
 
     return "\n".join(parts)

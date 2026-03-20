@@ -500,6 +500,49 @@ def _persist_results(
                 state = result["conversation_state"]
                 state.setdefault("last_exchange", {})["we_said"] = result["draft_reply"][:200]
 
+                # Fix 1: Transition to awaiting_payment for confirmed prepay orders.
+                # Structural signals only — no text sniffing.
+                # Guard: stock_issue means OOS template (not payment instructions).
+                _effective = result.get("effective_situation") or classification.situation
+                _payment_type = (result.get("client_data") or {}).get("payment_type")
+                if (
+                    state.get("status") in ("new", "awaiting_oos_decision", "pending_response")
+                    and _effective == "new_order"
+                    and _payment_type == "prepay"
+                    and result.get("template_used")
+                    and not result.get("stock_issue")
+                ):
+                    state["status"] = "awaiting_payment"
+                    _facts = state.setdefault("facts", {})
+                    _facts["payment_method"] = "Zelle"
+                    _facts["payment_request_sent"] = True
+                    logger.info(
+                        "Status -> awaiting_payment (confirmed prepay order) for %s",
+                        classification.client_email,
+                    )
+
+                # Fix 4b: Mark payment as confirmed when payment_received template sent.
+                # Guard: template_situation must be "payment_received" (not "oos_agrees"
+                # which re-sends Zelle for pending_oos_resolution clients).
+                if (
+                    classification.situation == "payment_received"
+                    and result.get("template_situation") == "payment_received"
+                    and result.get("template_used")
+                ):
+                    _facts = state.setdefault("facts", {})
+                    _facts["payment_confirmed"] = True
+                    state["status"] = "pending_response"
+                    oq = state.get("open_questions")
+                    if oq and isinstance(oq, list):
+                        state["open_questions"] = [
+                            q for q in oq
+                            if "payment" not in q.lower() and "zelle" not in q.lower()
+                        ]
+                    logger.info(
+                        "Payment confirmed: status->pending_response for %s",
+                        classification.client_email,
+                    )
+
                 # Save pending_oos_resolution for oos_followup handler
                 if (
                     classification.situation == "new_order"
@@ -755,6 +798,35 @@ def classify_and_process(
         # Step 0.9 + 1: Deterministic parser or LLM classification
         state_dict = pre_state_record.get("state") if pre_state_record else None
         classification = run_classification(email_text, context_str, conversation_state=state_dict)
+
+        # Fix 2B: Fallback override other->payment_received for legacy threads
+        # without facts.payment_request_sent. Uses "use email below" as prepay-only
+        # marker (postpay templates don't have it).
+        if (
+            classification.situation == "other"
+            and not classification.needs_reply
+            and state_dict
+        ):
+            from agents.classifier import _looks_like_payment_ack
+            _facts_2b = state_dict.get("facts") or {}
+            _we_said_2b = (state_dict.get("last_exchange") or {}).get("we_said", "")
+            if (
+                _we_said_2b
+                and "use email below" in _we_said_2b.lower()
+                and not _facts_2b.get("payment_confirmed")
+                and _looks_like_payment_ack(email_text)
+            ):
+                _order_id_2b = _facts_2b.get("order_id")
+                classification.situation = "payment_received"
+                classification.needs_reply = True
+                classification.dialog_intent = "confirms_payment"
+                classification.followup_to = "payment_info"
+                if _order_id_2b and not classification.order_id:
+                    classification.order_id = _order_id_2b
+                logger.info(
+                    "Pipeline override: other -> payment_received (legacy Zelle, order=%s) for %s",
+                    _order_id_2b, classification.client_email,
+                )
 
         # Business rule: certain situations ALWAYS need a reply,
         # regardless of LLM decision (e.g. "I sent it thanks" looks

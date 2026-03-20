@@ -86,7 +86,9 @@ We must confirm the order — this is NOT a simple acknowledgment.
   Region queries: base_flavor = region name ("Japan", "Europe").
   Specific product in region ("japan regular"): base_flavor = "Regular" (the flavor, NOT region).
 - "payment_question" — asks WHERE or HOW to pay
-- "payment_received" — confirms payment was sent
+- "payment_received" — confirms payment was sent.
+  IMAGE SIGNAL: If email has image attachments AND context suggests payment
+  (awaiting_payment status, or we sent Zelle/payment info), treat as payment confirmation.
 - "discount_request" — asks for discount (NOT a price quote)
 - "shipping_timeline" — asks WHEN order will be shipped
 - "oos_followup" — reply in thread where we discussed out-of-stock/alternatives
@@ -463,6 +465,83 @@ def build_classifier_context(
 
 
 # ---------------------------------------------------------------------------
+# Deterministic payment-ack detection (Fix 2)
+# ---------------------------------------------------------------------------
+
+# Whitelist of normalized ack phrases — only completed-action or pure gratitude.
+_ACK_PHRASES = frozenset({
+    "thank you", "thanks", "thank u", "thx", "ty",
+    "thank you so much", "thanks so much", "many thanks",
+    "sent", "done", "paid", "sent it", "just sent", "i sent it",
+    "payment sent", "money sent", "i paid", "i sent",
+    "sent via zelle", "zelle sent", "here you go",
+})
+
+# Generic signature stripping: cut everything after closing marker
+_CLOSING_MARKER = re.compile(
+    r"\b(regards|best regards|best|cheers|sincerely|warm regards|kind regards)\b.*",
+    re.IGNORECASE | re.DOTALL,
+)
+# Greeting/filler words stripped before matching
+_STRIP_FILLER = re.compile(
+    r"\b(hi|hello|hey|dear|sent from my iphone|sent from my android)\b",
+    re.IGNORECASE,
+)
+# Hard reject: digits, product names, action words, question marks
+_REJECT_PATTERN = re.compile(
+    r"\d|[?]|"
+    r"\b(silver|gold|green|amber|beige|turquoise|bronze|purple|black|"
+    r"mauve|blue|yellow|menthol|regular|terea|heets|tera|carton|box|"
+    r"please|pls|add|change|cancel|instead|also|another|address|"
+    r"tracking|ship|when|order|more)\b",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_payment_ack(email_text: str) -> bool:
+    """Check if email body is a PURE payment acknowledgment.
+
+    Whitelist approach: normalize body → strip greetings/closing/filler →
+    exact match against _ACK_PHRASES. Rejects ANY body with digits, product
+    names, question marks, or action words.
+
+    Returns False for attachment-only (empty body) — out of scope v1.
+    """
+    _body_idx = email_text.find("Body:")
+    _body_raw = email_text[_body_idx + 5:].strip() if _body_idx >= 0 else ""
+    if not _body_raw:
+        return False
+
+    try:
+        _body_clean = strip_quoted_text(_body_raw).strip()
+    except Exception:
+        _body_clean = _body_raw.strip()
+
+    if not _body_clean or len(_body_clean) >= 120:
+        return False
+
+    # Strip closing/signature FIRST — names in signature (e.g. "John Green",
+    # "Amber Stone") must not trigger product-word reject.
+    _pre_sig = _CLOSING_MARKER.sub("", _body_clean)
+    _pre_sig = _STRIP_FILLER.sub("", _pre_sig).strip()
+
+    # Hard reject on pre-signature content only
+    if _pre_sig and _REJECT_PATTERN.search(_pre_sig):
+        return False
+
+    # Normalize: lowercase, strip punctuation, collapse whitespace
+    normalized = _pre_sig.lower()
+    normalized = re.sub(r"[^\w\s]", "", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+
+    if not normalized:
+        # Body was only greetings/signature — check for image attachment
+        return "Attachments:" in email_text and "image/" in email_text
+
+    return normalized in _ACK_PHRASES
+
+
+# ---------------------------------------------------------------------------
 # Classification runner
 # ---------------------------------------------------------------------------
 
@@ -491,6 +570,29 @@ def run_classification(
             parsed_classification.order_id,
         )
         return parsed_classification
+
+    # Step 0.95: Deterministic payment-ack when awaiting_payment (0 tokens)
+    if conversation_state and conversation_state.get("status") == "awaiting_payment":
+        _facts = conversation_state.get("facts") or {}
+        if (
+            _facts.get("payment_request_sent")
+            and not _facts.get("payment_confirmed")
+            and _looks_like_payment_ack(email_text)
+        ):
+            _sender = _extract_sender_email(email_text) or ""
+            _order_id = _facts.get("order_id")
+            logger.info(
+                "Deterministic: awaiting_payment + ack -> payment_received (%s, order=%s)",
+                _sender, _order_id,
+            )
+            return EmailClassification(
+                needs_reply=True,
+                situation="payment_received",
+                client_email=_sender,
+                order_id=_order_id,
+                dialog_intent="confirms_payment",
+                followup_to="payment_info",
+            )
 
     # Clean email body for LLM classifier (remove quoted blocks, signatures)
     cleaned_email = clean_email_body(email_text)

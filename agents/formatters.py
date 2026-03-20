@@ -136,6 +136,12 @@ def format_combined_email_text(candidates: list[dict]) -> str:
         date_str = ts.strftime("%Y-%m-%d %H:%M") if ts else "unknown date"
         parts.append(f"--- Message from {date_str} ---")
         parts.append(c["msg"].get("body", ""))
+        c_attachments = c["msg"].get("attachments") or []
+        if c_attachments:
+            att_desc = ", ".join(
+                f"{a.get('filename', '?')} ({a.get('mime_type', '?')})" for a in c_attachments
+            )
+            parts.append(f"[Attachments: {att_desc}]")
         parts.append("")
 
     return "\n".join(parts)

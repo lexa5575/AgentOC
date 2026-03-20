@@ -210,6 +210,7 @@ class GmailClient:
             "reply_to": reply_to,
             "subject": subject,
             "body": body,
+            "attachments": self._extract_attachments_meta(msg["payload"]),
             "gmail_message_id": msg_id,
             "gmail_thread_id": msg.get("threadId"),
             "created_at": created_at,
@@ -484,26 +485,47 @@ class GmailClient:
         logger.info("Gmail draft created: draft_id=%s, thread=%s, to=%s", draft_id, thread_id, to)
         return draft_id
 
+    @staticmethod
+    def _flatten_parts(payload: dict) -> list[dict]:
+        """Recursively flatten all MIME parts from a Gmail payload.
+
+        Returns [payload] itself for leaf payloads (no children).
+        """
+        children = payload.get("parts", [])
+        if not children:
+            return [payload]
+        parts = []
+        for part in children:
+            if part.get("mimeType", "").startswith("multipart/"):
+                parts.extend(GmailClient._flatten_parts(part))
+            else:
+                parts.append(part)
+        return parts
+
+    @staticmethod
+    def _extract_attachments_meta(payload: dict) -> list[dict]:
+        """Extract attachment metadata (filename, MIME type) from payload."""
+        attachments = []
+        for part in GmailClient._flatten_parts(payload):
+            filename = part.get("filename", "")
+            mime = part.get("mimeType", "")
+            if mime in ("text/plain", "text/html") and not filename:
+                continue
+            if filename or mime.startswith("image/"):
+                attachments.append({"filename": filename or "(inline)", "mime_type": mime})
+        return attachments
+
     def _extract_body(self, payload: dict) -> str:
         """Extract plain text body from Gmail message payload.
 
         Prefers text/plain but falls back to HTML→text conversion when
         text/plain is missing or just a stub ("does not support HTML").
         """
-        # Simple message with body directly
-        if payload.get("body", {}).get("data"):
-            data = self._decode_base64(payload["body"]["data"])
-            mime = payload.get("mimeType", "")
-            return self._html_to_text(data) if "html" in mime else data
-
-        # Collect text/plain and text/html from all parts (including nested)
+        # Collect text/plain and text/html from all parts (recursive)
         plain_text = None
         html_text = None
 
-        all_parts = list(payload.get("parts", []))
-        for part in payload.get("parts", []):
-            if part.get("mimeType", "").startswith("multipart/"):
-                all_parts.extend(part.get("parts", []))
+        all_parts = self._flatten_parts(payload)
 
         for part in all_parts:
             mime = part.get("mimeType", "")

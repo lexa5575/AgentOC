@@ -270,6 +270,7 @@ def fill_template_reply(
         )
 
     result["template_used"] = True
+    result["template_situation"] = situation
     result["draft_reply"] = reply
     result["draft_reply_html"] = to_gmail_html(
         reply, result.get("order_summary", "")
