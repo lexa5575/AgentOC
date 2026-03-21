@@ -361,16 +361,6 @@ def fill_mixed_availability_template(
     # Build A/B choice
     price_a = f"${reservable_price:.2f}" if reservable_price else "TBD"
 
-    # Estimate full price: reservable + first alternative for each OOS item
-    # (simple heuristic — use same per-item price as reservable average)
-    full_price = None
-    if reservable_price and reservable_items and unresolved_items:
-        avg_per_unit = reservable_price / sum(
-            i["ordered_qty"] for i in reservable_items
-        )
-        oos_total = sum(i["ordered_qty"] for i in unresolved_items)
-        full_price = reservable_price + avg_per_unit * oos_total
-
     reserved_names = ", ".join(
         _display(i) for i in reservable_items
     )
@@ -388,12 +378,7 @@ def fill_mixed_availability_template(
 
     lines.append("Would you like us to:")
     lines.append(f"A) Ship {reserved_names} only ({price_a})")
-    if full_price:
-        lines.append(
-            f"B) Add substitute and ship both (${full_price:.2f})"
-        )
-    else:
-        lines.append("B) Add substitute and ship both")
+    lines.append("B) Add substitute and ship both")
     lines.append("")
     lines.append("Please let us know!")
 

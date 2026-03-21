@@ -1034,7 +1034,8 @@ def classify_and_process(
                         _old_status, classification.client_email,
                     )
                     fresh = state_updater.empty_state()
-                    fresh["facts"]["order_id"] = classification.order_id
+                    # Don't seed with first-pass order_id — it may come
+                    # from stale context. Let AUTO-{message_id} own it.
                     pre_state_record["state"] = fresh
                     state_dict = fresh
 

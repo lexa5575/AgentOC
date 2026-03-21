@@ -1095,25 +1095,27 @@ class TestOosTemplateAlternativesQty(unittest.TestCase):
 
     @patch("db.catalog.get_display_name", side_effect=lambda name, cat: f"Terea {name}")
     @patch("db.catalog.get_base_display_name", side_effect=lambda bf: f"Terea {bf}")
-    def test_full_oos_shows_ordered_qty(self, mock_base, mock_display):
-        """Full OOS ordered_qty=2 → '2 x Terea Amber ME ...'."""
+    def test_full_oos_shows_alternative_without_qty(self, mock_base, mock_display):
+        """Full OOS → alternative name without qty prefix (Phase A)."""
         items = [{"base_flavor": "Amber", "ordered_qty": 2, "total_available": 0}]
         alts = {"Amber": {"alternatives": [
             {"alternative": {"product_name": "Amber ME", "category": "ARMENIA"}, "reason": "same_flavor"},
         ]}}
         text = self.templates.fill_out_of_stock_template(items, alts)
-        self.assertIn("2 x Terea Amber ME", text)
+        self.assertIn("Terea Amber ME (same product, different region)", text)
+        self.assertNotIn("2 x", text)
 
     @patch("db.catalog.get_display_name", side_effect=lambda name, cat: f"Terea {name}")
     @patch("db.catalog.get_base_display_name", side_effect=lambda bf: f"Terea {bf}")
-    def test_partial_oos_shows_missing_qty(self, mock_base, mock_display):
-        """Partial OOS ordered=3, available=1 → '2 x ...' (missing=2)."""
+    def test_partial_oos_shows_missing_qty_prefix(self, mock_base, mock_display):
+        """Partial OOS ordered=3, available=1 → 'For the missing 2: ...' (Phase A)."""
         items = [{"base_flavor": "Bronze", "ordered_qty": 3, "total_available": 1}]
         alts = {"Bronze": {"alternatives": [
             {"alternative": {"product_name": "Bronze EU", "category": "TEREA_EUROPE"}, "reason": "fallback"},
         ]}}
         text = self.templates.fill_out_of_stock_template(items, alts)
-        self.assertIn("2 x Terea Bronze EU", text)
+        self.assertIn("For the missing 2:", text)
+        self.assertIn("Terea Bronze EU", text)
 
     @patch("db.catalog.get_display_name", side_effect=lambda name, cat: f"Terea {name}")
     @patch("db.catalog.get_base_display_name", side_effect=lambda bf: f"Terea {bf}")
