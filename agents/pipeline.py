@@ -394,9 +394,13 @@ def process_classified_email(
                     )
                     return result
 
-            # --- Price calculation (all items in stock) ---
-            calculated_price = calculate_order_price(stock_result["items"])
-            result["calculated_price"] = calculated_price
+            # --- Price calculation (all items in stock or subset already set) ---
+            # Skip if _apply_confirmed_subset_result already set the price
+            if "calculated_price" not in result:
+                calculated_price = calculate_order_price(stock_result["items"])
+                result["calculated_price"] = calculated_price
+            else:
+                calculated_price = result["calculated_price"]
 
             if (
                 classification.parser_used
@@ -424,12 +428,13 @@ def process_classified_email(
                     ],
                 }
 
-            # Build order summary for Gmail draft display (e.g. "2 x Terea Green EU")
-            result["order_summary"] = _build_order_summary(
-                stock_result["items"], items_for_check,
-                classification.client_email,
-            )
-            result["_stock_check_items"] = items_for_check
+            # Build order summary (skip if subset already set by Branch 1)
+            if "order_summary" not in result:
+                result["order_summary"] = _build_order_summary(
+                    stock_result["items"], items_for_check,
+                    classification.client_email,
+                )
+                result["_stock_check_items"] = items_for_check
 
             # Phase 3 ambiguity gate: block auto-fulfillment if any item
             # has multiple product_ids (plan §9.4, rule §4.3).
