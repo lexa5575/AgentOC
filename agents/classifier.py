@@ -615,8 +615,8 @@ def _looks_like_payment_ack(email_text: str) -> bool:
 _REORDER_PHRASES = frozenset({
     "same order", "same order please", "same as last time", "same as before",
     "same again", "repeat order", "repeat my order", "same please",
-    "the usual", "as usual", "my usual order", "same thing",
-    "same as usual", "reorder", "same one", "same ones",
+    "the usual", "the usual order", "as usual", "my usual order",
+    "same as usual", "reorder",
     "can i have the same", "can i have the same order",
     "can i please have the same", "can i please have the same order",
     "i want the same", "i want the same order", "id like the same",
@@ -640,9 +640,9 @@ _REORDER_HINT_RE = re.compile(
     r"i\s+want\s+the\s+same\s+order|"
     r"send\s+me\s+the\s+same|"
     r"same\s+as\s+(last\s+time|before|usual)|"
-    # --- "usual" family ---
+    # --- "usual" family (order-intent anchored) ---
     r"as\s+usual|"
-    r"the\s+usual|"
+    r"the\s+usual\s+order|"
     r"my\s+usual\s+order|"
     # --- "reorder" family ---
     r"reorder|re-order|"
