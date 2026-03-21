@@ -219,16 +219,33 @@ def process_classified_email(
                         for a in best.get("alternatives", [])
                     )
 
+                # Backward compat for oos_followup handler
                 result["stock_issue"] = {
                     "stock_check": stock_result,
                     "best_alternatives": best_alternatives,
                 }
+
+                # Phase B: unified availability resolution object
+                reservable = [
+                    i for i in stock_result["items"] if i["is_sufficient"]
+                ]
+                result["availability_resolution"] = {
+                    "decision_required": True,
+                    "reservable_items": reservable,
+                    "unresolved_items": stock_result["insufficient_items"],
+                    "alternatives_by_flavor": best_alternatives,
+                    "reservable_price": (
+                        calculate_order_price(reservable) if reservable else None
+                    ),
+                }
+
                 result["needs_routing"] = True
                 logger.info(
-                    "Stock insufficient for %s: %s (alternatives: %s)",
+                    "Stock insufficient for %s: %s (alternatives: %s, reservable: %d)",
                     classification.client_email,
                     [i["base_flavor"] for i in stock_result["insufficient_items"]],
                     {k: v.get("reason", "none_available") for k, v in best_alternatives.items()},
+                    len(reservable),
                 )
                 return result
 
@@ -591,6 +608,10 @@ def _persist_results(
                             for i in stock_check["items"]
                             if i["is_sufficient"]
                         ],
+                        "reservable_price": (
+                            result.get("availability_resolution", {})
+                            .get("reservable_price")
+                        ),
                     }
                     logger.info(
                         "Saved pending_oos_resolution for %s (thread=%s)",
@@ -615,51 +636,58 @@ def _persist_results(
         and classification.order_items
         and result["client_found"]
     ):
-        stock_check_items = result.get("_stock_check_items") or []
-        use_resolved = len(stock_check_items) == len(classification.order_items)
-
-        # For payment_received: ONLY save if items were resolved.
-        # Raw classifier items without product_ids are garbage for fulfillment.
-        if classification.situation == "payment_received" and not use_resolved:
+        # Phase B guard: don't persist provisional items when decision pending
+        if result.get("availability_resolution", {}).get("decision_required"):
             logger.info(
-                "Skipping ClientOrderItem save for payment_received %s: items not resolved",
+                "Skipping save_order_items: decision_required for %s",
                 classification.client_email,
             )
         else:
-            order_items_for_save = []
-            for i, oi in enumerate(classification.order_items):
-                if use_resolved:
-                    sci = stock_check_items[i]
-                    variant_id = extract_variant_id(
-                        sci.get("product_ids"),
-                        client_email=classification.client_email,
-                    )
-                    display_name = sci.get("display_name")
-                    # If variant resolved but display_name has no region,
-                    # recalculate with the resolved category
-                    if variant_id and display_name:
-                        display_name = _enrich_display_name_with_region(
-                            variant_id, display_name,
+            stock_check_items = result.get("_stock_check_items") or []
+            use_resolved = len(stock_check_items) == len(classification.order_items)
+
+            if classification.situation == "payment_received" and not use_resolved:
+                # For payment_received: ONLY save if items were resolved.
+                # Raw classifier items without product_ids are garbage for fulfillment.
+                logger.info(
+                    "Skipping ClientOrderItem save for payment_received %s: items not resolved",
+                    classification.client_email,
+                )
+            else:
+                order_items_for_save = []
+                for i, oi in enumerate(classification.order_items):
+                    if use_resolved:
+                        sci = stock_check_items[i]
+                        variant_id = extract_variant_id(
+                            sci.get("product_ids"),
+                            client_email=classification.client_email,
                         )
-                    item = {
-                        "product_name": sci.get("product_name", oi.product_name),
-                        "base_flavor": sci.get("base_flavor", oi.base_flavor),
-                        "quantity": sci.get("quantity", oi.quantity),
-                        "variant_id": variant_id,
-                        "display_name_snapshot": display_name,
-                    }
-                else:
-                    item = {
-                        "product_name": oi.product_name,
-                        "base_flavor": oi.base_flavor,
-                        "quantity": oi.quantity,
-                    }
-                order_items_for_save.append(item)
-            save_order_items(
-                client_email=classification.client_email,
-                order_id=classification.order_id,
-                order_items=order_items_for_save,
-            )
+                        display_name = sci.get("display_name")
+                        # If variant resolved but display_name has no region,
+                        # recalculate with the resolved category
+                        if variant_id and display_name:
+                            display_name = _enrich_display_name_with_region(
+                                variant_id, display_name,
+                            )
+                        item = {
+                            "product_name": sci.get("product_name", oi.product_name),
+                            "base_flavor": sci.get("base_flavor", oi.base_flavor),
+                            "quantity": sci.get("quantity", oi.quantity),
+                            "variant_id": variant_id,
+                            "display_name_snapshot": display_name,
+                        }
+                    else:
+                        item = {
+                            "product_name": oi.product_name,
+                            "base_flavor": oi.base_flavor,
+                            "quantity": oi.quantity,
+                        }
+                    order_items_for_save.append(item)
+                save_order_items(
+                    client_email=classification.client_email,
+                    order_id=classification.order_id,
+                    order_items=order_items_for_save,
+                )
 
     # Step 6.1: OOS canonical replace — trusted source persistence gate (plan §7.3)
     from agents.handlers.oos_constants import TRUSTED_SOURCES as _TRUSTED_PERSISTENCE_SOURCES

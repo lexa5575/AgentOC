@@ -310,3 +310,92 @@ def fill_out_of_stock_template(
     
     return "\n".join(lines)
 
+
+# ---------------------------------------------------------------------------
+# Mixed Availability Template (Phase B — decision_required, no fulfillment)
+# ---------------------------------------------------------------------------
+def fill_mixed_availability_template(
+    reservable_items: list[dict],
+    unresolved_items: list[dict],
+    alternatives_by_flavor: dict,
+    reservable_price: float | None = None,
+    client_data: dict | None = None,
+) -> str:
+    """Build decision-required email when some items are in stock and some OOS.
+
+    NOT a fulfillment confirmation. Asks the customer to choose:
+    A) ship reservable items only, or B) add a substitute.
+    Zero LLM tokens.
+    """
+    from db.catalog import get_base_display_name
+
+    def _display(item: dict) -> str:
+        return item.get("display_name") or get_base_display_name(
+            item["base_flavor"],
+        )
+
+    # Reserved items list
+    reserved_lines = []
+    for item in reservable_items:
+        reserved_lines.append(
+            f"\u2022 {item['ordered_qty']} x {_display(item)}"
+        )
+
+    # OOS items + alternatives
+    oos_parts = []
+    for item in unresolved_items:
+        flavor = item["base_flavor"]
+        decision = alternatives_by_flavor.get(flavor, {})
+        alts = decision.get("alternatives", [])
+        display = _display(item)
+
+        if alts:
+            alt_names = [_format_alternative(a) for a in alts[:2]]
+            oos_parts.append(
+                f"{display} is out of stock.\n"
+                f"We have: {', '.join(alt_names)}"
+            )
+        else:
+            oos_parts.append(f"{display} is out of stock.")
+
+    # Build A/B choice
+    price_a = f"${reservable_price:.2f}" if reservable_price else "TBD"
+
+    # Estimate full price: reservable + first alternative for each OOS item
+    # (simple heuristic — use same per-item price as reservable average)
+    full_price = None
+    if reservable_price and reservable_items and unresolved_items:
+        avg_per_unit = reservable_price / sum(
+            i["ordered_qty"] for i in reservable_items
+        )
+        oos_total = sum(i["ordered_qty"] for i in unresolved_items)
+        full_price = reservable_price + avg_per_unit * oos_total
+
+    reserved_names = ", ".join(
+        _display(i) for i in reservable_items
+    )
+
+    lines = [
+        "Hi!",
+        "We have reserved for you:",
+    ]
+    lines.extend(reserved_lines)
+    lines.append("")
+
+    for part in oos_parts:
+        lines.append(f"Unfortunately, {part}")
+    lines.append("")
+
+    lines.append("Would you like us to:")
+    lines.append(f"A) Ship {reserved_names} only ({price_a})")
+    if full_price:
+        lines.append(
+            f"B) Add substitute and ship both (${full_price:.2f})"
+        )
+    else:
+        lines.append("B) Add substitute and ship both")
+    lines.append("")
+    lines.append("Please let us know!")
+
+    return "\n".join(lines)
+
