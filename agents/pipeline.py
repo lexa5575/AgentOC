@@ -48,6 +48,9 @@ from utils.telegram import send_telegram
 
 logger = logging.getLogger(__name__)
 
+# Phase D: statuses where the order cycle is still active
+# (safe to reuse order_id, no state reset on new_order)
+_ACTIVE_ORDER_STATUSES = {"new", "awaiting_oos_decision", "pending_response"}
 
 from db.catalog import _enrich_display_name_with_region
 
@@ -882,18 +885,65 @@ def classify_and_process(
             classification.client_email, classification.situation, classification.needs_reply,
         )
 
-        # Auto-generate order_id from gmail_thread_id for new_order when missing.
-        # Tilda orders, direct emails, etc. often have no order_id.
-        # Same thread → same auto-id → dedup works via unique constraint.
+        # Phase D: detect stale cycle + strong order signal → clean re-classify
+        if pre_state_record:
+            _old_state = (pre_state_record.get("state") or {})
+            _old_status = _old_state.get("status", "new")
+            if _old_status not in _ACTIVE_ORDER_STATUSES:
+                _has_order_signal = (
+                    classification.situation == "new_order"
+                    or classification.order_items
+                    or getattr(classification, "parser_used", False)
+                )
+                if _has_order_signal:
+                    logger.info(
+                        "Stale thread (status=%s) + order signal: "
+                        "clean re-classify for %s",
+                        _old_status, classification.client_email,
+                    )
+                    fresh = state_updater.empty_state()
+                    fresh["facts"]["order_id"] = classification.order_id
+                    pre_state_record["state"] = fresh
+                    state_dict = fresh
+
+                    context_str, _ = build_classifier_context(
+                        gmail_thread_id, email_text,
+                        gmail_account=gmail_account,
+                        override_state=fresh,
+                        override_thread_history=[],
+                        override_other_thread_states=[],
+                    )
+                    classification = run_classification(
+                        email_text, context_str,
+                        conversation_state=state_dict,
+                    )
+                    logger.info(
+                        "Re-classified after stale reset: "
+                        "situation=%s for %s",
+                        classification.situation,
+                        classification.client_email,
+                    )
+
+        # Phase D: synthetic order_id from pre_state_record + gmail_message_id
         if (
             classification.situation == "new_order"
             and not (classification.order_id or "").strip()
             and gmail_thread_id
         ):
-            auto_id = f"AUTO-{gmail_thread_id[-8:]}"
+            _existing_state = (pre_state_record or {}).get("state") or {}
+            _existing_status = _existing_state.get("status")
+            _existing_oid = _existing_state.get("facts", {}).get("order_id")
+
+            if _existing_oid and _existing_status in _ACTIVE_ORDER_STATUSES:
+                auto_id = _existing_oid
+            elif gmail_message_id:
+                auto_id = f"AUTO-{gmail_message_id[-8:]}"
+            else:
+                auto_id = f"AUTO-{gmail_thread_id[-8:]}"
+
             classification.order_id = auto_id
             logger.info(
-                "Auto-generated order_id=%s from thread_id for %s",
+                "Auto-generated order_id=%s for %s",
                 auto_id, classification.client_email,
             )
 

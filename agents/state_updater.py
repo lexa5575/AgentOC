@@ -37,6 +37,14 @@ def _use_llm() -> str:
 # ---------------------------------------------------------------------------
 # Empty state template
 # ---------------------------------------------------------------------------
+def empty_state() -> dict:
+    """Return a fresh empty state structure.
+
+    Public API — used by pipeline for stale-thread reset (Phase D).
+    """
+    return _empty_state()
+
+
 def _empty_state() -> dict:
     """Return an empty state structure."""
     return {

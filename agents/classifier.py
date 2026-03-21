@@ -414,8 +414,15 @@ def build_classifier_context(
     gmail_thread_id: str | None,
     email_text: str,
     gmail_account: str = "default",
+    override_state: dict | None = None,
+    override_thread_history: list | None = None,
+    override_other_thread_states: list | None = None,
 ) -> tuple[str, dict | None]:
     """Build context string for the classifier from DB state and thread history.
+
+    Override params (Phase D): when set, skip the corresponding DB query
+    and use the provided value instead. Sentinel: None = not set (use DB),
+    [] = explicitly empty.
 
     Returns:
         (context_str, pre_state_record) where context_str is prepended to the
@@ -427,7 +434,10 @@ def build_classifier_context(
     thread_history = None
     other_thread_states = None
 
-    if gmail_thread_id:
+    if override_state is not None:
+        state_dict = override_state
+        # pre_state_record not rebuilt — caller already sanitized it
+    elif gmail_thread_id:
         try:
             pre_state_record = get_state(gmail_thread_id)
             if pre_state_record and pre_state_record.get("state"):
@@ -435,6 +445,9 @@ def build_classifier_context(
         except Exception as e:
             logger.warning("Failed to get conversation state for classifier: %s", e)
 
+    if override_thread_history is not None:
+        thread_history = override_thread_history or None
+    elif gmail_thread_id:
         # Thread history (full messages — Classifier needs complete context)
         try:
             thread_history = get_full_thread_history(
@@ -443,16 +456,19 @@ def build_classifier_context(
         except Exception as e:
             logger.warning("Failed to get thread history for classifier: %s", e)
 
-    # Cross-thread context: other active threads for same client
-    sender_email = _extract_sender_email(email_text)
-    if not sender_email and pre_state_record:
-        sender_email = pre_state_record.get("client_email")
+    if override_other_thread_states is not None:
+        other_thread_states = override_other_thread_states or None
+    else:
+        # Cross-thread context: other active threads for same client
+        sender_email = _extract_sender_email(email_text)
+        if not sender_email and pre_state_record:
+            sender_email = pre_state_record.get("client_email")
 
-    if sender_email:
-        try:
-            other_thread_states = get_client_states(sender_email, limit=4) or None
-        except Exception as e:
-            logger.warning("Failed to get cross-thread context: %s", e)
+        if sender_email:
+            try:
+                other_thread_states = get_client_states(sender_email, limit=4) or None
+            except Exception as e:
+                logger.warning("Failed to get cross-thread context: %s", e)
 
     conversation_context = compose_classifier_context(
         conversation_state=state_dict,
