@@ -52,8 +52,8 @@ class TestLooksLikeReorder:
     def test_repeat_order(self):
         assert self._fn(self._email("repeat order")) is True
 
-    def test_with_quoted_text(self):
-        body = "same order\n\nOn Mon, Jan 1 wrote:\n> old stuff"
+    def test_with_greeting_and_signature(self):
+        body = "Hey, same order please\nBest regards"
         assert self._fn(self._email(body)) is True
 
     # --- Negative ---
