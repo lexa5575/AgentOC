@@ -6,6 +6,10 @@ environments where OpenAI/Agno runtime deps are unavailable.
 
 from __future__ import annotations
 
+import pytest
+
+pytestmark = pytest.mark.smoke
+
 import importlib
 import json
 import sys

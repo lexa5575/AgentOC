@@ -9,6 +9,11 @@ Run:
     python -m tests.test_stock_parser
 """
 
+import pytest
+
+pytestmark = pytest.mark.domain_stock
+
+
 from datetime import datetime
 
 from tools.stock_parser import parse_stock_with_config, StockRecord

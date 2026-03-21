@@ -7,11 +7,11 @@ External runtime dependencies are stubbed so this suite runs locally without
 OpenAI/Gmail/Postgres services.
 """
 
+from __future__ import annotations
+
 import pytest
 
 pytestmark = pytest.mark.smoke
-
-from __future__ import annotations
 
 import importlib
 import json

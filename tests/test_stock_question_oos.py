@@ -10,13 +10,12 @@ Covers:
 7. _validate_reply_products — cross-region rejection
 """
 
-import pytest
-
-pytestmark = pytest.mark.domain_fulfillment
-
 from __future__ import annotations
 
+import pytest
 import unittest
+
+pytestmark = pytest.mark.domain_fulfillment
 from unittest.mock import MagicMock, patch
 
 from agents.handlers.stock_question import (

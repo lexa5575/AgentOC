@@ -9,11 +9,11 @@ Tests cover:
 5. oos_qty_utils reads pending_oos_resolution for merge and enrich
 """
 
+from __future__ import annotations
+
 import pytest
 
 pytestmark = pytest.mark.smoke
-
-from __future__ import annotations
 
 import importlib
 import json

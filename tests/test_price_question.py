@@ -12,6 +12,10 @@ Tests that:
 
 from __future__ import annotations
 
+import pytest
+
+pytestmark = pytest.mark.domain_fulfillment
+
 import importlib
 import sys
 import types

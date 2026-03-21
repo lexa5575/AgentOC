@@ -14,11 +14,11 @@ Tests that:
 - asks_question / unknown → LLM
 """
 
+from __future__ import annotations
+
 import pytest
 
 pytestmark = pytest.mark.domain_fulfillment
-
-from __future__ import annotations
 
 import importlib
 import sys

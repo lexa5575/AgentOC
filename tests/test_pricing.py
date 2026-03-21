@@ -6,6 +6,11 @@ Covers:
 - price_alert flags: mismatch and unmatched
 """
 
+import pytest
+
+pytestmark = pytest.mark.smoke
+
+
 from unittest.mock import patch
 
 import sys

@@ -8,11 +8,11 @@ Covers:
 - _calc_recheck_date logic
 """
 
+from __future__ import annotations
+
 import pytest
 
 pytestmark = pytest.mark.smoke
-
-from __future__ import annotations
 
 import importlib
 import sys
