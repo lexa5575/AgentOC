@@ -398,21 +398,20 @@ class TestFillOutOfStockTemplate:
 # Dedup fix test
 # ---------------------------------------------------------------------------
 
-class TestDedupFix:
+class TestDedupBehavior:
 
-    def test_same_flavor_excluded_by_excluded_products(self):
-        """same_flavor items should be filtered by excluded_products."""
-        # This tests the logic added in db/alternatives.py
-        # We can't easily unit-test select_best_alternatives without DB,
-        # but we verify the filter logic pattern works.
-        excluded = {"Silver"}
+    def test_same_flavor_not_blocked_by_excluded(self):
+        """same_flavor (Priority 0) must NOT be blocked by excluded_products.
+
+        If LLM for Amber EU suggested Silver as an alternative,
+        Silver ME should still appear as same_flavor for Silver EU.
+        Same_flavor is the highest-priority substitute and must not
+        be blocked by LLM picks for other OOS flavors.
+        """
+        excluded = {"Silver"}  # Silver was LLM-suggested for Amber
         same_flavor_items = [
             {"product_name": "Silver", "category": "ARMENIA", "quantity": 25},
-            {"product_name": "Amber", "category": "ARMENIA", "quantity": 16},
         ]
-        filtered = [
-            item for item in same_flavor_items
-            if item["product_name"] not in excluded
-        ]
-        assert len(filtered) == 1
-        assert filtered[0]["product_name"] == "Amber"
+        # same_flavor should NOT be filtered — it's Priority 0
+        # (the filter was intentionally removed from db/alternatives.py)
+        assert len(same_flavor_items) == 1  # Silver ME stays
