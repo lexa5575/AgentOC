@@ -285,6 +285,9 @@ def check_stock_for_order(
             # Preserve original_product_name for region-aware alternatives
             if item.get("original_product_name"):
                 entry["original_product_name"] = item["original_product_name"]
+            # Preserve optional flag for conditional item handling (Phase C)
+            if item.get("optional"):
+                entry["optional"] = True
             results.append(entry)
 
             if not is_sufficient:

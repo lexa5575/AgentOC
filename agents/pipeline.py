@@ -92,6 +92,73 @@ def _apply_thread_hint_if_needed(items, gmail_thread_id, gmail_account):
 # SECTION 1: Pre-processing — stock checks, price, order ID
 # ═══════════════════════════════════════════════════════════════════════════
 
+# ---------------------------------------------------------------------------
+# Phase C helpers: shared summary builder + confirmed subset
+# ---------------------------------------------------------------------------
+
+def _build_order_summary(
+    stock_items: list[dict],
+    items_for_check: list[dict],
+    client_email: str,
+) -> str:
+    """Build region-aware order summary for a set of stock items.
+
+    Shared by full-order path and confirmed-subset path (Phase C).
+    """
+    from db.catalog import get_display_name
+    summary_parts = []
+    for idx, item in enumerate(stock_items):
+        display = item.get("display_name")
+        if not display:
+            cat = ""
+            entries = item.get("stock_entries") or []
+            if entries:
+                cat = entries[0].get("category", "")
+            name = item.get("product_name") or item.get("base_flavor", "")
+            display = get_display_name(name, cat)
+        sci = items_for_check[idx] if idx < len(items_for_check) else None
+        if sci and sci.get("product_ids"):
+            vid = extract_variant_id(
+                sci["product_ids"], client_email=client_email,
+            )
+            if vid:
+                display = _enrich_display_name_with_region(vid, display)
+        summary_parts.append(f"{item['ordered_qty']} x {display}")
+    return ", ".join(summary_parts)
+
+
+def _apply_confirmed_subset_result(
+    result: dict,
+    stock_result: dict,
+    items_for_check: list[dict],
+    classification,
+) -> None:
+    """Set result fields for confirmed subset only (reservable items).
+
+    After this call, the caller should NOT enter the full-order calc block
+    — all downstream fields are already set for the subset.
+    """
+    reservable = [i for i in stock_result["items"] if i["is_sufficient"]]
+    reservable_indices = [
+        i for i, it in enumerate(stock_result["items"])
+        if it["is_sufficient"]
+    ]
+    subset_items = [
+        items_for_check[i] for i in reservable_indices
+        if i < len(items_for_check)
+    ]
+
+    result["calculated_price"] = calculate_order_price(reservable)
+    result["order_summary"] = _build_order_summary(
+        reservable, subset_items, classification.client_email,
+    )
+    result["_stock_check_items"] = subset_items
+    result["persist_order_items_override"] = [
+        classification.order_items[i] for i in reservable_indices
+        if i < len(classification.order_items)
+    ]
+
+
 def process_classified_email(
     classification,
     gmail_message_id: str | None = None,
@@ -151,6 +218,7 @@ def process_classified_email(
                     "original_product_name": oi.product_name,
                     "region_preference": getattr(oi, "region_preference", None),
                     "strict_region": getattr(oi, "strict_region", False),
+                    "optional": getattr(oi, "optional", False),
                 }
                 for oi in classification.order_items
             ]
@@ -197,60 +265,134 @@ def process_classified_email(
             stock_result = check_stock_for_order(items_for_check)
 
             if not stock_result["all_in_stock"]:
-                # Select up to three alternatives per insufficient item.
-                best_alternatives = {}
-                already_suggested: set[str] = set()
-                # Exclude in-order flavors from alternatives (Phase A fix)
-                in_order_flavors: set[str] = {
-                    item["base_flavor"]
-                    for item in stock_result["items"]
-                    if item["is_sufficient"]
-                }
+                # Phase C: split optional vs required OOS
+                required_unresolved = []
+                optional_unresolved = []
                 for insuff in stock_result["insufficient_items"]:
-                    best = select_best_alternatives(
-                        client_email=classification.client_email,
-                        base_flavor=insuff["base_flavor"],
-                        max_options=3,
-                        client_summary=client.get("llm_summary", "") if client else "",
-                        excluded_products=already_suggested,
-                        original_product_name=insuff.get("original_product_name"),
-                        excluded_base_flavors=in_order_flavors,
-                    )
-                    best_alternatives[insuff["base_flavor"]] = best
-                    already_suggested.update(
-                        a["alternative"]["product_name"]
-                        for a in best.get("alternatives", [])
-                    )
+                    if insuff.get("optional"):
+                        optional_unresolved.append(insuff)
+                    else:
+                        required_unresolved.append(insuff)
 
-                # Backward compat for oos_followup handler
-                result["stock_issue"] = {
-                    "stock_check": stock_result,
-                    "best_alternatives": best_alternatives,
-                }
-
-                # Phase B: unified availability resolution object
                 reservable = [
                     i for i in stock_result["items"] if i["is_sufficient"]
                 ]
-                result["availability_resolution"] = {
-                    "decision_required": True,
-                    "reservable_items": reservable,
-                    "unresolved_items": stock_result["insufficient_items"],
-                    "alternatives_by_flavor": best_alternatives,
-                    "reservable_price": (
-                        calculate_order_price(reservable) if reservable else None
-                    ),
+                in_order_flavors: set[str] = {
+                    item["base_flavor"] for item in reservable
                 }
 
-                result["needs_routing"] = True
-                logger.info(
-                    "Stock insufficient for %s: %s (alternatives: %s, reservable: %d)",
-                    classification.client_email,
-                    [i["base_flavor"] for i in stock_result["insufficient_items"]],
-                    {k: v.get("reason", "none_available") for k, v in best_alternatives.items()},
-                    len(reservable),
-                )
-                return result
+                # --- Branch 1: only optional OOS, reservable exists ---
+                # Treat as confirmed order for reservable subset + P.S.
+                if not required_unresolved and reservable:
+                    _apply_confirmed_subset_result(
+                        result, stock_result, items_for_check, classification,
+                    )
+                    # Find 1 best alternative per optional OOS for P.S.
+                    optional_with_alts = []
+                    for opt_item in optional_unresolved:
+                        best = select_best_alternatives(
+                            client_email=classification.client_email,
+                            base_flavor=opt_item["base_flavor"],
+                            max_options=1,
+                            client_summary=client.get("llm_summary", "") if client else "",
+                            excluded_base_flavors=in_order_flavors,
+                        )
+                        optional_with_alts.append({
+                            "item": opt_item,
+                            "best_alternative": (
+                                best.get("alternatives") or [None]
+                            )[0],
+                        })
+                    result["optional_oos_items"] = optional_with_alts
+                    logger.info(
+                        "Optional-only OOS for %s: %s (reservable: %d)",
+                        classification.client_email,
+                        [i["base_flavor"] for i in optional_unresolved],
+                        len(reservable),
+                    )
+                    # Fall through to normal order path (price/summary set)
+
+                # --- Branch 3: all optional OOS, nothing reservable ---
+                elif not required_unresolved and not reservable:
+                    best_alternatives = {}
+                    already_suggested: set[str] = set()
+                    for insuff in optional_unresolved:
+                        best = select_best_alternatives(
+                            client_email=classification.client_email,
+                            base_flavor=insuff["base_flavor"],
+                            max_options=1,
+                            client_summary=client.get("llm_summary", "") if client else "",
+                            excluded_products=already_suggested,
+                        )
+                        best_alternatives[insuff["base_flavor"]] = best
+                        already_suggested.update(
+                            a["alternative"]["product_name"]
+                            for a in best.get("alternatives", [])
+                        )
+                    result["all_oos_optional"] = True
+                    result["stock_issue"] = {
+                        "stock_check": stock_result,
+                        "best_alternatives": best_alternatives,
+                    }
+                    result["availability_resolution"] = {
+                        "decision_required": False,
+                        "reservable_items": [],
+                        "optional_unresolved_items": optional_unresolved,
+                        "alternatives_by_flavor": best_alternatives,
+                    }
+                    result["needs_routing"] = True
+                    logger.info(
+                        "All-optional OOS for %s: %s",
+                        classification.client_email,
+                        [i["base_flavor"] for i in optional_unresolved],
+                    )
+                    return result
+
+                # --- Branch 2: required OOS (+ maybe optional) ---
+                else:
+                    best_alternatives = {}
+                    already_suggested: set[str] = set()
+                    # Build alternatives for all insufficient (required + optional)
+                    for insuff in stock_result["insufficient_items"]:
+                        best = select_best_alternatives(
+                            client_email=classification.client_email,
+                            base_flavor=insuff["base_flavor"],
+                            max_options=3,
+                            client_summary=client.get("llm_summary", "") if client else "",
+                            excluded_products=already_suggested,
+                            original_product_name=insuff.get("original_product_name"),
+                            excluded_base_flavors=in_order_flavors,
+                        )
+                        best_alternatives[insuff["base_flavor"]] = best
+                        already_suggested.update(
+                            a["alternative"]["product_name"]
+                            for a in best.get("alternatives", [])
+                        )
+
+                    # Backward compat for oos_followup handler
+                    result["stock_issue"] = {
+                        "stock_check": stock_result,
+                        "best_alternatives": best_alternatives,
+                    }
+                    result["availability_resolution"] = {
+                        "decision_required": True,
+                        "reservable_items": reservable,
+                        "unresolved_items": stock_result["insufficient_items"],
+                        "alternatives_by_flavor": best_alternatives,
+                        "reservable_price": (
+                            calculate_order_price(reservable)
+                            if reservable else None
+                        ),
+                    }
+                    result["needs_routing"] = True
+                    logger.info(
+                        "Stock insufficient for %s: %s (alternatives: %s, reservable: %d)",
+                        classification.client_email,
+                        [i["base_flavor"] for i in stock_result["insufficient_items"]],
+                        {k: v.get("reason", "none_available") for k, v in best_alternatives.items()},
+                        len(reservable),
+                    )
+                    return result
 
             # --- Price calculation (all items in stock) ---
             calculated_price = calculate_order_price(stock_result["items"])
@@ -283,29 +425,10 @@ def process_classified_email(
                 }
 
             # Build order summary for Gmail draft display (e.g. "2 x Terea Green EU")
-            # Prefer resolved display_name (region-aware) over entries[0].category
-            from db.catalog import get_display_name
-            summary_parts = []
-            for idx, item in enumerate(stock_result["items"]):
-                display = item.get("display_name")
-                if not display:
-                    cat = ""
-                    entries = item.get("stock_entries") or []
-                    if entries:
-                        cat = entries[0].get("category", "")
-                    name = item.get("product_name") or item.get("base_flavor", "")
-                    display = get_display_name(name, cat)
-                # If display_name has no region, try to resolve via variant_id
-                sci = items_for_check[idx] if idx < len(items_for_check) else None
-                if sci and sci.get("product_ids"):
-                    vid = extract_variant_id(
-                        sci["product_ids"],
-                        client_email=classification.client_email,
-                    )
-                    if vid:
-                        display = _enrich_display_name_with_region(vid, display)
-                summary_parts.append(f"{item['ordered_qty']} x {display}")
-            result["order_summary"] = ", ".join(summary_parts)
+            result["order_summary"] = _build_order_summary(
+                stock_result["items"], items_for_check,
+                classification.client_email,
+            )
             result["_stock_check_items"] = items_for_check
 
             # Phase 3 ambiguity gate: block auto-fulfillment if any item
@@ -353,6 +476,7 @@ def process_classified_email(
                     "original_product_name": oi.product_name,
                     "region_preference": getattr(oi, "region_preference", None),
                     "strict_region": getattr(oi, "strict_region", False),
+                    "optional": getattr(oi, "optional", False),
                 }
                 for oi in classification.order_items
             ]
@@ -646,8 +770,13 @@ def _persist_results(
                 classification.client_email,
             )
         else:
+            # Phase C: use subset override if optional items were excluded
+            source_items = (
+                result.get("persist_order_items_override")
+                or classification.order_items
+            )
             stock_check_items = result.get("_stock_check_items") or []
-            use_resolved = len(stock_check_items) == len(classification.order_items)
+            use_resolved = len(stock_check_items) == len(source_items)
 
             if classification.situation == "payment_received" and not use_resolved:
                 # For payment_received: ONLY save if items were resolved.
@@ -658,7 +787,7 @@ def _persist_results(
                 )
             else:
                 order_items_for_save = []
-                for i, oi in enumerate(classification.order_items):
+                for i, oi in enumerate(source_items):
                     if use_resolved:
                         sci = stock_check_items[i]
                         variant_id = extract_variant_id(
@@ -666,8 +795,6 @@ def _persist_results(
                             client_email=classification.client_email,
                         )
                         display_name = sci.get("display_name")
-                        # If variant resolved but display_name has no region,
-                        # recalculate with the resolved category
                         if variant_id and display_name:
                             display_name = _enrich_display_name_with_region(
                                 variant_id, display_name,

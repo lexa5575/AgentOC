@@ -23,6 +23,11 @@ class OrderItem(BaseModel):
         description="True = ONLY first region acceptable. "
                     "False = try regions in order, use first with stock.",
     )
+    optional: bool = Field(
+        default=False,
+        description="True when customer used conditional language: "
+                    "'if you have', 'also if available', 'maybe add'.",
+    )
 
     @field_validator("region_preference", mode="before")
     @classmethod

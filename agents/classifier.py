@@ -163,6 +163,14 @@ Set order_items to null for other situations or when no clear product list exist
   asks_question → extract the product(s) being asked about (qty=1 if not stated).
   declines_alternative / provides_info → order_items=null.
 
+### Conditional / optional items
+- "if you have", "also if available", "and maybe", "if possible",
+  "only if in stock" → set optional=true for that item.
+- "6 green, and if you have blue I'll take 6 of those too"
+  → Green: optional=false, Blue: optional=true
+- "I want 6 green and 6 blue" → both optional=false (no conditional language).
+- Default is false.
+
 ## Output format
 
 Return ONLY this JSON (no markdown, no code fences):
@@ -181,7 +189,7 @@ Return ONLY this JSON (no markdown, no code fences):
   "items": "Tera Green made in Middle East x 2",
   "order_items": [
     {"product_name": "Tera Green made in Middle East", "base_flavor": "Green", "quantity": 2,
-     "region_preference": null, "strict_region": false}
+     "region_preference": null, "strict_region": false, "optional": false}
   ]
 }
 

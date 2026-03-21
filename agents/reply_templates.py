@@ -399,3 +399,78 @@ def fill_mixed_availability_template(
 
     return "\n".join(lines)
 
+
+# ---------------------------------------------------------------------------
+# Phase C: Optional OOS helpers
+# ---------------------------------------------------------------------------
+
+def _build_optional_oos_ps(optional_with_alts: list[dict]) -> str:
+    """Build P.S. note for optional items that are OOS.
+
+    Args:
+        optional_with_alts: List of {"item": stock_item_dict, "best_alternative": alt_entry|None}
+    """
+    from db.catalog import get_base_display_name
+
+    parts = []
+    for entry in optional_with_alts:
+        item = entry["item"]
+        display = item.get("display_name") or get_base_display_name(
+            item["base_flavor"],
+        )
+        alt = entry.get("best_alternative")
+        if alt:
+            alt_name = _format_alternative(alt)
+            parts.append(
+                f"P.S. {display} is out of stock right now.\n"
+                f"We have {alt_name}\n"
+                f"\u2014 let us know if you'd like to add it!"
+            )
+        else:
+            parts.append(
+                f"P.S. {display} is out of stock right now "
+                f"\u2014 let us know if you'd like a substitute!"
+            )
+    return "\n".join(parts)
+
+
+def fill_optional_oos_only_template(
+    optional_items: list[dict],
+    alternatives_by_flavor: dict,
+) -> str:
+    """Build soft reply when ALL items were optional and ALL are OOS.
+
+    No order to confirm — just inform + suggest substitute.
+    """
+    from db.catalog import get_base_display_name
+
+    def _display(item: dict) -> str:
+        return item.get("display_name") or get_base_display_name(
+            item["base_flavor"],
+        )
+
+    lines = ["Hi!"]
+
+    for item in optional_items:
+        flavor = item["base_flavor"]
+        display = _display(item)
+        decision = alternatives_by_flavor.get(flavor, {})
+        alts = decision.get("alternatives", [])
+
+        lines.append(f"Unfortunately, {display} is out of stock right now.")
+        if alts:
+            alt_names = [_format_alternative(a) for a in alts[:1]]
+            lines.append(f"We have {', '.join(alt_names)} available.")
+
+    lines.extend([
+        "",
+        "Would you like to place an order with a substitute?",
+        "",
+        "Check our website for more options:",
+        "https://shipmecarton.com",
+        "",
+        "Please let us know!",
+    ])
+
+    return "\n".join(lines)
+
