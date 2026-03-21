@@ -287,7 +287,10 @@ def fill_out_of_stock_template(
     
     if has_alternatives:
         if len(alt_lines) == 1:
-            lines.append(f"1. We have {alt_lines[0]}")
+            if alt_lines[0].startswith("For the missing"):
+                lines.append(f"1. {alt_lines[0]}")
+            else:
+                lines.append(f"1. We have {alt_lines[0]}")
         else:
             lines.append("1. We have alternatives:")
             for alt_line in alt_lines:
