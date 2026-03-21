@@ -8,6 +8,10 @@ Covers:
 - get_region_suffix()
 """
 
+import pytest
+
+pytestmark = pytest.mark.domain_region
+
 import unittest
 
 from db.region_family import (

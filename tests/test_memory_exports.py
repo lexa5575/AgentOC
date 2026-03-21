@@ -1,5 +1,9 @@
 """Tests for db.memory re-exports."""
 
+import pytest
+
+pytestmark = pytest.mark.smoke
+
 import db.memory as memory
 
 

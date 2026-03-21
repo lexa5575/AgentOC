@@ -12,6 +12,10 @@ Tests:
 - Batch resolver (resolve_order_items) integration
 """
 
+import pytest
+
+pytestmark = pytest.mark.domain_stock
+
 import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch

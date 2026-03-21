@@ -1,5 +1,7 @@
 """Tests for OOS agreement region override logic."""
 
+pytestmark = pytest.mark.domain_fulfillment
+
 import pytest
 
 from agents.handlers.oos_agreement import (

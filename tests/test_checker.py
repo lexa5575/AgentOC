@@ -1,5 +1,9 @@
 """Tests for agents.checker module."""
 
+import pytest
+
+pytestmark = pytest.mark.smoke
+
 from agents.checker import (
     CheckResult,
     check_rules,

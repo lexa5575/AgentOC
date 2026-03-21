@@ -51,5 +51,15 @@ exclude = [".venv*"]
 module = ["pgvector.*", "setuptools.*", "agno.*", "httpx.*", "mcp.*"]
 ignore_missing_imports = true
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "smoke: critical path — fast PR gate",
+    "domain_stock: stock, resolver, catalog, alternatives",
+    "domain_fulfillment: fulfillment, OOS handlers, agreement",
+    "domain_region: region preference, region family",
+]
+addopts = "--strict-markers --durations=25"
+
 [tool.uv.pip]
 no-annotate = true

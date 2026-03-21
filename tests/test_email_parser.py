@@ -7,6 +7,10 @@ Tests that:
 - base_flavor extraction handles prefixes/suffixes correctly
 """
 
+import pytest
+
+pytestmark = pytest.mark.smoke
+
 from __future__ import annotations
 
 import sys

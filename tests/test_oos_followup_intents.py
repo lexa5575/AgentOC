@@ -14,6 +14,10 @@ Tests that:
 - asks_question / unknown → LLM
 """
 
+import pytest
+
+pytestmark = pytest.mark.domain_fulfillment
+
 from __future__ import annotations
 
 import importlib

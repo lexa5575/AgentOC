@@ -4,6 +4,10 @@ Verifies that process_classified_email correctly applies region preference
 to narrow product_ids and prevent ambiguous blocks when preference is explicit.
 """
 
+import pytest
+
+pytestmark = pytest.mark.domain_region
+
 import sys
 from types import SimpleNamespace
 from unittest.mock import patch

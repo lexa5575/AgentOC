@@ -1,5 +1,9 @@
 """Tests for tools.stock_sync orchestrator paths."""
 
+import pytest
+
+pytestmark = pytest.mark.domain_stock
+
 from types import SimpleNamespace
 
 import tools.stock_sync as stock_sync

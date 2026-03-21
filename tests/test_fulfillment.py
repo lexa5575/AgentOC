@@ -5,6 +5,10 @@ fulfillment trigger, and formatter output.
 Google Sheets writes are mocked — no real API calls.
 """
 
+import pytest
+
+pytestmark = pytest.mark.domain_fulfillment
+
 import json
 import sys
 import types as _types

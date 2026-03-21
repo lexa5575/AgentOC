@@ -3,9 +3,9 @@ name: CI
 on:
   pull_request:
   push:
-    branches:
-      - main
-      - master
+    branches: [main, master]
+  schedule:
+    - cron: '0 6 * * *'
   workflow_dispatch:
 
 permissions:
@@ -16,37 +16,174 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
-    name: Build And Test (Docker)
+  # ─── Detect changed paths (PR only) ────────────────────────────────
+  changes:
+    name: Detect Changes
     runs-on: ubuntu-latest
-    timeout-minutes: 40
-
+    outputs:
+      stock: ${{ steps.filter.outputs.stock }}
+      fulfillment: ${{ steps.filter.outputs.fulfillment }}
+      region: ${{ steps.filter.outputs.region }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            stock:
+              - 'db/stock*.py'
+              - 'db/catalog*.py'
+              - 'db/product_resolver*.py'
+              - 'db/alternatives.py'
+              - 'db/memory.py'
+              - 'db/prices.py'
+              - 'tests/test_stock*.py'
+              - 'tests/test_product_resolver*.py'
+              - 'tests/test_catalog*.py'
+              - 'tests/test_alternatives*.py'
+              - 'tests/conftest.py'
+            fulfillment:
+              - 'db/fulfillment*.py'
+              - 'agents/handlers/**'
+              - 'agents/pipeline.py'
+              - 'agents/reply_templates.py'
+              - 'agents/models.py'
+              - 'agents/classifier.py'
+              - 'agents/state_updater.py'
+              - 'db/memory.py'
+              - 'db/prices.py'
+              - 'tests/test_fulfillment*.py'
+              - 'tests/test_oos_*.py'
+              - 'tests/conftest.py'
+            region:
+              - 'db/region*.py'
+              - 'db/catalog*.py'
+              - 'agents/pipeline.py'
+              - 'agents/classifier.py'
+              - 'tests/test_region*.py'
+              - 'tests/test_pipeline_region*.py'
+              - 'tests/conftest.py'
 
-      - name: Build API image
-        run: docker compose -f compose.prod.yaml build agentos-api
+  # ─── Smoke: always, required ────────────────────────────────────────
+  smoke:
+    name: Smoke Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Start test services
-        run: docker compose -f compose.prod.yaml up -d agentos-db agentos-api
-
-      - name: Verify containers are running
+      - name: Build & start
         run: |
-          docker ps --format 'table {{.Names}}\t{{.Status}}'
-          docker ps --format '{{.Names}}' | grep -q '^agentos-api$'
-          docker ps --format '{{.Names}}' | grep -q '^agentos-db$'
+          docker compose -f compose.prod.yaml build agentos-api
+          docker compose -f compose.prod.yaml up -d agentos-db agentos-api
 
-      - name: Run full test suite
-        run: docker exec agentos-api python -m pytest -q tests
+      - name: Run smoke tests
+        run: docker exec agentos-api python -m pytest -m smoke -q
 
-      - name: Run compile check
+      - name: Compile check
         run: docker exec agentos-api python -m compileall -q agents db tools scripts tests
 
-      - name: Show container logs on failure
+      - name: Logs on failure
         if: failure()
-        run: docker compose -f compose.prod.yaml logs --no-color agentos-api agentos-db
+        run: docker compose -f compose.prod.yaml logs --no-color agentos-api
 
-      - name: Stop services
+      - name: Cleanup
+        if: always()
+        run: docker compose -f compose.prod.yaml down -v --remove-orphans
+
+  # ─── Domain: stock & resolver (conditional on PR, always on main) ──
+  domain-stock:
+    name: Domain — Stock & Resolver
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.stock == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build & start
+        run: |
+          docker compose -f compose.prod.yaml build agentos-api
+          docker compose -f compose.prod.yaml up -d agentos-db agentos-api
+
+      - name: Run domain-stock tests
+        run: docker exec agentos-api python -m pytest -m domain_stock -q
+
+      - name: Cleanup
+        if: always()
+        run: docker compose -f compose.prod.yaml down -v --remove-orphans
+
+  # ─── Domain: fulfillment & OOS (conditional on PR, always on main) ─
+  domain-fulfillment:
+    name: Domain — Fulfillment & OOS
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.fulfillment == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build & start
+        run: |
+          docker compose -f compose.prod.yaml build agentos-api
+          docker compose -f compose.prod.yaml up -d agentos-db agentos-api
+
+      - name: Run domain-fulfillment tests
+        run: docker exec agentos-api python -m pytest -m domain_fulfillment -q
+
+      - name: Cleanup
+        if: always()
+        run: docker compose -f compose.prod.yaml down -v --remove-orphans
+
+  # ─── Domain: region & catalog (conditional on PR, always on main) ──
+  domain-region:
+    name: Domain — Region & Catalog
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.region == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build & start
+        run: |
+          docker compose -f compose.prod.yaml build agentos-api
+          docker compose -f compose.prod.yaml up -d agentos-db agentos-api
+
+      - name: Run domain-region tests
+        run: docker exec agentos-api python -m pytest -m domain_region -q
+
+      - name: Cleanup
+        if: always()
+        run: docker compose -f compose.prod.yaml down -v --remove-orphans
+
+  # ─── Full regression: main + nightly + manual ──────────────────────
+  full:
+    name: Full Regression
+    if: >-
+      github.ref == 'refs/heads/main'
+      || github.event_name == 'schedule'
+      || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build & start
+        run: |
+          docker compose -f compose.prod.yaml build agentos-api
+          docker compose -f compose.prod.yaml up -d agentos-db agentos-api
+
+      - name: Run full test suite
+        run: docker exec agentos-api python -m pytest tests -q
+
+      - name: Compile check
+        run: docker exec agentos-api python -m compileall -q agents db tools scripts tests
+
+      - name: Logs on failure
+        if: failure()
+        run: docker compose -f compose.prod.yaml logs --no-color agentos-api
+
+      - name: Cleanup
         if: always()
         run: docker compose -f compose.prod.yaml down -v --remove-orphans

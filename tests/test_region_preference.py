@@ -9,6 +9,10 @@ Covers:
 - apply_thread_hint() thread-backed canonical narrowing
 """
 
+import pytest
+
+pytestmark = pytest.mark.domain_region
+
 import json
 from unittest.mock import patch, MagicMock
 

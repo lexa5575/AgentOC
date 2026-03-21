@@ -1,5 +1,9 @@
 """Tests for db.stock module."""
 
+import pytest
+
+pytestmark = pytest.mark.domain_stock
+
 from unittest.mock import patch
 
 from db.stock import has_ambiguous_variants, _has_ambiguous_variants

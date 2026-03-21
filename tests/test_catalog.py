@@ -1,5 +1,9 @@
 """Tests for db.catalog module."""
 
+import pytest
+
+pytestmark = pytest.mark.domain_stock
+
 from db.catalog import (
     ensure_catalog_entries,
     ensure_catalog_entry,

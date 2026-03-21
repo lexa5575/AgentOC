@@ -1,5 +1,9 @@
 """Tests for agents.alternatives.get_llm_alternatives inner behavior."""
 
+import pytest
+
+pytestmark = pytest.mark.domain_stock
+
 import json
 from unittest.mock import MagicMock, patch
 

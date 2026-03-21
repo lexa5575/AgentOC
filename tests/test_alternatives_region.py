@@ -1,5 +1,9 @@
 """Tests for region-aware alternative selection in db.alternatives."""
 
+import pytest
+
+pytestmark = pytest.mark.domain_stock
+
 import unittest
 from unittest.mock import patch, MagicMock
 

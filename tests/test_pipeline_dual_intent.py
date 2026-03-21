@@ -7,6 +7,10 @@ Verifies that process_classified_email correctly sets:
 - PAY-* auto order_id (only after successful resolve)
 """
 
+import pytest
+
+pytestmark = pytest.mark.smoke
+
 import sys
 from unittest.mock import patch
 

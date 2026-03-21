@@ -1,0 +1,53 @@
+# Manual Validation Master Decisions
+
+| ID | Batch | Decision | Situation | Client Email | created_at | Thread ID |
+|---|---|---|---|---|---|---|
+| 64 | batch2 | DROP_EXCLUDE | discount_request | zylicz@gmail.com | 2026-02-28 18:41:15.177991 | - |
+| 66 | batch2 | DROP_EXCLUDE | shipping_timeline | sibelulku1223@gmail.com | 2026-02-28 21:09:28.809501 | - |
+| 82 | batch2 | DROP_EXCLUDE | discount_request | dschmidt95@gmail.com | 2026-03-01 07:39:12.409338 | - |
+| 84 | batch2 | DROP_EXCLUDE | discount_request | dschmidt95@gmail.com | 2026-03-01 07:40:15.914151 | - |
+| 98 | batch2 | DROP_EXCLUDE | shipping_timeline | client2@example.com | 2026-03-01 15:35:09.954045 | - |
+| 111 | batch2 | DROP_EXCLUDE | shipping_timeline | client2@example.com | 2026-03-01 15:43:19.805383 | - |
+| 122 | batch2 | DROP_EXCLUDE | shipping_timeline | client2@example.com | 2026-03-01 15:51:32.680967 | - |
+| 133 | batch2 | DROP_EXCLUDE | shipping_timeline | client2@example.com | 2026-03-01 15:54:42.140007 | - |
+| 148 | batch2 | DROP_EXCLUDE | shipping_timeline | client2@example.com | 2026-03-01 17:26:09.530548 | - |
+| 159 | batch2 | DROP_EXCLUDE | shipping_timeline | client2@example.com | 2026-03-01 17:36:10.432075 | - |
+| 172 | batch2 | DROP_EXCLUDE | shipping_timeline | client2@example.com | 2026-03-01 17:40:33.490138 | - |
+| 201 | batch2 | DROP_EXCLUDE | shipping_timeline | sibelulku1223@gmail.com | 2026-03-02 04:43:06.885990 | - |
+| 281 | batch1 | DROP_EXCLUDE | other | carlton.lakesha@gmail.com | 2026-03-03 06:55:03.543246 | 19cb27a63c7680a0 |
+| 286 | batch1 | KEEP_MANUAL_CONFIRMED | other | millerjason80@gmail.com | 2026-03-03 15:03:35.109471 | 19cb43947cc13548 |
+| 296 | batch2 | KEEP_BUG_CASE | price_question | astromorgana.ma@gmail.com | 2026-03-03 19:46:18.129892 | - |
+| 300 | batch2 | KEEP_MANUAL_CONFIRMED | payment_question | alcoztrk@gmail.com | 2026-03-03 19:57:35.434155 | - |
+| 302 | batch2 | KEEP_MANUAL_CONFIRMED | payment_question | alcoztrk@gmail.com | 2026-03-03 20:02:15.007416 | - |
+| 304 | batch3 | DROP_EXCLUDE | other | jillanov@gmail.com | 2026-03-03 20:09:34.322749 | - |
+| 317 | batch3 | DROP_EXCLUDE | stock_question | newcustomer@gmail.com | 2026-03-03 21:40:12.834677 | - |
+| 319 | batch3 | DROP_EXCLUDE | stock_question | airxbo@gmail.com | 2026-03-03 21:40:26.485394 | - |
+| 321 | batch3 | DROP_EXCLUDE | stock_question | dschmidt95@gmail.com | 2026-03-03 21:41:00.643425 | - |
+| 325 | batch3 | DROP_EXCLUDE | stock_question | teststock@example.com | 2026-03-03 21:50:46.370500 | - |
+| 329 | batch1 | DROP_EXCLUDE | stock_question | dschmidt95@gmail.com | 2026-03-03 21:51:23.208567 | test-drew-oos-thread |
+| 337 | batch1 | DROP_EXCLUDE | other | jillanov@gmail.com | 2026-03-03 22:03:35.604905 | sim-thread-23561 |
+| 343 | batch1 | DROP_EXCLUDE | other | jillanov@gmail.com | 2026-03-03 22:36:38.435341 | sim-order-23561-thread-test2 |
+| 346 | batch1 | DROP_EXCLUDE | other | gheorghet22@gmail.com | 2026-03-03 22:42:53.806025 | test-gheorghe-fresh-001 |
+| 347 | batch3 | DROP_EXCLUDE | other | gheorghet22@gmail.com | 2026-03-03 22:44:40.628965 | - |
+| 389 | batch3 | KEEP_MANUAL_CONFIRMED | other | shanon_13@ymail.com | 2026-03-04 12:48:22.345233 | 19cb67e7db39cc7e |
+| 402 | batch3 | KEEP_MANUAL_CONFIRMED | payment_question | astromorgana.ma@gmail.com | 2026-03-04 15:53:27.240935 | 19b23628e81398ef |
+| 424 | batch1 | DROP_EXCLUDE | other | leavens.genesis70@gmail.com | 2026-03-05 02:26:24.279198 | 19cbbd0df7933098 |
+| 437 | batch3 | KEEP_MANUAL_CONFIRMED | stock_question | xxx2thaz@gmail.com | 2026-03-05 03:21:55.963959 | - |
+| 569 | batch3 | DROP_EXCLUDE | other | sean_kim@yahoo.com | 2026-03-06 17:24:37.633296 | 19afc6f03a51d8f4 |
+| 574 | batch1 | KEEP_MANUAL_CONFIRMED | stock_question | vietboyz84@yahoo.com | 2026-03-06 17:35:09.959217 | 19cc435f8f4c6966 |
+| 603 | batch3 | KEEP_BUG_CASE | other | ashleyelowe@yahoo.com | 2026-03-06 21:13:06.351794 | 19cb6a7bfeaf4366 |
+| 666 | batch1 | DROP_EXCLUDE | other | dana.sergeevna17@gmail.com | 2026-03-08 17:37:13.141979 | 19cc9d13bcc7d654 |
+| 732 | batch3 | KEEP_BUG_CASE | payment_question | avitoke@gmail.com | 2026-03-09 00:42:50.010778 | 193b25b39840e006 |
+| 808 | batch1 | DROP_EXCLUDE | payment_question | taisiia.rozhok@gmail.com | 2026-03-09 19:03:10.726329 | 19cd3cfb8a9687b7 |
+| 871 | batch1 | KEEP_MANUAL_CONFIRMED | other | garykoyamasaki@gmail.com | 2026-03-10 17:16:15.684621 | 19cd8bf84468eda2 |
+| 959 | batch3 | DROP_EXCLUDE | payment_received | so.tene@yahoo.fr | 2026-03-13 14:23:00.269982 | 19ce6edb97a58903 |
+| 1018 | batch3 | KEEP_MANUAL_CONFIRMED | payment_received | jshin1003@gmail.com | 2026-03-15 15:10:51.668540 | 19a02b11d75533a6 |
+| 1053 | batch3 | KEEP_MANUAL_CONFIRMED | payment_received | elertaitek@gmail.com | 2026-03-16 11:49:33.913551 | 19b5aaee8cbc11ca |
+| 1079 | batch3 | KEEP_MANUAL_CONFIRMED | new_order | georgiossammour@gmail.com | 2026-03-16 12:59:56.294596 | 19cf56e578eba2c3 |
+| 1125 | batch3 | DROP_EXCLUDE | new_order | bhardwaj.umang@gmail.com | 2026-03-17 15:00:55.150171 | 19cf9eb8b1ace935 |
+| 1127 | batch3 | PENDING_WORKFLOW | new_order | mar92a@yahoo.com | 2026-03-17 15:03:15.247047 | 19cfa0982696d191 |
+| 1129 | batch3 | KEEP_MANUAL_CONFIRMED | new_order | sjc276@yahoo.com | 2026-03-17 15:07:31.123418 | 19cfb13e7a3076a5 |
+| 1131 | batch1 | PENDING_WORKFLOW | new_order | pcbattaglia@gmail.com | 2026-03-17 15:09:27.727131 | 19cfbc48f160c820 |
+| 1141 | batch3 | KEEP_MANUAL_CONFIRMED | new_order | email2kevin@gmail.com | 2026-03-17 16:03:27.673637 | 19cfc635fa90c96e |
+| 1145 | batch1 | PENDING_WORKFLOW | stock_question | mar92a@yahoo.com | 2026-03-17 16:08:23.162007 | 19cfa0982696d191 |
+| 1154 | batch1 | PENDING_WORKFLOW | new_order | email2kevin@gmail.com | 2026-03-17 16:33:57.088723 | 19cfc936577f39c4 |

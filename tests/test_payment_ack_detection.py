@@ -15,6 +15,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+pytestmark = pytest.mark.smoke
+
 from agents.classifier import _looks_like_payment_ack, _ACK_PHRASES
 
 
