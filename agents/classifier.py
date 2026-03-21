@@ -12,7 +12,7 @@ import re
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
 
-from agents.formatters import compose_classifier_context, format_thread_for_classifier
+from agents.formatters import compose_classifier_context, format_client_order_context, format_thread_for_classifier
 from agents.models import EmailClassification, OrderItem
 from db.conversation_state import get_client_states, get_state
 from db.memory import get_full_thread_history
@@ -45,9 +45,25 @@ The email body has been PRE-CLEANED: quoted reply blocks ("On ... wrote:"),
 signatures ("Sent from my iPhone"), and ">" quoted lines are already removed.
 Focus on the customer's actual message only.
 
-When available, CONVERSATION STATE and THREAD HISTORY are prepended before
-"--- NEW EMAIL ---". Use them to understand context — especially for detecting
-followups and customer intent.
+When available, CONVERSATION STATE, THREAD HISTORY, and CLIENT ORDER HISTORY
+are prepended before "--- NEW EMAIL ---". Use them to understand context —
+especially for detecting followups and customer intent.
+
+## CLIENT ORDER HISTORY
+
+When provided, this section contains:
+- Last order: the products and quantities from the customer's most recent order
+- Profile: AI-generated summary of customer ordering patterns
+
+USE THIS CONTEXT ONLY WHEN:
+- The customer explicitly refers to a previous order ("same order", "as usual", "repeat")
+- The customer modifies a previous order ("same order but add 2 blue")
+
+DO NOT use this context to override explicit product requests.
+Example: "send me 4 Green" → use what they said, NOT their last order.
+Example: "same order please" → use Last order data for order_items.
+Example: "same order but add 2 blue" → start from Last order, ADD the modification.
+Example: "where is my tracking?" → ignore Last order, classify as tracking.
 
 CRITICAL: Classify based on the CURRENT email content (after "--- NEW EMAIL ---"),
 NOT the thread subject or history. Customers often reply to old threads with
@@ -425,7 +441,7 @@ def build_classifier_context(
     override_state: dict | None = None,
     override_thread_history: list | None = None,
     override_other_thread_states: list | None = None,
-) -> tuple[str, dict | None]:
+) -> tuple[str, dict | None, dict | None]:
     """Build context string for the classifier from DB state and thread history.
 
     Override params (Phase D): when set, skip the corresponding DB query
@@ -433,9 +449,10 @@ def build_classifier_context(
     [] = explicitly empty.
 
     Returns:
-        (context_str, pre_state_record) where context_str is prepended to the
-        email text for the classifier, and pre_state_record is reused in
-        classify_and_process to avoid a duplicate DB query.
+        (context_str, pre_state_record, last_order) where context_str is
+        prepended to the email text for the classifier, pre_state_record is
+        reused in classify_and_process to avoid a duplicate DB query, and
+        last_order is passed to run_classification for deterministic reorder.
     """
     pre_state_record = None
     state_dict = None
@@ -464,28 +481,53 @@ def build_classifier_context(
         except Exception as e:
             logger.warning("Failed to get thread history for classifier: %s", e)
 
+    # Determine sender email (used for cross-thread context AND client order context)
+    sender_email = _extract_sender_email(email_text)
+    if not sender_email and pre_state_record:
+        sender_email = pre_state_record.get("client_email")
+
     if override_other_thread_states is not None:
         other_thread_states = override_other_thread_states or None
     else:
         # Cross-thread context: other active threads for same client
-        sender_email = _extract_sender_email(email_text)
-        if not sender_email and pre_state_record:
-            sender_email = pre_state_record.get("client_email")
-
         if sender_email:
             try:
                 other_thread_states = get_client_states(sender_email, limit=4) or None
             except Exception as e:
                 logger.warning("Failed to get cross-thread context: %s", e)
 
+    # Client order context (gated: Last order only when reorder hint in body)
+    client_order_context = None
+    last_order = None
+    _sender = sender_email
+    if _sender:
+        try:
+            from db.order_items import get_last_order
+            from db.clients import get_client as _get_client
+            last_order = get_last_order(_sender)
+            _client = _get_client(_sender)
+            _llm_summary = _client.get("llm_summary") if _client else None
+
+            # Gate: inject Last order ONLY when body contains reorder hint.
+            # Profile (llm_summary) always injected.
+            _inject_last_order = _body_has_reorder_hint(email_text)
+
+            client_order_context = format_client_order_context(
+                last_order=last_order if _inject_last_order else None,
+                llm_summary=_llm_summary,
+            )
+        except Exception as e:
+            logger.warning("Failed to get client order context: %s", e)
+
     conversation_context = compose_classifier_context(
         conversation_state=state_dict,
         thread_history=thread_history,
         other_thread_states=other_thread_states,
         exclude_thread_id=gmail_thread_id,
+        client_order_context=client_order_context,
     )
 
-    return conversation_context, pre_state_record
+    return conversation_context, pre_state_record, last_order
 
 
 # ---------------------------------------------------------------------------
@@ -566,6 +608,146 @@ def _looks_like_payment_ack(email_text: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Deterministic reorder detection
+# ---------------------------------------------------------------------------
+
+# Exact-match phrases for pure reorder messages (Layer 1, ≤120 chars body).
+_REORDER_PHRASES = frozenset({
+    "same order", "same order please", "same as last time", "same as before",
+    "same again", "repeat order", "repeat my order", "same please",
+    "the usual", "as usual", "my usual order", "same thing",
+    "same as usual", "reorder", "same one", "same ones",
+    "can i have the same", "can i have the same order",
+    "can i please have the same", "can i please have the same order",
+    "i want the same", "i want the same order", "id like the same",
+    "ill have the same", "send me the same",
+    # Russian
+    "такой же заказ", "тот же заказ", "повтори заказ", "повторите заказ",
+    "как в прошлый раз", "как обычно", "то же самое",
+})
+
+# Substring hint regex for modified reorders (Layer 2 gate).
+# Narrower than _REORDER_PHRASES: excludes ambiguous bare phrases like
+# "same thing", "same one" that could match non-order contexts.
+_REORDER_HINT_RE = re.compile(
+    r"\b("
+    # --- "same order" family (order-intent anchored) ---
+    r"same\s+order|"
+    r"same\s+please|"
+    r"can\s+i(?:\s+please)?\s+have\s+the\s+same|"
+    r"i(?:'?d|\s+would)\s+like\s+the\s+same|"
+    r"i(?:'?ll)\s+have\s+the\s+same|"
+    r"i\s+want\s+the\s+same\s+order|"
+    r"send\s+me\s+the\s+same|"
+    r"same\s+as\s+(last\s+time|before|usual)|"
+    # --- "usual" family ---
+    r"as\s+usual|"
+    r"the\s+usual|"
+    r"my\s+usual\s+order|"
+    # --- "reorder" family ---
+    r"reorder|re-order|"
+    r"repeat\s+(order|my\s+order)|"
+    # --- Russian ---
+    r"как\s+обычно|"
+    r"такой\s+же\s+заказ|тот\s+же\s+заказ|"
+    r"повтори(те)?\s+заказ|"
+    r"то\s+же\s+самое"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _body_has_reorder_hint(email_text: str) -> bool:
+    """Check if unquoted email body contains reorder-like language (substring match).
+
+    Used as runtime gate for Layer 2 context injection. Returns True when
+    the body contains order-intent anchored reorder phrases, even in
+    modified form ("same order but add 2 blue").
+    """
+    _body_idx = email_text.find("Body:")
+    _body_raw = email_text[_body_idx + 5:].strip() if _body_idx >= 0 else ""
+    if not _body_raw:
+        return False
+    try:
+        _body_clean = strip_quoted_text(_body_raw).strip()
+    except Exception:
+        _body_clean = _body_raw.strip()
+    return bool(_REORDER_HINT_RE.search(_body_clean))
+
+
+def _looks_like_reorder(email_text: str) -> bool:
+    """Check if email body is a PURE reorder request (no modifications).
+
+    Whitelist approach: normalize body → strip greetings/closing/filler →
+    exact match against _REORDER_PHRASES. Body must be ≤120 chars after strip.
+
+    Returns False for bodies with modifications ("same order but add blue")
+    or explicit product mentions — those go through LLM with Layer 2 context.
+    """
+    _body_idx = email_text.find("Body:")
+    _body_raw = email_text[_body_idx + 5:].strip() if _body_idx >= 0 else ""
+    if not _body_raw:
+        return False
+
+    try:
+        _body_clean = strip_quoted_text(_body_raw).strip()
+    except Exception:
+        _body_clean = _body_raw.strip()
+
+    if not _body_clean or len(_body_clean) >= 120:
+        return False
+
+    # Strip closing/signature and filler (reuse from payment_ack)
+    _pre_sig = _CLOSING_MARKER.sub("", _body_clean)
+    _pre_sig = _STRIP_FILLER.sub("", _pre_sig).strip()
+
+    # Normalize: lowercase, strip punctuation, collapse whitespace
+    normalized = _pre_sig.lower()
+    normalized = re.sub(r"[^\w\s]", "", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+
+    if not normalized:
+        return False
+
+    return normalized in _REORDER_PHRASES
+
+
+def _build_order_items_from_last_order(last_order: dict) -> list[OrderItem]:
+    """Build OrderItems from last order, resolving region via variant_id → catalog.
+
+    Primary: variant_id → ProductCatalog → category → CATEGORY_REGION_SUFFIX.
+    Fallback: parse from display_name_snapshot or product_name.
+    """
+    from db.catalog import get_catalog_products
+    from db.region_family import CATEGORY_REGION_SUFFIX
+
+    _REGION_NORMALIZE = {"Japan": "JAPAN"}
+    catalog = get_catalog_products()
+    vid_to_region: dict[int, str] = {}
+    for entry in catalog:
+        suffix = CATEGORY_REGION_SUFFIX.get(entry["category"])
+        if suffix:
+            vid_to_region[entry["id"]] = _REGION_NORMALIZE.get(suffix, suffix)
+
+    items = []
+    for item in last_order["items"]:
+        region = None
+        vid = item.get("variant_id")
+        if vid and vid in vid_to_region:
+            region = vid_to_region[vid]
+        else:
+            source = item.get("display_name_snapshot") or item["product_name"]
+            region, _ = _parse_region_from_product_string(source)
+        items.append(OrderItem(
+            product_name=item["product_name"],
+            base_flavor=item["base_flavor"],
+            quantity=item["quantity"],
+            region_preference=[region] if region else None,
+        ))
+    return items
+
+
+# ---------------------------------------------------------------------------
 # Classification runner
 # ---------------------------------------------------------------------------
 
@@ -573,6 +755,7 @@ def run_classification(
     email_text: str,
     context_str: str,
     conversation_state: dict | None = None,
+    last_order: dict | None = None,
 ) -> EmailClassification:
     """Run deterministic parser or LLM classifier to produce an EmailClassification.
 
@@ -581,6 +764,8 @@ def run_classification(
         context_str: Classifier context prepended before the new email.
         conversation_state: Structured state dict for Python post-corrections
             (region inference). Optional — backwards compatible.
+        last_order: Last order dict from get_last_order(), used for
+            deterministic reorder detection. Optional — backwards compatible.
 
     Returns:
         Validated EmailClassification instance.
@@ -617,6 +802,25 @@ def run_classification(
                 dialog_intent="confirms_payment",
                 followup_to="payment_info",
             )
+
+    # Step 0.96: Deterministic reorder detection (0 tokens)
+    if _looks_like_reorder(email_text):
+        _sender = _extract_sender_email(email_text) or ""
+        if _sender and last_order and last_order.get("items"):
+            _order_items = _build_order_items_from_last_order(last_order)
+            logger.info(
+                "Deterministic: reorder detected -> new_order (%s, last_order=%s)",
+                _sender, last_order["order_id"],
+            )
+            return EmailClassification(
+                needs_reply=True,
+                situation="new_order",
+                client_email=_sender,
+                order_items=_order_items,
+                items=_derive_items_text(_order_items),
+                # parser_used=False (default) — pipeline uses calculated_price
+            )
+        # No sender or no order history → fall through to LLM
 
     # Clean email body for LLM classifier (remove quoted blocks, signatures)
     cleaned_email = clean_email_body(email_text)

@@ -139,6 +139,85 @@ def replace_order_items(
         session.close()
 
 
+def get_last_order(client_email: str) -> dict | None:
+    """Get the most recent placed order for a client.
+
+    Semantics: "last order" = most recently WRITTEN order_id.
+    Rows are saved at new_order time (before payment), and may be
+    replaced by replace_order_items() during OOS. In both cases,
+    the latest rows for an order_id reflect the FINAL agreed items.
+
+    This is an accepted tradeoff: an unpaid/abandoned latest order
+    will still be returned. In practice this is rare and harmless.
+
+    Filters:
+    - order_id IS NOT NULL AND TRIM(order_id) != '' — skip bad data
+    - order_id NOT LIKE 'PAY-%' — skip payment_received pseudo-orders
+
+    Note: no gmail_account filter — accepted limitation v1.
+    ClientOrderItem lacks an account column; one client ≈ one account.
+    """
+    client_email = client_email.lower().strip()
+    session = get_session()
+    try:
+        # Step 1: find the most recent order_id
+        from sqlalchemy import text
+        row = session.execute(
+            text(
+                "SELECT order_id, MAX(created_at) as latest "
+                "FROM client_order_items "
+                "WHERE client_email = :email "
+                "  AND order_id IS NOT NULL "
+                "  AND TRIM(order_id) != '' "
+                "  AND order_id NOT LIKE 'PAY-%%' "
+                "GROUP BY order_id "
+                "ORDER BY latest DESC "
+                "LIMIT 1"
+            ),
+            {"email": client_email},
+        ).fetchone()
+
+        if not row:
+            return None
+
+        order_id = row[0]
+        latest_created_at = row[1]
+
+        # Step 2: fetch all items for this order (stable order by id)
+        items = (
+            session.query(ClientOrderItem)
+            .filter(
+                ClientOrderItem.client_email == client_email,
+                ClientOrderItem.order_id == order_id,
+            )
+            .order_by(ClientOrderItem.id.asc())
+            .all()
+        )
+
+        if not items:
+            return None
+
+        return {
+            "order_id": order_id,
+            "items": [
+                {
+                    "product_name": i.product_name,
+                    "base_flavor": i.base_flavor,
+                    "quantity": i.quantity,
+                    "variant_id": i.variant_id,
+                    "display_name_snapshot": i.display_name_snapshot,
+                }
+                for i in items
+            ],
+            "created_at": latest_created_at,
+        }
+    except Exception as e:
+        logger.error("Failed to get last order for %s: %s", client_email, e)
+        return None
+    finally:
+        session.close()
+
+
 def get_client_flavor_history(
     client_email: str,
     product_type: str | None = None,

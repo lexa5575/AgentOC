@@ -211,7 +211,7 @@ from db.stock_search import (  # noqa: E402
 # Order item history — re-exported from db.order_items
 # ---------------------------------------------------------------------------
 
-from db.order_items import save_order_items, replace_order_items, get_client_flavor_history  # noqa: E402
+from db.order_items import save_order_items, replace_order_items, get_client_flavor_history, get_last_order  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

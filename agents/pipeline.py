@@ -963,11 +963,11 @@ def classify_and_process(
             return "Пропущено: письмо без текста (возможно, только изображение/вложение)."
 
         # Step 0.5: Get conversation state + thread history for classifier context
-        context_str, pre_state_record = build_classifier_context(gmail_thread_id, email_text, gmail_account=gmail_account)
+        context_str, pre_state_record, last_order = build_classifier_context(gmail_thread_id, email_text, gmail_account=gmail_account)
 
         # Step 0.9 + 1: Deterministic parser or LLM classification
         state_dict = pre_state_record.get("state") if pre_state_record else None
-        classification = run_classification(email_text, context_str, conversation_state=state_dict)
+        classification = run_classification(email_text, context_str, conversation_state=state_dict, last_order=last_order)
 
         # Fix 2B: Fallback override other->payment_received for legacy threads
         # without facts.payment_request_sent. Uses "use email below" as prepay-only
@@ -1039,16 +1039,18 @@ def classify_and_process(
                     pre_state_record["state"] = fresh
                     state_dict = fresh
 
-                    context_str, _ = build_classifier_context(
+                    context_str, _, _ = build_classifier_context(
                         gmail_thread_id, email_text,
                         gmail_account=gmail_account,
                         override_state=fresh,
                         override_thread_history=[],
                         override_other_thread_states=[],
                     )
+                    # Reuse last_order from first call — thread-independent
                     classification = run_classification(
                         email_text, context_str,
                         conversation_state=state_dict,
+                        last_order=last_order,
                     )
                     logger.info(
                         "Re-classified after stale reset: "

@@ -88,11 +88,39 @@ def format_other_threads(states: list[dict], exclude_thread_id: str | None = Non
     return "\n".join(lines)
 
 
+def format_client_order_context(
+    last_order: dict | None,
+    llm_summary: str | None,
+) -> str | None:
+    """Format last order + client profile for classifier context (~50 tokens).
+
+    Args:
+        last_order: dict from get_last_order() or None (gate may suppress it).
+        llm_summary: Client.llm_summary string or None.
+
+    Returns:
+        Formatted context block or None if both inputs are empty.
+    """
+    if not last_order and not llm_summary:
+        return None
+    lines = ["--- CLIENT ORDER HISTORY ---"]
+    if last_order:
+        items_str = ", ".join(
+            f"{i.get('display_name_snapshot') or i['product_name']} x{i['quantity']}"
+            for i in last_order["items"]
+        )
+        lines.append(f"Last order: {items_str}")
+    if llm_summary:
+        lines.append(f"Profile: {llm_summary}")
+    return "\n".join(lines)
+
+
 def compose_classifier_context(
     conversation_state: dict | None = None,
     thread_history: list[dict] | None = None,
     other_thread_states: list[dict] | None = None,
     exclude_thread_id: str | None = None,
+    client_order_context: str | None = None,
 ) -> str:
     """Compose the full classifier context string from pre-fetched data.
 
@@ -112,6 +140,9 @@ def compose_classifier_context(
         cross_thread = format_other_threads(other_thread_states, exclude_thread_id)
         if cross_thread:
             context += cross_thread + "\n\n"
+
+    if client_order_context:
+        context += client_order_context + "\n\n"
 
     return context
 
