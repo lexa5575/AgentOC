@@ -640,9 +640,9 @@ _REORDER_HINT_RE = re.compile(
     r"i\s+want\s+the\s+same\s+order|"
     r"send\s+me\s+the\s+same|"
     r"same\s+as\s+(last\s+time|before|usual)|"
-    # --- "usual" family (order-intent anchored) ---
+    # --- "usual" family ---
     r"as\s+usual|"
-    r"the\s+usual\s+order|"
+    r"the\s+usual(?!\s+(?:tracking|issue|problem|address|way|thing|time|place|stuff|suspects))|"
     r"my\s+usual\s+order|"
     # --- "reorder" family ---
     r"reorder|re-order|"

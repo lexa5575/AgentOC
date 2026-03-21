@@ -127,6 +127,12 @@ class TestBodyHasReorderHint:
     def test_repeat_order(self):
         assert self._fn(self._email("repeat order and add silver")) is True
 
+    def test_the_usual_but_without(self):
+        assert self._fn(self._email("the usual but without amber")) is True
+
+    def test_the_usual_but_add(self):
+        assert self._fn(self._email("the usual but add 2 blue")) is True
+
     def test_russian_kak_obychno(self):
         assert self._fn(self._email("как обычно только добавь синий")) is True
 
