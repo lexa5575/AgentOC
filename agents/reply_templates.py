@@ -163,15 +163,14 @@ REPLY_TEMPLATES = {
 # ---------------------------------------------------------------------------
 # Out-of-Stock Template (STABLE — Python fills variables, no LLM)
 # ---------------------------------------------------------------------------
-def _format_alternative(alt_entry: dict, qty: int = 1) -> str:
+def _format_alternative(alt_entry: dict) -> str:
     """Format a single alternative for customer-facing display.
 
     Args:
         alt_entry: Dict with keys: alternative (stock item dict), reason, order_count
-        qty: Number of units needed (shown as "2 x ..." when > 1)
 
     Returns:
-        Formatted string like "2 x Terea Amber ME (same product, different region)"
+        Formatted string like "Terea Amber ME (same product, different region)"
     """
     from db.catalog import get_display_name
 
@@ -181,8 +180,6 @@ def _format_alternative(alt_entry: dict, qty: int = 1) -> str:
     category = alt.get("category", "")
 
     formatted = get_display_name(raw_name, category)
-    if qty > 1:
-        formatted = f"{qty} x {formatted}"
 
     if reason == "same_flavor":
         formatted += " (same product, different region)"
@@ -265,18 +262,19 @@ def fill_out_of_stock_template(
 
         if alts:
             has_alternatives = True
-            # Qty for alternatives: full OOS → ordered_qty, partial → missing qty
-            ordered_qty = item.get("ordered_qty", 1)
-            available = item.get("total_available", 0)
-            alt_qty = max(1, ordered_qty - available)
-            formatted_alts = [_format_alternative(a, alt_qty) for a in alts[:3]]
+            formatted_alts = [_format_alternative(a) for a in alts[:3]]
+            alt_text = ", ".join(formatted_alts)
 
             if len(insufficient_items) == 1:
-                # Single flavor — no need to specify "For X:"
-                alt_lines.append(", ".join(formatted_alts))
+                # Single flavor: add "For the missing N:" for partial OOS
+                missing = item.get("ordered_qty", 1) - item.get("total_available", 0)
+                if item.get("total_available", 0) > 0 and missing > 0:
+                    alt_lines.append(f"For the missing {missing}: {alt_text}")
+                else:
+                    alt_lines.append(alt_text)
             else:
                 # Multiple flavors — specify which flavor (customer-friendly name)
-                alt_lines.append(f"For {_display(item)}: {', '.join(formatted_alts)}")
+                alt_lines.append(f"For {_display(item)}: {alt_text}")
     
     # Step 4: Build the final email
     lines = [

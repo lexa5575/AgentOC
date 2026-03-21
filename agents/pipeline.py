@@ -197,6 +197,12 @@ def process_classified_email(
                 # Select up to three alternatives per insufficient item.
                 best_alternatives = {}
                 already_suggested: set[str] = set()
+                # Exclude in-order flavors from alternatives (Phase A fix)
+                in_order_flavors: set[str] = {
+                    item["base_flavor"]
+                    for item in stock_result["items"]
+                    if item["is_sufficient"]
+                }
                 for insuff in stock_result["insufficient_items"]:
                     best = select_best_alternatives(
                         client_email=classification.client_email,
@@ -205,6 +211,7 @@ def process_classified_email(
                         client_summary=client.get("llm_summary", "") if client else "",
                         excluded_products=already_suggested,
                         original_product_name=insuff.get("original_product_name"),
+                        excluded_base_flavors=in_order_flavors,
                     )
                     best_alternatives[insuff["base_flavor"]] = best
                     already_suggested.update(

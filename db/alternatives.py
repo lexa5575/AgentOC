@@ -67,6 +67,7 @@ def select_best_alternatives(
     original_product_name: str | None = None,
     region_preference: list[str] | None = None,
     strict_region: bool = False,
+    excluded_base_flavors: set[str] | None = None,
 ) -> dict:
     """Select up to N best alternatives for an out-of-stock flavor using LLM.
 
@@ -89,6 +90,9 @@ def select_best_alternatives(
             When set, filters available items to preferred region categories first.
         strict_region: If True and region_preference is set, only return alternatives
             from preferred region categories. If no items available → return empty.
+        excluded_base_flavors: Base flavors of items already in the customer's order
+            (in stock). Prevents suggesting an in-order flavor as a substitute.
+            Uses canonical normalization (equivalent spellings matched).
 
     Returns:
         {"alternatives": [...], "reason": str, "order_count": None}
@@ -114,6 +118,24 @@ def select_best_alternatives(
         allowed_cats, warehouse,
         exclude_product_ids=oos_product_ids,
     )
+
+    # Exclude flavors already in the customer's order (canonical match)
+    _excluded_flavors = excluded_base_flavors or set()
+    if _excluded_flavors:
+        from db.product_resolver import _normalize as _resolver_normalize_early
+        from db.catalog import get_equivalent_norms as _get_equiv_norms_early
+        _excluded_norms: set[str] = set()
+        for bf in _excluded_flavors:
+            norm = _resolver_normalize_early(bf).lower()
+            _excluded_norms.add(norm)
+            _excluded_norms.update(_get_equiv_norms_early(norm))
+        available = [
+            item for item in available
+            if _resolver_normalize_early(item["product_name"]).lower()
+            not in _excluded_norms
+        ]
+        if not available:
+            return {"alternatives": [], "reason": "none_available", "order_count": None}
 
     # Region preference filtering: narrow available items to preferred categories
     preferred_categories: set[str] | None = None
