@@ -189,43 +189,179 @@ def _format_alternative(alt_entry: dict) -> str:
     return formatted
 
 
-def fill_out_of_stock_template(
+def _build_formatter_input(
+    insufficient_items: list[dict],
+    best_alternatives: dict,
+) -> tuple[list[dict], int, str]:
+    """Convert pipeline data to LLM formatter input format.
+
+    Returns:
+        (formatter_items, total_oos_count, format_mode)
+        - formatter_items: only items WITH alternatives
+        - total_oos_count: all OOS items (including without alternatives)
+        - format_mode: single source of truth for formatting rules
+    """
+    from db.catalog import get_display_name, get_base_display_name
+
+    total_oos_count = len(insufficient_items)
+
+    # Step 1: filter to items with alternatives
+    items_with_alts = []
+    for item in insufficient_items:
+        flavor = item["base_flavor"]
+        decision = best_alternatives.get(flavor, {})
+        alts = decision.get("alternatives", [])
+        if alts:
+            items_with_alts.append((item, alts))
+
+    if not items_with_alts:
+        return [], total_oos_count, "single_item"  # mode irrelevant when empty
+
+    # Step 2: determine format_mode
+    n = len(items_with_alts)
+    same_flavor_count = sum(
+        1 for _, alts in items_with_alts
+        if alts[0]["reason"] == "same_flavor"
+    )
+    other_count = n - same_flavor_count
+
+    if n == 1 and total_oos_count == 1:
+        format_mode = "single_item"
+    elif n == 1 and total_oos_count > 1:
+        format_mode = "per_item_mapping"
+    elif n > 1 and other_count == 0:
+        format_mode = "all_same_flavor_grouped"
+    elif n > 1 and same_flavor_count == 0:
+        format_mode = "per_item_mapping"
+    else:
+        format_mode = "hybrid_mixed"
+
+    # Step 3: build formatter_items using format_mode
+    max_alts = 3 if format_mode == "single_item" else 1
+
+    formatter_items = []
+    for item, alts in items_with_alts:
+        display = item.get("display_name") or get_base_display_name(item["base_flavor"])
+        ordered_qty = item.get("ordered_qty", 1)
+        total_available = item.get("total_available", 0)
+        missing_qty = ordered_qty - total_available
+
+        alt_list = []
+        for a in alts[:max_alts]:
+            alt_item = a["alternative"]
+            alt_display = get_display_name(
+                alt_item["product_name"], alt_item.get("category", ""),
+            )
+            alt_list.append({
+                "display_name": alt_display,
+                "reason": a.get("reason", "fallback"),
+            })
+
+        formatter_items.append({
+            "display_name": display,
+            "ordered_qty": ordered_qty,
+            "total_available": total_available,
+            "missing_qty": missing_qty,
+            "alternatives": alt_list,
+        })
+
+    return formatter_items, total_oos_count, format_mode
+
+
+def _fallback_format_alternatives(
     insufficient_items: list[dict],
     best_alternatives: dict,
 ) -> str:
-    """Fill the Out-of-Stock template with actual data. Zero LLM tokens.
-    
-    Handles all situations:
-    - Full OOS (qty = 0)
-    - Partial OOS (qty > 0 but < ordered)
-    - Mixed (some full, some partial)
-    - No alternatives available
-    
-    Args:
-        insufficient_items: List of items with insufficient stock, each has:
-            - base_flavor, ordered_qty, total_available, product_name
-        best_alternatives: Dict mapping base_flavor -> {alternatives: [...], reason, ...}
-    
-    Returns:
-        Complete email reply text, ready to send.
+    """Format alternatives using the old verbose template (fallback).
+
+    Returns the "1. We have ..." section text in the current format.
+    Used when LLM formatter or validator fails.
     """
-    # Step 1: Classify items into full OOS vs partial OOS
-    full_oos = []       # total_available == 0
-    partial_oos = []    # total_available > 0 but < ordered
-    
-    for item in insufficient_items:
-        if item["total_available"] == 0:
-            full_oos.append(item)
-        else:
-            partial_oos.append(item)
-    
-    # Helper: get customer-friendly name for an item
     from db.catalog import get_base_display_name
 
     def _display(item: dict) -> str:
         return item.get("display_name") or get_base_display_name(item["base_flavor"])
 
-    # Step 2: Build the problem description
+    alt_lines = []
+    has_alternatives = False
+
+    for item in insufficient_items:
+        flavor = item["base_flavor"]
+        decision = best_alternatives.get(flavor, {})
+        alts = decision.get("alternatives", [])
+
+        if alts:
+            has_alternatives = True
+            formatted_alts = [_format_alternative(a) for a in alts[:3]]
+            alt_text = ", ".join(formatted_alts)
+
+            if len(insufficient_items) == 1:
+                missing = item.get("ordered_qty", 1) - item.get("total_available", 0)
+                if item.get("total_available", 0) > 0 and missing > 0:
+                    alt_lines.append(f"For the missing {missing}: {alt_text}")
+                else:
+                    alt_lines.append(alt_text)
+            else:
+                alt_lines.append(f"For {_display(item)}: {alt_text}")
+
+    if not has_alternatives:
+        return "1. Check our website for substitutions and ready to ship sticks."
+
+    if len(alt_lines) == 1:
+        if alt_lines[0].startswith("For the missing"):
+            result = f"1. {alt_lines[0]}"
+        else:
+            result = f"1. We have {alt_lines[0]}"
+    else:
+        result = "1. We have alternatives:"
+        for alt_line in alt_lines:
+            result += f"\n   {alt_line}"
+
+    result += "\n2. Check our website for substitutions and ready to ship sticks."
+    return result
+
+
+def fill_out_of_stock_template(
+    insufficient_items: list[dict],
+    best_alternatives: dict,
+) -> str:
+    """Fill the Out-of-Stock template with actual data.
+
+    Uses a hybrid approach: Python template frame + LLM formatter for
+    the alternatives line. Falls back to verbose format on LLM failure.
+
+    Handles all situations:
+    - Full OOS (qty = 0)
+    - Partial OOS (qty > 0 but < ordered)
+    - Mixed (some full, some partial)
+    - No alternatives available
+
+    Args:
+        insufficient_items: List of items with insufficient stock, each has:
+            - base_flavor, ordered_qty, total_available, product_name
+        best_alternatives: Dict mapping base_flavor -> {alternatives: [...], reason, ...}
+
+    Returns:
+        Complete email reply text, ready to send.
+    """
+    import logging
+    _logger = logging.getLogger(__name__)
+
+    # Step 1: Build problem_text (unchanged from original)
+    full_oos = []
+    partial_oos = []
+
+    for item in insufficient_items:
+        if item["total_available"] == 0:
+            full_oos.append(item)
+        else:
+            partial_oos.append(item)
+
+    from db.catalog import get_base_display_name
+
+    def _display(item: dict) -> str:
+        return item.get("display_name") or get_base_display_name(item["base_flavor"])
+
     problem_parts = []
 
     if full_oos:
@@ -242,72 +378,55 @@ def fill_out_of_stock_template(
                 f"we only have {p['total_available']} {_display(p)} available "
                 f"(you ordered {p['ordered_qty']})"
             )
-    
-    # Combine problem parts
+
     if len(problem_parts) == 1:
         problem_text = problem_parts[0]
     elif len(problem_parts) == 2:
         problem_text = f"{problem_parts[0]}, and {problem_parts[1]}"
     else:
         problem_text = ", ".join(problem_parts[:-1]) + f", and {problem_parts[-1]}"
-    
-    # Step 3: Build alternatives section
-    has_alternatives = False
-    alt_lines = []
-    
-    for item in insufficient_items:
-        flavor = item["base_flavor"]
-        decision = best_alternatives.get(flavor, {})
-        alts = decision.get("alternatives", [])
 
-        if alts:
-            has_alternatives = True
-            formatted_alts = [_format_alternative(a) for a in alts[:3]]
-            alt_text = ", ".join(formatted_alts)
+    # Step 2: Build formatter input and determine format_mode
+    formatter_items, total_oos_count, format_mode = _build_formatter_input(
+        insufficient_items, best_alternatives,
+    )
 
-            if len(insufficient_items) == 1:
-                # Single flavor: add "For the missing N:" for partial OOS
-                missing = item.get("ordered_qty", 1) - item.get("total_available", 0)
-                if item.get("total_available", 0) > 0 and missing > 0:
-                    alt_lines.append(f"For the missing {missing}: {alt_text}")
-                else:
-                    alt_lines.append(alt_text)
-            else:
-                # Multiple flavors — specify which flavor (customer-friendly name)
-                alt_lines.append(f"For {_display(item)}: {alt_text}")
-    
-    # Step 4: Build the final email
+    # Step 3: Get alternatives line (LLM → validate → fallback)
+    if not formatter_items:
+        # No alternatives for any item → website-only
+        alternatives_section = (
+            "1. Check our website for substitutions and ready to ship sticks."
+        )
+    else:
+        from agents.oos_formatter import format_alternatives_line
+
+        raw = format_alternatives_line(formatter_items, format_mode, total_oos_count)
+        if raw is None:
+            _logger.info("OOS formatter returned None, using fallback")
+            alternatives_section = _fallback_format_alternatives(
+                insufficient_items, best_alternatives,
+            )
+        else:
+            alternatives_section = f"1. {raw}"
+            alternatives_section += (
+                "\n2. Check our website for substitutions and ready to ship sticks."
+            )
+
+    # Step 4: Assemble final email
     lines = [
         "Hi!",
         "How are you?",
         f"Unfortunately, {problem_text}",
         "",
         "What can we offer? Please choose one of the options below.",
-    ]
-    
-    if has_alternatives:
-        if len(alt_lines) == 1:
-            if alt_lines[0].startswith("For the missing"):
-                lines.append(f"1. {alt_lines[0]}")
-            else:
-                lines.append(f"1. We have {alt_lines[0]}")
-        else:
-            lines.append("1. We have alternatives:")
-            for alt_line in alt_lines:
-                lines.append(f"   {alt_line}")
-        lines.append("2. Check our website for substitutions and ready to ship sticks.")
-    else:
-        # No alternatives — only website option
-        lines.append("1. Check our website for substitutions and ready to ship sticks.")
-    
-    lines.extend([
+        alternatives_section,
         "",
         "Link for the sticks substitution",
         "https://shipmecarton.com",
         "",
         "Please let us know what you think",
-    ])
-    
+    ]
+
     return "\n".join(lines)
 
 

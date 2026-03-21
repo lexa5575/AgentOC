@@ -86,7 +86,7 @@ def handle_new_order(
                 best_alternatives=best_alternatives,
             )
             logger.info(
-                "OOS template filled for %s (0 LLM tokens)",
+                "OOS hybrid template filled for %s",
                 classification.client_email,
             )
 

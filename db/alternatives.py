@@ -222,6 +222,15 @@ def select_best_alternatives(
                 _best_by_family[family] = item
         same_flavor_items = list(_best_by_family.values())
 
+        # Filter same_flavor items by excluded_products (prevents duplicates
+        # across OOS flavors — e.g. Silver ME already suggested for Amber EU
+        # should not appear again as same_flavor for Silver EU)
+        if _excluded:
+            same_flavor_items = [
+                item for item in same_flavor_items
+                if item["product_name"] not in _excluded
+            ]
+
         # strict_region: drop Priority 0 items outside preferred categories
         if strict_region and preferred_categories:
             same_flavor_items = [
