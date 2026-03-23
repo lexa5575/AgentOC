@@ -392,6 +392,89 @@ class TestOOSFollowupIntents(unittest.TestCase):
         self.assertNotIn("visit", reply)
 
     # ---------------------------------------------------------------
+    # Changed-order handler-level tests
+    # ---------------------------------------------------------------
+
+    def test_clarify_with_order_items_skips_clarification(self):
+        """clarify + classifier order_items → skip clarification, enter B2 path.
+
+        Regression: Order 23697 — 'No thanks, just send 10 Sienna' got
+        clarification with Bronze/Russet instead of processing order change.
+        """
+        cls = _FakeClassification(
+            dialog_intent="agrees_to_alternative",
+            order_items=[
+                types.SimpleNamespace(
+                    base_flavor="Sienna", product_name="Sienna", quantity=10,
+                    region_preference=None, strict_region=False, optional=False,
+                ),
+            ],
+        )
+        # pending_oos with multiple alternatives → triggers "clarify" in _resolve_oos_agreement
+        state = self._make_pending_oos(num_alternatives=3, alt_names=["TEAK", "Silver", "Amber"])
+        # Add Siena as in-stock (equivalent to Sienna)
+        state["facts"]["pending_oos_resolution"]["in_stock_items"] = [
+            {"base_flavor": "Siena", "product_name": "Tera Siena", "ordered_qty": 5},
+        ]
+        result = self._make_result(payment_type="postpay", zelle_address="", conversation_state=state)
+        result["gmail_thread_id"] = None  # skip thread extraction
+
+        stock_ok = {
+            "all_in_stock": True,
+            "items": [{
+                "base_flavor": "Siena", "product_name": "Tera Siena",
+                "ordered_qty": 10, "product_ids": [59],
+                "stock_entries": [{"category": "ARMENIA", "product_name": "Siena", "quantity": 100}],
+                "total_available": 100, "is_sufficient": True,
+            }],
+            "insufficient_items": [],
+        }
+
+        with patch.object(self.handler_mod, "resolve_order_items", return_value=([{"base_flavor": "Siena", "product_ids": [59], "quantity": 10}], [])):
+            with patch.object(self.handler_mod, "check_stock_for_order", return_value=stock_ok):
+                with patch.object(self.handler_mod, "calculate_order_price", return_value=1100.0):
+                    out = self.handler_mod.handle_oos_followup(
+                        cls, result, "No thanks, just send 10 cartons of Sienna.",
+                    )
+
+        # Must NOT contain clarification asking about Bronze/Russet
+        self.assertNotIn("Could you please confirm which option", out.get("draft_reply") or "")
+        # Should be a template reply (order confirmation)
+        self.assertTrue(out.get("template_used"))
+
+    def test_ambiguous_b2_skips_classifier_fallback(self):
+        """When B2 returns ambiguous, FALLBACK C must be skipped entirely.
+
+        Prevents classifier path from bypassing B2's safety rejection.
+        """
+        cls = _FakeClassification(
+            dialog_intent="agrees_to_alternative",
+            order_items=[
+                types.SimpleNamespace(
+                    base_flavor="TestFlavor", product_name="TestFlavor", quantity=5,
+                    region_preference=None, strict_region=False, optional=False,
+                ),
+            ],
+        )
+        state = self._make_pending_oos(num_alternatives=3, alt_names=["A", "B", "C"])
+        result = self._make_result(conversation_state=state)
+        result["gmail_thread_id"] = None
+
+        # Patch _resolve_oos_agreement to return "clarify" (triggers B2 path)
+        # Patch _resolve_changed_order to return None (ambiguous)
+        with patch.object(self.handler_mod, "_resolve_oos_agreement", return_value=(None, "clarify")):
+            with patch.object(self.handler_mod, "_resolve_changed_order", return_value=None):
+                with patch.object(self.handler_mod, "_resolve_from_classifier") as mock_classifier:
+                    oos_agent = importlib.import_module("agents.handlers.oos_followup").oos_followup_agent
+                    with patch.object(oos_agent, "run", return_value=types.SimpleNamespace(content="LLM reply")):
+                        out = self.handler_mod.handle_oos_followup(cls, result, "some email")
+
+        # FALLBACK C must NOT have been called
+        mock_classifier.assert_not_called()
+        # Should have gone to LLM
+        self.assertEqual(out.get("draft_reply"), "LLM reply")
+
+    # ---------------------------------------------------------------
     # LLM branches
     # ---------------------------------------------------------------
 
@@ -1417,6 +1500,198 @@ class TestEnrichQtyFromPending(unittest.TestCase):
         enriched = self.mod._enrich_qty_from_pending(extracted, result, "ok Bronze")
         # Conflict: Bronze maps to both 2 and 3 → stays at extracted qty=1
         self.assertEqual(enriched[0]["quantity"], 1)
+
+
+class TestChangedOrderResolution(unittest.TestCase):
+    """Regression tests for OOS changed-order flow (incidents 2026-03-23).
+
+    When customer declines alternatives but specifies a different product,
+    the handler must process the order change instead of re-offering alternatives.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        _install_stubs()
+        cls.handler_mod = importlib.import_module("agents.handlers.oos_followup")
+        cls.agreement_mod = importlib.import_module("agents.handlers.oos_agreement")
+
+    def test_resolve_changed_order_sienna_maps_to_siena_me(self):
+        """'just send 10 Sienna' with in-stock Siena x5 → Siena x10.
+
+        Regression: Order 23697. Sienna is equivalent to Siena (existing in-stock item).
+        Must resolve via equivalent norms to existing ME position.
+        """
+        classifier_items = [
+            types.SimpleNamespace(
+                base_flavor="Sienna", product_name="Sienna", quantity=10,
+            ),
+        ]
+        result = {
+            "conversation_state": {
+                "facts": {
+                    "pending_oos_resolution": {
+                        "in_stock_items": [
+                            {"base_flavor": "Siena", "product_name": "Tera Siena", "ordered_qty": 5},
+                        ],
+                        "items": [
+                            {"base_flavor": "Bronze", "requested_qty": 2, "available_qty": 0},
+                            {"base_flavor": "Russet", "requested_qty": 3, "available_qty": 0},
+                        ],
+                        "alternatives": {
+                            "Bronze": {"alternatives": [{"product_name": "TEAK", "category": "ARMENIA"}]},
+                            "Russet": {"alternatives": [{"product_name": "Beige", "category": "ARMENIA"}]},
+                        },
+                    },
+                },
+            },
+        }
+        confirmed = self.agreement_mod._resolve_changed_order(
+            classifier_items, result, "No thanks, just send 10 cartons of Sienna.",
+        )
+        self.assertIsNotNone(confirmed)
+        # Should contain exactly 1 item: Siena x10 (mapped via equivalent)
+        siena_items = [i for i in confirmed if i["base_flavor"] == "Siena"]
+        self.assertEqual(len(siena_items), 1)
+        self.assertEqual(siena_items[0]["quantity"], 10)
+        self.assertEqual(siena_items[0]["product_name"], "Tera Siena")
+        # Should NOT contain Sienna (EU version) separately
+        sienna_items = [i for i in confirmed if i["base_flavor"] == "Sienna"]
+        self.assertEqual(len(sienna_items), 0)
+
+    def test_resolve_changed_order_new_product_not_equivalent(self):
+        """'russet instead of sienna' → Russet kept as-is (not in in-stock equivalents)."""
+        classifier_items = [
+            types.SimpleNamespace(
+                base_flavor="Russet", product_name="Russet", quantity=1,
+            ),
+        ]
+        result = {
+            "conversation_state": {
+                "facts": {
+                    "pending_oos_resolution": {
+                        "in_stock_items": [],
+                        "items": [
+                            {"base_flavor": "Sienna", "requested_qty": 2, "available_qty": 0},
+                        ],
+                        "alternatives": {},
+                    },
+                },
+            },
+        }
+        confirmed = self.agreement_mod._resolve_changed_order(
+            classifier_items, result, "I want russet instead of sienna",
+        )
+        self.assertIsNotNone(confirmed)
+        russet_items = [i for i in confirmed if i["base_flavor"] == "Russet"]
+        self.assertEqual(len(russet_items), 1)
+        # qty inherited from "instead of sienna" → Sienna's requested_qty=2
+        self.assertEqual(russet_items[0]["quantity"], 2)
+
+    def test_resolve_changed_order_inherits_qty_when_not_explicit(self):
+        """'send Sienna' without qty + in-stock Siena x5 → inherits qty=5."""
+        classifier_items = [
+            types.SimpleNamespace(
+                base_flavor="Sienna", product_name="Sienna", quantity=1,
+            ),
+        ]
+        result = {
+            "conversation_state": {
+                "facts": {
+                    "pending_oos_resolution": {
+                        "in_stock_items": [
+                            {"base_flavor": "Siena", "product_name": "Tera Siena", "ordered_qty": 5},
+                        ],
+                        "items": [],
+                        "alternatives": {},
+                    },
+                },
+            },
+        }
+        confirmed = self.agreement_mod._resolve_changed_order(
+            classifier_items, result, "just send Sienna please",
+        )
+        self.assertIsNotNone(confirmed)
+        siena_items = [i for i in confirmed if i["base_flavor"] == "Siena"]
+        self.assertEqual(len(siena_items), 1)
+        # No explicit qty in email → inherits in-stock ordered_qty=5
+        self.assertEqual(siena_items[0]["quantity"], 5)
+
+    def test_resolve_changed_order_uses_explicit_qty(self):
+        """'send 10 Sienna' with explicit qty → uses 10, not in-stock's 5."""
+        classifier_items = [
+            types.SimpleNamespace(
+                base_flavor="Sienna", product_name="Sienna", quantity=10,
+            ),
+        ]
+        result = {
+            "conversation_state": {
+                "facts": {
+                    "pending_oos_resolution": {
+                        "in_stock_items": [
+                            {"base_flavor": "Siena", "product_name": "Tera Siena", "ordered_qty": 5},
+                        ],
+                        "items": [],
+                        "alternatives": {},
+                    },
+                },
+            },
+        }
+        confirmed = self.agreement_mod._resolve_changed_order(
+            classifier_items, result, "just send 10 cartons of Sienna",
+        )
+        self.assertIsNotNone(confirmed)
+        siena_items = [i for i in confirmed if i["base_flavor"] == "Siena"]
+        self.assertEqual(siena_items[0]["quantity"], 10)
+
+    def test_resolve_changed_order_preserves_non_replaced_in_stock(self):
+        """Changed-order must preserve in-stock items that were NOT replaced."""
+        classifier_items = [
+            types.SimpleNamespace(
+                base_flavor="Sienna", product_name="Sienna", quantity=10,
+            ),
+        ]
+        result = {
+            "conversation_state": {
+                "facts": {
+                    "pending_oos_resolution": {
+                        "in_stock_items": [
+                            {"base_flavor": "Siena", "product_name": "Tera Siena", "ordered_qty": 5},
+                            {"base_flavor": "Green", "product_name": "Green", "ordered_qty": 3},
+                        ],
+                        "items": [],
+                        "alternatives": {},
+                    },
+                },
+            },
+        }
+        confirmed = self.agreement_mod._resolve_changed_order(
+            classifier_items, result, "just send 10 cartons of Sienna",
+        )
+        self.assertIsNotNone(confirmed)
+        # Siena replaced by Sienna x10
+        siena_items = [i for i in confirmed if i["base_flavor"] == "Siena"]
+        self.assertEqual(len(siena_items), 1)
+        self.assertEqual(siena_items[0]["quantity"], 10)
+        # Green preserved (not replaced)
+        green_items = [i for i in confirmed if i["base_flavor"] == "Green"]
+        self.assertEqual(len(green_items), 1)
+        self.assertEqual(green_items[0]["quantity"], 3)
+
+    def test_merge_equivalent_flavors_no_duplicate(self):
+        """_merge_in_stock_items: Sienna in extracted + Siena in in_stock → no duplicate."""
+        from agents.handlers.oos_qty_utils import _merge_in_stock_items
+        extracted = [{"base_flavor": "Sienna", "product_name": "Sienna", "quantity": 10}]
+        result = {
+            "conversation_state": {
+                "facts": {
+                    "ordered_items": ["Tera Siena x5"],
+                    "oos_items": [],
+                },
+            },
+        }
+        merged = _merge_in_stock_items(extracted, result)
+        siena_count = sum(1 for i in merged if i["base_flavor"].lower() in ("siena", "sienna"))
+        self.assertEqual(siena_count, 1, f"Expected 1 Siena/Sienna, got {siena_count}: {merged}")
 
 
 if __name__ == "__main__":

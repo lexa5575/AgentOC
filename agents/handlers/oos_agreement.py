@@ -208,6 +208,122 @@ def _resolve_from_classifier(classification) -> list[dict] | None:
     return confirmed if confirmed else None
 
 
+def _resolve_changed_order(classifier_items, result, email_text):
+    """Resolve changed order items against current order context.
+
+    When customer mentions a product that's a spelling equivalent of an
+    existing in-stock item (e.g., "Sienna" when "Siena" is in order),
+    use the existing item's resolved name/region.
+
+    For items NOT matching in-stock equivalents, keep as-is (normal resolution).
+    Preserves non-replaced in-stock items in the final order.
+
+    Returns list of confirmed items, or None if ambiguous (multiple equivalents).
+    """
+    import re
+    from db.catalog import get_equivalent_norms
+
+    state = result.get("conversation_state") or {}
+    pending = (state.get("facts") or {}).get("pending_oos_resolution", {})
+    in_stock = pending.get("in_stock_items", [])
+    oos_items = pending.get("items", [])
+
+    # Build equivalent lookup: norm → in-stock item
+    in_stock_by_equiv = {}
+    for item in in_stock:
+        bf_lower = item["base_flavor"].lower()
+        for norm in get_equivalent_norms(bf_lower):
+            in_stock_by_equiv[norm] = item
+
+    confirmed = []
+    replaced_flavors = set()
+
+    for oi in classifier_items:
+        bf = getattr(oi, "base_flavor", "") or ""
+        qty = getattr(oi, "quantity", 0) or 0
+        bf_lower = bf.lower()
+
+        # Check if spelling equivalent of existing in-stock item
+        matched = None
+        for norm in get_equivalent_norms(bf_lower):
+            if norm in in_stock_by_equiv:
+                matched = in_stock_by_equiv[norm]
+                break
+
+        if matched:
+            # Unique match guard: only auto-confirm if exactly 1 equivalent found
+            equiv_matches = [
+                item for item in in_stock
+                if item["base_flavor"].lower() in get_equivalent_norms(bf_lower)
+            ]
+            if len(equiv_matches) > 1:
+                logger.warning(
+                    "Multiple equivalent in-stock items for '%s' — skipping auto-confirm",
+                    bf,
+                )
+                return None  # Fail-closed → fall through to LLM
+
+            # Qty: use classifier qty only if explicitly stated,
+            # otherwise inherit from in-stock item to avoid accidental downgrades
+            effective_qty = qty
+            if qty <= 1:
+                has_explicit_qty = bool(re.search(
+                    rf"\b(\d+)\s+(?:cartons?|boxes?|packs?)?\s*(?:of\s+)?{re.escape(bf)}\b",
+                    email_text, re.IGNORECASE,
+                ))
+                if not has_explicit_qty:
+                    effective_qty = matched.get("ordered_qty", qty)
+
+            confirmed.append({
+                "base_flavor": matched["base_flavor"],
+                "product_name": matched.get("product_name", matched["base_flavor"]),
+                "quantity": effective_qty,
+            })
+            replaced_flavors.update(get_equivalent_norms(matched["base_flavor"].lower()))
+        else:
+            # New product — inherit qty from replaced OOS item if not specified
+            if qty <= 0 or qty == 1:
+                inherited_qty = _inherit_qty_from_oos(bf, oos_items, email_text)
+                if inherited_qty > 0:
+                    qty = inherited_qty
+            confirmed.append({
+                "base_flavor": bf,
+                "product_name": getattr(oi, "product_name", bf) or bf,
+                "quantity": max(qty, 1),
+            })
+
+    # Add remaining in-stock items that were NOT replaced
+    for item in in_stock:
+        bf_lower = item["base_flavor"].lower()
+        if bf_lower not in replaced_flavors:
+            confirmed.append({
+                "base_flavor": item["base_flavor"],
+                "product_name": item.get("product_name", item["base_flavor"]),
+                "quantity": item.get("ordered_qty", 1),
+            })
+
+    return confirmed if confirmed else None
+
+
+def _inherit_qty_from_oos(base_flavor, oos_items, email_text=""):
+    """Inherit quantity from the OOS item being replaced.
+
+    Primary: parse 'instead of <flavor>' from email, find matching OOS item.
+    Fallback: if exactly 1 OOS item, inherit its qty.
+    """
+    import re
+    m = re.search(r"instead\s+of\s+(\w+)", email_text, re.IGNORECASE)
+    if m:
+        replaced_flavor = m.group(1).lower()
+        for item in oos_items:
+            if item["base_flavor"].lower() == replaced_flavor:
+                return item.get("requested_qty", 0)
+
+    if len(oos_items) == 1:
+        return oos_items[0].get("requested_qty", 0)
+    return 0
+
+
 def _build_order_summary(stock_items: list[dict]) -> str:
     """Build order summary string like '2 x Terea Tropical Japan, 1 x Terea Black Japan'.
 

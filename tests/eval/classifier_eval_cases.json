@@ -1729,5 +1729,41 @@
         }
       ]
     }
+  },
+  {
+    "id": "oos_decline_plus_order_change",
+    "tags": [
+      "oos_followup",
+      "order_change",
+      "decline_plus_order"
+    ],
+    "email_text": "From: client@example.com\nSubject: Re: Shipmecarton - Order 23697\nBody: No thanks, just send 10 cartons of Sienna.",
+    "conversation_state": {
+      "status": "oos_followup",
+      "topic": "new_order",
+      "facts": {
+        "order_id": "23697",
+        "ordered_items": ["Tera BRONZE made in Europe x2", "Tera Siena x5", "Tera Russet x3"],
+        "oos_items": ["Tera BRONZE made in Europe", "Tera Russet"],
+        "offered_alternatives": ["Terea TEAK ME", "Terea Beige ME"]
+      }
+    },
+    "thread_history": null,
+    "other_threads": null,
+    "combined_messages": null,
+    "expected": {
+      "situation": "oos_followup",
+      "dialog_intent": "agrees_to_alternative",
+      "needs_reply": true,
+      "client_email": "client@example.com",
+      "order_items": [
+        {
+          "base_flavor": "Sienna",
+          "quantity": 10,
+          "region_preference": null,
+          "strict_region": false
+        }
+      ]
+    }
   }
 ]

@@ -130,7 +130,17 @@ dialog_intent (CRITICAL — controls routing for oos_followup):
   - "agrees_to_alternative" — accepts our suggestion OR confirms order in OOS context.
     Includes: "yes", "that works", "ok send me 4 black menthol", "I'll take X".
     KEY: In OOS threads, "send me X" with product+quantity = agrees_to_alternative (NOT provides_info).
-  - "declines_alternative" — rejects suggestion ("no thanks", "I'll pass", "cancel")
+  - "declines_alternative" — rejects suggestion ("no thanks", "I'll pass", "cancel").
+    ONLY when customer rejects WITHOUT specifying a new product+quantity.
+    IMPORTANT: "decline + new order" = agrees_to_alternative, NOT declines_alternative.
+    If customer says "No thanks" BUT ALSO specifies product+quantity
+    ("No thanks, just send 10 Sienna", "I'll pass, give me 5 Green instead",
+    "I want russet instead of sienna"), the customer is declining the SPECIFIC
+    alternatives we offered but placing a CHANGED ORDER.
+    Classify as agrees_to_alternative and extract the new order_items.
+    Pattern: decline words + product + quantity → agrees_to_alternative
+    Pattern: "instead of X" + new product → agrees_to_alternative
+    Pattern: decline words WITHOUT new product → declines_alternative
   - "confirms_payment" — says they paid
   - "asks_question" — asks about products, availability, pricing
   - "provides_info" — gives non-product info (address, phone). NOT for product choices.
@@ -176,6 +186,10 @@ Set order_items to null for other situations or when no clear product list exist
   General queries ("What do you have?") → order_items=null.
 - oos_followup:
   agrees_to_alternative → extract confirmed items from message + CONVERSATION STATE.
+  This includes ORDER CHANGES: if customer declines offered alternatives but specifies
+  different products ("No thanks, just send 10 Sienna", "I want russet instead"),
+  extract those as the new order_items.
+  For "instead of X" without explicit quantity → use quantity=1 (handler will inherit).
   asks_question → extract the product(s) being asked about (qty=1 if not stated).
   declines_alternative / provides_info → order_items=null.
 

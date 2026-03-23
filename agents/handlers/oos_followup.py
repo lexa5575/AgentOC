@@ -125,6 +125,7 @@ oos_followup_agent = Agent(
 from agents.handlers.oos_agreement import (
     _match_alternative_from_text,
     _resolve_oos_agreement,
+    _resolve_changed_order,
     _build_clarification_reply,
     _resolve_from_classifier,
     _build_order_summary,
@@ -243,6 +244,9 @@ def handle_oos_followup(
     # Strip quoted/history text to avoid false matches on alternative names
     clean_text = _strip_quoted_text(email_text)
 
+    # Track changed-order outcome for LLM prompt selection
+    b2_outcome = None
+
     # === agrees_to_alternative → resolve and send new_order template ===
     if intent == "agrees_to_alternative" and result["client_found"]:
         client = result["client_data"]
@@ -350,20 +354,80 @@ def handle_oos_followup(
                     )
 
             # --- FALLBACK B: Ambiguous → clarification reply ---
+            # Skip clarification if classifier extracted order_items (order change scenario:
+            # customer declined alternatives but specified a different product+qty).
             if status == "clarify":
-                state = result.get("conversation_state") or {}
-                pending = (state.get("facts") or {}).get("pending_oos_resolution", {})
-                result["draft_reply"] = _build_clarification_reply(pending)
-                result["template_used"] = True
-                result["needs_routing"] = False
-                logger.info(
-                    "OOS agrees → clarification for %s (0 tokens)",
-                    classification.client_email,
-                )
-                return result
+                classifier_items = getattr(classification, "order_items", None)
+                if classifier_items:
+                    logger.info(
+                        "OOS clarify skipped: classifier has order_items for %s — treating as order change",
+                        classification.client_email,
+                    )
+                    # --- FALLBACK B2: Changed-order via order context ---
+                    changed_items = _resolve_changed_order(
+                        classifier_items, result, clean_text,
+                    )
+                    if changed_items:
+                        try:
+                            resolved, _ = resolve_order_items(changed_items)
+                            stock_result = check_stock_for_order(resolved)
+                            if stock_result["all_in_stock"]:
+                                calc_price = calculate_order_price(stock_result["items"])
+                                if calc_price is not None:
+                                    result["calculated_price"] = calc_price
+                                    result["order_summary"] = _build_order_summary(stock_result["items"])
+                                    result, template_found = fill_template_reply(
+                                        classification=classification,
+                                        result=result,
+                                        situation="new_order",
+                                    )
+                                    if template_found:
+                                        _apply_confirmation_flags(
+                                            result, stock_result, resolved,
+                                            "pending_oos", order_id_norm,
+                                        )
+                                        _clear_pending_oos(result)
+                                        logger.info(
+                                            "OOS changed-order → template for %s ($%.2f)",
+                                            classification.client_email, calc_price,
+                                        )
+                                        return result
+                            else:
+                                b2_outcome = "oos"
+                        except Exception as e:
+                            logger.warning(
+                                "Changed-order resolution failed for %s: %s",
+                                classification.client_email, e,
+                            )
+                            b2_outcome = "error"
+                    else:
+                        b2_outcome = "ambiguous"
+                    # Fall through to FALLBACK C / D
+                else:
+                    # No classifier items → genuine ambiguity, return clarification
+                    state = result.get("conversation_state") or {}
+                    pending = (state.get("facts") or {}).get("pending_oos_resolution", {})
+                    result["draft_reply"] = _build_clarification_reply(pending)
+                    result["template_used"] = True
+                    result["needs_routing"] = False
+                    logger.info(
+                        "OOS agrees → clarification for %s (0 tokens)",
+                        classification.client_email,
+                    )
+                    return result
 
             # --- FALLBACK C: Classifier (NOT trusted for persistence/fulfillment) ---
-            confirmed_from_classifier = _resolve_from_classifier(classification)
+            # Skip FALLBACK C when B2 explicitly failed (ambiguous/error) —
+            # classifier path has stale qty and no equivalent-awareness,
+            # so it would bypass the safety checks B2 already rejected.
+            if b2_outcome in ("ambiguous", "error"):
+                logger.info(
+                    "OOS B2 %s: skipping classifier fallback for %s — going to LLM",
+                    b2_outcome, classification.client_email,
+                )
+                confirmed_from_classifier = None
+            else:
+                confirmed_from_classifier = _resolve_from_classifier(classification)
             if confirmed_from_classifier:
                 confirmed_from_classifier = _merge_in_stock_items(
                     confirmed_from_classifier, result,
@@ -483,7 +547,24 @@ def handle_oos_followup(
         )
 
     write_instruction = "\n\nWrite a reply:"
-    if intent == "agrees_to_alternative":
+    if b2_outcome == "oos":
+        write_instruction = (
+            "\n\nThe customer declined our alternatives and requested a different product, "
+            "but that product is ALSO out of stock. Write a polite reply that:"
+            "\n- Explains the requested product is also currently out of stock"
+            "\n- If the LIVE STOCK CHECK above shows available alternatives, suggest those"
+            "\n- If no alternatives are shown, ask if they'd like to choose something else or check our website"
+            "\n- Do NOT invent or guess product names that aren't in the stock data"
+        )
+    elif b2_outcome in ("ambiguous", "error"):
+        write_instruction = (
+            "\n\nThe customer seems to be changing their order, but we couldn't "
+            "automatically determine the exact items. Write a polite reply that:"
+            "\n- Acknowledges what the customer asked for"
+            "\n- Asks for clarification on the exact product and quantity they want"
+            "\n- Do NOT confirm an order or quote a price — ask first"
+        )
+    elif intent == "agrees_to_alternative":
         write_instruction = (
             "\n\nWrite an ORDER CONFIRMATION reply. Include:"
             "\n- The specific items + quantities the customer confirmed"

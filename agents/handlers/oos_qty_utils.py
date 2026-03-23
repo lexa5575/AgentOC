@@ -116,11 +116,13 @@ def _merge_in_stock_items(
     if not in_stock:
         return extracted_items
 
-    # Collect flavors already in extracted (lowercase for matching)
-    extracted_flavors = {
-        (item.get("base_flavor") or "").strip().lower()
-        for item in extracted_items
-    }
+    # Collect flavors already in extracted (lowercase + spelling equivalents for matching)
+    # e.g., if extracted has "Sienna", extracted_flavors includes {"sienna", "siena"}
+    from db.catalog import get_equivalent_norms
+    extracted_flavors = set()
+    for item in extracted_items:
+        bf = (item.get("base_flavor") or "").strip().lower()
+        extracted_flavors.update(get_equivalent_norms(bf))
 
     merged = list(extracted_items)
     for item in in_stock:
