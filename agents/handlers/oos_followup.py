@@ -249,6 +249,21 @@ def handle_oos_followup(
         payment_type = client.get("payment_type", "unknown")
         order_id_norm = _normalize_order_id(classification)
 
+        # Fallback: get order_id from conversation state or generate AUTO-*
+        if not order_id_norm:
+            _state = (result.get("conversation_state") or {})
+            _facts = _state.get("facts") or {}
+            order_id_norm = (_facts.get("order_id") or "").strip() or None
+        if not order_id_norm:
+            _thread_id = result.get("gmail_thread_id") or ""
+            if _thread_id:
+                order_id_norm = f"AUTO-{_thread_id[-8:]}"
+                classification.order_id = order_id_norm
+                logger.info(
+                    "OOS agrees: generated order_id=%s from thread for %s",
+                    order_id_norm, classification.client_email,
+                )
+
         # Guard: prepay without zelle_address → don't send template with blank address
         if payment_type == "prepay" and not client.get("zelle_address"):
             logger.warning(
