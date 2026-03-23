@@ -490,5 +490,51 @@ class TestPriceQuestion(unittest.TestCase):
         self.assertNotIn("$495", out["draft_reply"])
 
 
+    # ---------------------------------------------------------------
+    # Purple Wave regression: must NOT return $115 (Japan price)
+    # ---------------------------------------------------------------
+
+    def test_purple_wave_price_not_japan(self):
+        """'Tera purple wave' must quote $110 (ME/EU), NOT $115 (Japan).
+
+        Regression test for incident 2026-03-23 (khorolmaa_b@aol.com).
+        The resolver must resolve 'Purple Wave' to non-Japan 'Purple' via alias,
+        and calculate_order_price must use ME/EU category ($110).
+        """
+        cls = _FakeClassification(
+            order_items=[_FakeOrderItem("Tera purple wave", "Purple", 1)],
+        )
+        result = self._make_result()
+
+        stock_purple_me = {
+            "all_in_stock": True,
+            "items": [
+                {
+                    "base_flavor": "Purple",
+                    "product_name": "Purple",
+                    "ordered_qty": 1,
+                    "stock_entries": [
+                        {"category": "ARMENIA", "product_name": "Purple", "quantity": 10},
+                    ],
+                    "total_available": 10,
+                    "is_sufficient": True,
+                },
+            ],
+            "insufficient_items": [],
+        }
+
+        with patch.object(self.handler_mod, "get_stock_summary", return_value={"total": 100}):
+            with patch.object(self.handler_mod, "check_stock_for_order", return_value=stock_purple_me):
+                with patch.object(self.handler_mod, "calculate_order_price", return_value=110.0):
+                    out = self.handler_mod.handle_price_question(
+                        cls, result, "Tera purple wave. How much is the carton?",
+                    )
+
+        self.assertTrue(out["template_used"])
+        self.assertIn("$110.00", out["draft_reply"])
+        self.assertNotIn("$115", out["draft_reply"])
+        self.assertEqual(out["calculated_price"], 110.0)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -44,6 +44,8 @@ _REGION_SUFFIXES = (
     " made in middle east",
     " made in armenia",
     " made in europe",
+    " made in kz",     # before " kz" to avoid leaving "made in" garbage
+    " made in japan",  # before " japan" for same reason
     " eu",
     " japan",
     " kz",
@@ -75,6 +77,8 @@ _ORIGIN_SUFFIXES = (
     " made in middle east",
     " made in armenia",
     " made in europe",
+    " made in kz",
+    " made in japan",
     " eu",
     " japan",
     " kz",
@@ -90,8 +94,10 @@ _DEVICE_MODELS = {"ONE", "STND", "PRIME"}
 # Keys are lowercased. Add new entries as new site patterns are discovered.
 _ALIASES: dict[str, str] = {
     # Abbreviations (fuzzy can't match short forms)
-    "pw": "Purple Wave",
-    "purple w": "Purple Wave",
+    "pw": "Purple",
+    "purple w": "Purple",
+    # Site marketing name → actual stock name (Purple Wave doesn't exist in catalog)
+    "purple wave": "Purple",
     # Multi-character typos (fuzzy gives medium, not high)
     "tourquoise": "Turquoise",
     "turqoise": "Turquoise",
@@ -114,6 +120,8 @@ _REGION_TO_CATEGORIES: dict[str, frozenset[str]] = {
     " eu": frozenset({"TEREA_EUROPE"}),
     " made in middle east": frozenset({"ARMENIA", "KZ_TEREA"}),
     " made in armenia": frozenset({"ARMENIA"}),
+    " made in kz": frozenset({"KZ_TEREA"}),
+    " made in japan": frozenset({"TEREA_JAPAN", "УНИКАЛЬНАЯ_ТЕРЕА"}),
     " me": frozenset({"ARMENIA", "KZ_TEREA"}),
     " japan": frozenset({"TEREA_JAPAN", "УНИКАЛЬНАЯ_ТЕРЕА"}),
     " kz": frozenset({"KZ_TEREA"}),
@@ -324,6 +332,7 @@ def _resolve_via_llm(raw_name: str, known_names: list[str]) -> str | None:
 def resolve_product_name(
     raw_name: str,
     known_names: list[str] | None = None,
+    original_product_name: str | None = None,
 ) -> ResolveResult:
     """Resolve a potentially misspelled product name against known stock names.
 
@@ -331,6 +340,9 @@ def resolve_product_name(
         raw_name: Customer-provided product name (may be misspelled)
         known_names: Optional pre-fetched list of known product names.
                      If None, queries the database.
+        original_product_name: Full product name from the order (e.g.
+            "Tera purple wave"). Used for alias fallback and origin suffix
+            detection. Falls back to raw_name if not provided.
 
     Returns:
         ResolveResult with confidence level and best match.
@@ -343,7 +355,11 @@ def resolve_product_name(
         return ResolveResult(raw_name, raw_name, "low", 0.0, [])
 
     # 1. Alias lookup (Tier 1 — deterministic, 0ms)
+    # Try raw_name first, then fall back to original_product_name
+    # so "Purple" (base_flavor) can still match via "Tera purple wave" (original).
     alias_match = _resolve_via_alias(raw_name)
+    if not alias_match and original_product_name:
+        alias_match = _resolve_via_alias(original_product_name)
     if alias_match:
         # Verify alias target exists in known_names
         for name in known_names:
@@ -362,7 +378,7 @@ def resolve_product_name(
             # Armenia/EU/KZ product with the same base name.
             # Example: "Tera PURPLE" (no ME/EU suffix) → T Purple, not Armenia Purple.
             # "Tera Purple made in Middle East" (has ME suffix) → Armenia Purple.
-            if not _has_origin_suffix(raw_name):
+            if not _has_origin_suffix(original_product_name or raw_name):
                 t_variant = next(
                     (n for n in known_names if n.lower() == "t " + normalized_lower),
                     None,
@@ -393,7 +409,7 @@ def resolve_product_name(
             if prefix_lower in known_lookup:
                 matched = known_lookup[prefix_lower]
                 # Apply Japan T-prefix heuristic (same as exact match)
-                if not _has_origin_suffix(raw_name):
+                if not _has_origin_suffix(original_product_name or raw_name):
                     t_variant = next(
                         (n for n in known_names if n.lower() == "t " + prefix_lower),
                         None,
@@ -503,7 +519,7 @@ def resolve_product_to_catalog(
             known_names.append(sn)
 
     # Use existing matching logic
-    result = resolve_product_name(raw_name, known_names)
+    result = resolve_product_name(raw_name, known_names, original_product_name=original_product_name)
 
     # Enrich with catalog data if match found
     if result.resolved and result.confidence in ("exact", "high"):
@@ -540,6 +556,38 @@ def resolve_product_to_catalog(
                     len(region_matching), len(matching),
                 )
                 matching = region_matching
+            else:
+                # Region conflict: resolved name not in target region.
+                # Re-resolve: _normalize() strips brand/T-prefix, so
+                # "T Purple" → "purple". Search for that in correct region.
+                base_norm = _normalize(result.resolved).lower()
+                region_fallback = [
+                    e for e in filtered
+                    if e["category"] in region_cats
+                    and _normalize(e["stock_name"]).lower() == base_norm
+                ]
+                if region_fallback:
+                    logger.info(
+                        "Region conflict resolved: '%s' → '%s' in %s (was %s)",
+                        raw_name, region_fallback[0]["stock_name"],
+                        region_fallback[0]["category"],
+                        [e["category"] for e in matching],
+                    )
+                    matching = region_fallback
+                    result.resolved = region_fallback[0]["stock_name"]
+                    result.confidence = "high"
+                    result.score = 0.90
+                else:
+                    # FAIL-CLOSED: product not found in target region → unresolved
+                    logger.warning(
+                        "Region conflict: '%s' → '%s' (%s) but region wants %s — marking unresolved",
+                        raw_name, result.resolved,
+                        [e["category"] for e in matching], set(region_cats),
+                    )
+                    result.confidence = "medium"
+                    result.resolved = None
+                    result.product_ids = []
+                    return result
 
         result.product_ids = [e["id"] for e in matching]
         result.name_norm = matching[0]["name_norm"] if matching else None
@@ -667,7 +715,11 @@ def _resolve_order_items_legacy(
     alerts = []
 
     for item in items:
-        result = resolve_product_name(item["base_flavor"], known_names)
+        result = resolve_product_name(
+            item["base_flavor"],
+            known_names,
+            original_product_name=item.get("product_name"),
+        )
 
         if result.confidence in ("exact", "high"):
             resolved_item = {**item}

@@ -42,6 +42,8 @@ REGION_SUFFIXES = (
     " made in Middle East",
     " made in Armenia",
     " made in Europe",
+    " made in KZ",      # before " KZ" to avoid leaving "made in" garbage
+    " made in Japan",   # before " Japan" for same reason
     " EU",
     " Japan",
     " KZ",

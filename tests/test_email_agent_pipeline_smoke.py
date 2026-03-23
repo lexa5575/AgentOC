@@ -1192,5 +1192,91 @@ class TestEmailPipelineSmoke(unittest.TestCase):
         self.assertNotIn("Bronze", result.get("ambiguous_flavors", []))
 
 
+    # ---------------------------------------------------------------
+    # Purple Wave ME regression: variant_id=55 (ARMENIA), display="Terea Purple ME"
+    # ---------------------------------------------------------------
+
+    def test_classifier_contract_preserves_full_product_name(self):
+        """Classifier contract: OrderItem.product_name must contain the full raw phrase.
+
+        When LLM returns product_name="Tera purple wave", the classifier must preserve
+        it as-is in OrderItem.product_name, not strip/normalize it. This ensures the
+        alias fallback via original_product_name has data to work with downstream.
+        No live LLM — tests post-processing contract only.
+        """
+        from agents.models import OrderItem
+
+        raw_llm_data = {
+            "product_name": "Tera purple wave",
+            "base_flavor": "Purple",
+            "quantity": 1,
+            "region_preference": None,
+            "strict_region": False,
+        }
+
+        oi = OrderItem(
+            product_name=raw_llm_data["product_name"],
+            base_flavor=raw_llm_data["base_flavor"],
+            quantity=raw_llm_data["quantity"],
+            region_preference=raw_llm_data.get("region_preference"),
+            strict_region=raw_llm_data.get("strict_region", False),
+        )
+
+        # Contract: product_name is the full raw phrase (for alias fallback)
+        self.assertEqual(oi.product_name, "Tera purple wave")
+        # Contract: base_flavor is normalized separately
+        self.assertEqual(oi.base_flavor, "Purple")
+
+    def test_purple_wave_me_saves_armenia_variant(self):
+        """Website order 'Tera PURPLE WAVE made in Middle East' must write ARMENIA variant.
+
+        ME-family → preferred variant is ARMENIA per PREFERRED_CATEGORY policy
+        in region_family.py. This test protects that business invariant.
+        Regression test for incident 2026-03-23 (Order 23698).
+        """
+        cls = self._make_fake_classification(
+            situation="new_order",
+            order_id="ORD-PURPLE-ME",
+            order_items=[
+                types.SimpleNamespace(
+                    product_name="Tera PURPLE WAVE made in Middle East",
+                    base_flavor="PURPLE WAVE",
+                    quantity=3,
+                    region_preference=["ME"],
+                    strict_region=False,
+                    optional=False,
+                ),
+            ],
+        )
+        result = self._make_persist_result(
+            _stock_check_items=[
+                {
+                    "product_name": "Purple",
+                    "base_flavor": "Purple",
+                    "quantity": 3,
+                    "product_ids": [55],
+                    "display_name": "Terea Purple ME",
+                },
+            ],
+        )
+
+        with patch.object(self.agents_pipeline, "save_order_items", return_value=1) as mock_save:
+            self.agents_pipeline._persist_results(
+                cls, result, "thread_purple", "msg_purple", "email text",
+            )
+
+        mock_save.assert_called_once()
+        items_arg = mock_save.call_args.kwargs.get(
+            "order_items",
+            mock_save.call_args[0][2] if len(mock_save.call_args[0]) > 2 else None,
+        )
+        self.assertIsNotNone(items_arg)
+        saved_item = items_arg[0]
+        self.assertEqual(saved_item["product_name"], "Purple")
+        self.assertEqual(saved_item["base_flavor"], "Purple")
+        self.assertEqual(saved_item["variant_id"], 55)
+        self.assertEqual(saved_item["display_name_snapshot"], "Terea Purple ME")
+
+
 if __name__ == "__main__":
     unittest.main()

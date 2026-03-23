@@ -291,6 +291,27 @@ class TestTryParseOrder(unittest.TestCase):
         )
         self.assertIsNone(self.try_parse_order(email))
 
+    # --- try_parse_order: "made in KZ" suffix regression ---
+
+    def test_parse_order_made_in_kz_base_flavor(self):
+        """'Tera Purple Wave made in KZ' must parse to base_flavor='Purple Wave', not 'Purple Wave made in'."""
+        email = (
+            "From: Shipmecarton <order@shipmecarton.com>\n"
+            "Reply-To: buyer@example.com\n"
+            "Subject: Shipmecarton - Order 55555\n"
+            "Body: \n"
+            "Order ID: 55555\n"
+            "Payment amount: $110.00\n"
+            "Firstname: Test User\n"
+            "Email: buyer@example.com\n"
+            "1 Tera Purple Wave made in KZ $110.00 1 $110.00"
+        )
+        result = self.try_parse_order(email)
+        self.assertIsNotNone(result)
+        self.assertEqual(len(result.order_items), 1)
+        self.assertEqual(result.order_items[0].product_name, "Tera Purple Wave made in KZ")
+        self.assertEqual(result.order_items[0].base_flavor, "Purple Wave")
+
     # --- base_flavor extraction ---
 
     def test_base_flavor_tera_green_middle_east(self):
@@ -321,6 +342,20 @@ class TestTryParseOrder(unittest.TestCase):
 
     def test_base_flavor_made_in_europe_case_insensitive(self):
         self.assertEqual(self._extract_base_flavor("Tera Silver Made in Europe"), "Silver")
+
+    # --- "made in KZ" / "made in Japan" suffix support ---
+
+    def test_base_flavor_made_in_kz(self):
+        """'Tera Purple Wave made in KZ' → 'Purple Wave' (not 'Purple Wave made in')."""
+        self.assertEqual(self._extract_base_flavor("Tera Purple Wave made in KZ"), "Purple Wave")
+
+    def test_base_flavor_made_in_japan(self):
+        """'Tera Yellow made in Japan' → 'Yellow'."""
+        self.assertEqual(self._extract_base_flavor("Tera Yellow made in Japan"), "Yellow")
+
+    def test_base_flavor_short_kz_suffix(self):
+        """'Terea Silver KZ' → 'Silver' (short suffix still works)."""
+        self.assertEqual(self._extract_base_flavor("Terea Silver KZ"), "Silver")
 
 
 class TestCleanEmailBody(unittest.TestCase):

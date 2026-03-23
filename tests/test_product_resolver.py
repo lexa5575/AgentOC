@@ -28,10 +28,11 @@ from db.product_resolver import (
     _resolve_via_alias,
     resolve_order_items,
     resolve_product_name,
+    resolve_product_to_catalog,
 )
 
 
-# Known product names (simulating stock DB)
+# Known product names (simulating stock DB — legacy exact-match fixture)
 KNOWN_NAMES = [
     "Amber",
     "Bronze",
@@ -40,6 +41,19 @@ KNOWN_NAMES = [
     "Silver",
     "Turquoise",
     "Yellow",
+]
+
+# Catalog-backed fixture: real stock_names as they exist in ProductCatalog
+KNOWN_NAMES_CATALOG = [
+    "Amber",
+    "Bronze",
+    "Green",
+    "Purple",
+    "Silver",
+    "T Purple",
+    "Turquoise",
+    "Yellow",
+    "Summer",
 ]
 
 
@@ -241,17 +255,16 @@ class TestAliasLookup(unittest.TestCase):
     """Test Tier 1: alias-based deterministic matching."""
 
     def test_alias_abbreviation_pw(self):
-        """'pw' → 'Purple Wave' via alias."""
-        known = KNOWN_NAMES  # has "Purple Wave"
-        r = resolve_product_name("pw", known)
+        """'pw' → 'Purple' via alias (catalog stock_name)."""
+        r = resolve_product_name("pw", KNOWN_NAMES_CATALOG)
         self.assertEqual(r.confidence, "exact")
-        self.assertEqual(r.resolved, "Purple Wave")
+        self.assertEqual(r.resolved, "Purple")
 
     def test_alias_abbreviation_purple_w(self):
-        """'purple w' → 'Purple Wave' via alias."""
-        r = resolve_product_name("purple w", KNOWN_NAMES)
+        """'purple w' → 'Purple' via alias."""
+        r = resolve_product_name("purple w", KNOWN_NAMES_CATALOG)
         self.assertEqual(r.confidence, "exact")
-        self.assertEqual(r.resolved, "Purple Wave")
+        self.assertEqual(r.resolved, "Purple")
 
     def test_alias_tourquoise(self):
         """'tourquoise' → 'Turquoise' via alias (multi-char typo)."""
@@ -275,7 +288,8 @@ class TestAliasLookup(unittest.TestCase):
 
     def test_resolve_via_alias_function(self):
         """Direct test of _resolve_via_alias."""
-        self.assertEqual(_resolve_via_alias("pw"), "Purple Wave")
+        self.assertEqual(_resolve_via_alias("pw"), "Purple")
+        self.assertEqual(_resolve_via_alias("purple wave"), "Purple")
         self.assertEqual(_resolve_via_alias("Tera tourquoise"), "Turquoise")
         self.assertIsNone(_resolve_via_alias("Silver"))  # not an alias
 
@@ -366,6 +380,16 @@ class TestExtractRegionCategories(unittest.TestCase):
     def test_europe_prefix(self):
         cats = _extract_region_categories("Europe Bronze")
         self.assertEqual(cats, frozenset({"TEREA_EUROPE"}))
+
+    # --- "made in KZ" / "made in Japan" suffix support ---
+
+    def test_made_in_kz_suffix(self):
+        cats = _extract_region_categories("Tera Purple Wave made in KZ")
+        self.assertEqual(cats, frozenset({"KZ_TEREA"}))
+
+    def test_made_in_japan_suffix(self):
+        cats = _extract_region_categories("Tera Yellow made in Japan")
+        self.assertEqual(cats, frozenset({"TEREA_JAPAN", "УНИКАЛЬНАЯ_ТЕРЕА"}))
 
 
 class TestCatalogRegionFiltering(unittest.TestCase):
@@ -590,6 +614,137 @@ class TestResolveOrderItems(unittest.TestCase):
         self.assertEqual(len(resolved), 1)
         self.assertEqual(resolved[0]["base_flavor"], "Silver")
         self.assertEqual(len(alerts), 0)
+
+    def test_legacy_path_purple_wave_via_original_product_name(self):
+        """Legacy path: 'Purple' + product_name='Tera purple wave' → 'Purple', NOT 'T Purple'.
+
+        resolve_order_items with known_names uses legacy path which must also
+        pass original_product_name (from item['product_name']) to alias fallback.
+        """
+        known = ["Purple", "T Purple", "Silver"]
+        items = [
+            {"base_flavor": "Purple", "product_name": "Tera purple wave", "quantity": 1},
+        ]
+        resolved, alerts = resolve_order_items(items, known)
+        self.assertEqual(len(alerts), 0)
+        self.assertEqual(resolved[0]["base_flavor"], "Purple")
+
+
+class TestPurpleCrossRegion(unittest.TestCase):
+    """Regression tests for Purple cross-region resolution (incidents 2026-03-23).
+
+    Purple exists in multiple regions: ARMENIA, KZ_TEREA, TEREA_EUROPE (as "Purple")
+    and TEREA_JAPAN (as "T Purple"). "Purple Wave" is a website marketing name
+    that maps to non-Japan "Purple".
+    """
+
+    PURPLE_CATALOG = [
+        {"id": 55, "category": "ARMENIA", "name_norm": "purple", "stock_name": "Purple"},
+        {"id": 41, "category": "KZ_TEREA", "name_norm": "purple", "stock_name": "Purple"},
+        {"id": 94, "category": "TEREA_EUROPE", "name_norm": "purple", "stock_name": "Purple"},
+        {"id": 89, "category": "TEREA_JAPAN", "name_norm": "t purple", "stock_name": "T Purple"},
+        {"id": 10, "category": "ARMENIA", "name_norm": "silver", "stock_name": "Silver"},
+    ]
+
+    @patch("db.product_resolver.USE_CATALOG_RESOLVER", True)
+    def test_purple_wave_me_resolves_to_armenia(self):
+        """Incident 1: 'Tera PURPLE WAVE made in Middle East' → Purple in ARMENIA/KZ, NOT Japan."""
+        result = resolve_product_to_catalog(
+            "PURPLE WAVE",
+            self.PURPLE_CATALOG,
+            original_product_name="Tera PURPLE WAVE made in Middle East",
+        )
+        self.assertIn(result.confidence, ("exact", "high"))
+        self.assertEqual(result.resolved, "Purple")
+        self.assertTrue(result.product_ids)
+        self.assertTrue(set(result.product_ids) <= {55, 41})
+        self.assertNotIn(89, result.product_ids)
+
+    @patch("db.product_resolver.USE_CATALOG_RESOLVER", True)
+    def test_bare_purple_no_region_prefers_japan(self):
+        """'PURPLE' without region context → T Purple (Japan) via T-prefix heuristic."""
+        result = resolve_product_to_catalog("PURPLE", self.PURPLE_CATALOG)
+        self.assertIn(result.confidence, ("exact", "high"))
+        self.assertEqual(result.resolved, "T Purple")
+        self.assertIn(89, result.product_ids)
+
+    @patch("db.product_resolver.USE_CATALOG_RESOLVER", True)
+    def test_purple_eu_resolves_to_europe(self):
+        """'Purple EU' → TEREA_EUROPE only."""
+        result = resolve_product_to_catalog("Purple EU", self.PURPLE_CATALOG)
+        self.assertIn(result.confidence, ("exact", "high"))
+        self.assertEqual(result.product_ids, [94])
+
+    @patch("db.product_resolver.USE_CATALOG_RESOLVER", True)
+    def test_purple_wave_alias_no_region(self):
+        """'PURPLE WAVE' without region → 'Purple' via alias (not T Purple via word-prefix)."""
+        result = resolve_product_to_catalog("PURPLE WAVE", self.PURPLE_CATALOG)
+        self.assertIn(result.confidence, ("exact", "high"))
+        self.assertEqual(result.resolved, "Purple")
+        # Should include all non-Japan Purple variants
+        self.assertTrue(set(result.product_ids) <= {55, 41, 94})
+        self.assertNotIn(89, result.product_ids)
+
+    @patch("db.product_resolver.USE_CATALOG_RESOLVER", True)
+    def test_bare_purple_with_original_purple_wave(self):
+        """Incident 2 (khorolmaa): raw='Purple', original='Tera purple wave' → Purple, NOT Japan.
+
+        When LLM classifier extracts base_flavor='Purple' but original product_name
+        contains 'purple wave', alias fallback via original_product_name should fire.
+        """
+        result = resolve_product_to_catalog(
+            "Purple",
+            self.PURPLE_CATALOG,
+            original_product_name="Tera purple wave",
+        )
+        self.assertIn(result.confidence, ("exact", "high"))
+        self.assertEqual(result.resolved, "Purple")
+        self.assertTrue(result.product_ids)
+        self.assertNotIn(89, result.product_ids)
+
+    @patch("db.product_resolver.USE_CATALOG_RESOLVER", True)
+    def test_region_conflict_fail_closed(self):
+        """Fail-closed: T Purple resolved but region says ARMENIA, no Armenia Purple → unresolved.
+
+        Synthetic catalog: only T Purple in TEREA_JAPAN (no Purple in ARMENIA).
+        Region detection finds ARMENIA but fallback search finds nothing → medium confidence.
+        """
+        japan_only_catalog = [
+            {"id": 89, "category": "TEREA_JAPAN", "name_norm": "t purple", "stock_name": "T Purple"},
+            {"id": 10, "category": "ARMENIA", "name_norm": "silver", "stock_name": "Silver"},
+        ]
+        result = resolve_product_to_catalog(
+            "PURPLE",
+            japan_only_catalog,
+            original_product_name="Tera Purple made in Armenia",
+        )
+        self.assertEqual(result.confidence, "medium")
+        self.assertEqual(result.product_ids, [])
+
+    @patch("db.product_resolver.USE_CATALOG_RESOLVER", True)
+    def test_region_conflict_re_resolves_to_correct_region(self):
+        """Defense-in-depth: if T Purple resolved but region says ME, re-resolve to Armenia Purple."""
+        result = resolve_product_to_catalog(
+            "PURPLE",
+            self.PURPLE_CATALOG,
+            original_product_name="Tera Purple made in Middle East",
+        )
+        self.assertIn(result.confidence, ("exact", "high"))
+        self.assertEqual(result.resolved, "Purple")
+        self.assertTrue(set(result.product_ids) <= {55, 41})
+        self.assertNotIn(89, result.product_ids)
+
+    @patch("db.product_resolver.USE_CATALOG_RESOLVER", True)
+    def test_alias_fallback_on_original_product_name(self):
+        """Alias lookup should try original_product_name when raw_name has no alias."""
+        # "Purple" has no alias, but "Tera purple wave" normalizes to "purple wave" which does
+        result = resolve_product_name(
+            "Purple",
+            KNOWN_NAMES_CATALOG,
+            original_product_name="Tera purple wave",
+        )
+        self.assertEqual(result.confidence, "exact")
+        self.assertEqual(result.resolved, "Purple")
 
 
 if __name__ == "__main__":
