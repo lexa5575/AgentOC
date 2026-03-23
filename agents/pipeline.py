@@ -52,6 +52,11 @@ logger = logging.getLogger(__name__)
 # (safe to reuse order_id, no state reset on new_order)
 _ACTIVE_ORDER_STATUSES = {"new", "awaiting_oos_decision", "pending_response"}
 
+# Statuses where Phase D stale-reset must NOT trigger.
+# Includes awaiting_payment: customer is expected to reply with payment
+# confirmation — this is normal lifecycle, not a stale thread.
+_NO_STALE_RESET_STATUSES = _ACTIVE_ORDER_STATUSES | {"awaiting_payment"}
+
 from db.catalog import _enrich_display_name_with_region
 
 
@@ -1021,7 +1026,7 @@ def classify_and_process(
         if pre_state_record:
             _old_state = (pre_state_record.get("state") or {})
             _old_status = _old_state.get("status", "new")
-            if _old_status not in _ACTIVE_ORDER_STATUSES:
+            if _old_status not in _NO_STALE_RESET_STATUSES:
                 _has_order_signal = (
                     classification.situation == "new_order"
                     or classification.order_items

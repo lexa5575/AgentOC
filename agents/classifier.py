@@ -541,12 +541,24 @@ _ACK_PHRASES = frozenset({
     "sent", "done", "paid", "sent it", "just sent", "i sent it",
     "payment sent", "money sent", "i paid", "i sent",
     "sent via zelle", "zelle sent", "here you go",
+    # Combined phrases
+    "done thanks", "done thank you", "done thx",
+    "paid thanks", "paid thank you", "paid thx",
+    "sent thanks", "sent thank you",
 })
 
 # Generic signature stripping: cut everything after closing marker
 _CLOSING_MARKER = re.compile(
     r"\b(regards|best regards|best|cheers|sincerely|warm regards|kind regards)\b.*",
     re.IGNORECASE | re.DOTALL,
+)
+# iOS/mobile dash-name signature: "- George K.", "— Mike S.", "-- Anna"
+# Strict: 1-3 capitalized name tokens only (no common words/verbs).
+_DASH_SIGNATURE = re.compile(
+    r"\s*[-\u2013\u2014]{1,2}\s*"        # dash(es): hyphen, en-dash, em-dash
+    r"([A-Z][a-z]+\.?"                    # first name (capitalized, optional dot)
+    r"(?:\s+[A-Z][a-z]*\.?){0,2})"       # 0-2 more name tokens
+    r"\s*$",                              # end of string
 )
 # Greeting/filler words stripped before matching
 _STRIP_FILLER = re.compile(
@@ -589,6 +601,7 @@ def _looks_like_payment_ack(email_text: str) -> bool:
     # Strip closing/signature FIRST — names in signature (e.g. "John Green",
     # "Amber Stone") must not trigger product-word reject.
     _pre_sig = _CLOSING_MARKER.sub("", _body_clean)
+    _pre_sig = _DASH_SIGNATURE.sub("", _pre_sig)
     _pre_sig = _STRIP_FILLER.sub("", _pre_sig).strip()
 
     # Hard reject on pre-signature content only

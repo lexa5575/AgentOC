@@ -159,6 +159,42 @@ class TestLooksLikePaymentAck:
     def test_reject_when_ship(self):
         assert not _looks_like_payment_ack(self._email("Thanks when will it ship"))
 
+    # --- iOS dash-signature stripping ---
+
+    def test_done_thanks_dash_george_k(self):
+        """Real gkibilov case: 'Done, thanks.- George K.' must match."""
+        assert _looks_like_payment_ack(self._email("Done, thanks.- George K."))
+
+    def test_paid_dash_mike(self):
+        assert _looks_like_payment_ack(self._email("Paid - Mike"))
+
+    def test_thanks_emdash_anna_smith(self):
+        assert _looks_like_payment_ack(self._email("Thanks \u2014 Anna Smith"))
+
+    # --- Combined phrases ---
+
+    def test_done_thanks_combined(self):
+        assert _looks_like_payment_ack(self._email("Done thanks"))
+
+    def test_done_thank_you_combined(self):
+        assert _looks_like_payment_ack(self._email("Done, thank you"))
+
+    def test_paid_thanks_combined(self):
+        assert _looks_like_payment_ack(self._email("Paid, thanks"))
+
+    # --- Negative: dash-signature must NOT eat instructions ---
+
+    def test_reject_thanks_dash_can_you_add(self):
+        """Dash + instruction must NOT be stripped."""
+        assert not _looks_like_payment_ack(self._email("Thanks - Can you add silver"))
+
+    def test_reject_paid_dash_tracking(self):
+        assert not _looks_like_payment_ack(self._email("Paid - Tracking please"))
+
+    def test_reject_done_dash_lowercase(self):
+        """Lowercase after dash = not a name signature."""
+        assert not _looks_like_payment_ack(self._email("Done - thanks for the help"))
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # _flatten_parts() tests (Fix 3a)
@@ -501,6 +537,31 @@ class TestClassifierPaymentOverride:
         # Should fall through to LLM, which returns "other"
         assert result.situation == "other"
 
+    def test_awaiting_payment_done_thanks_dash_george(self):
+        """Real gkibilov case: deterministic path catches 'Done, thanks.- George K.'
+        without calling LLM."""
+        from agents.classifier import run_classification
+
+        state = {
+            "status": "awaiting_payment",
+            "facts": {
+                "order_id": "23684",
+                "payment_request_sent": True,
+                "payment_confirmed": None,
+            },
+            "last_exchange": {"we_said": "Zelle instructions sent"},
+        }
+        email = (
+            "From: \"George K.\" <client@example.com>\n"
+            "Subject: Re: Order\n"
+            "Body: Done, thanks.- George K."
+        )
+        # Should return deterministically (no LLM call)
+        result = run_classification(email, "", conversation_state=state)
+        assert result.situation == "payment_received"
+        assert result.order_id == "23684"
+        assert result.needs_reply is True
+
 
 class TestPersistResultsStateTransitions:
     """Fix 1 + 4b: _persist_results state transitions."""
@@ -638,3 +699,164 @@ class TestPersistResultsStateTransitions:
         state = result["conversation_state"]
         assert state["facts"].get("payment_confirmed") is not True
         assert state["status"] == "awaiting_payment"  # unchanged
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Phase D stale-reset guard tests
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestPhaseDPaymentInAwaitingPayment:
+    """Phase D must NOT trigger for payment_received in awaiting_payment thread."""
+
+    def test_no_stale_reset_statuses_includes_awaiting_payment(self):
+        from agents.pipeline import _NO_STALE_RESET_STATUSES
+        assert "awaiting_payment" in _NO_STALE_RESET_STATUSES
+
+    def test_awaiting_payment_not_in_active_order_statuses(self):
+        """order_id reuse set must NOT include awaiting_payment."""
+        from agents.pipeline import _ACTIVE_ORDER_STATUSES
+        assert "awaiting_payment" not in _ACTIVE_ORDER_STATUSES
+
+    def test_payment_ack_in_awaiting_payment_no_reclassify(self):
+        """Real gkibilov scenario: 'Done, thanks.' in awaiting_payment thread.
+        First pass = payment_received → Phase D must NOT re-classify.
+        Checks both run_classification and build_classifier_context call counts."""
+        from agents.pipeline import classify_and_process
+        from agents.models import EmailClassification, OrderItem
+        from unittest.mock import patch as _patch
+
+        email_text = (
+            "From: \"George K.\" <client@example.com>\n"
+            "Subject: Re: Shipmecarton - Order 23684\n"
+            "Body: Done, thanks.- George K."
+        )
+
+        fake_state_record = {
+            "state": {
+                "status": "awaiting_payment",
+                "topic": "new_order",
+                "facts": {
+                    "order_id": "23684",
+                    "payment_request_sent": True,
+                    "payment_confirmed": None,
+                },
+                "last_exchange": {"we_said": "Zelle ... use email below ..."},
+                "open_questions": [],
+                "summary": "",
+            }
+        }
+
+        fake_result = {
+            "needs_reply": True,
+            "situation": "payment_received",
+            "client_email": "client@example.com",
+            "client_name": "George K.",
+            "client_found": True,
+            "client_data": {"payment_type": "prepay"},
+            "template_used": True,
+            "draft_reply": "(skip-draft)",
+            "needs_routing": False,
+            "stock_issue": None,
+        }
+
+        first_class = EmailClassification(
+            needs_reply=True,
+            situation="payment_received",
+            client_email="client@example.com",
+            order_id="23684",
+            order_items=[OrderItem(
+                product_name="Terea Turquoise ME",
+                base_flavor="Turquoise",
+                quantity=1,
+            )],
+            dialog_intent="confirms_payment",
+            followup_to="payment_info",
+        )
+
+        with _patch("agents.pipeline.build_classifier_context") as mock_ctx, \
+             _patch("agents.pipeline.run_classification") as mock_classify, \
+             _patch("agents.pipeline.process_classified_email") as mock_process, \
+             _patch("agents.pipeline._update_inbound_state", return_value={}), \
+             _patch("agents.pipeline.notify_new_client"), \
+             _patch("agents.pipeline.notify_price_alerts"), \
+             _patch("agents.pipeline.notify_reply_ready"), \
+             _patch("agents.pipeline.notify_oos_with_draft", return_value=False), \
+             _patch("agents.pipeline.notify_checker_issues", return_value=False), \
+             _patch("agents.pipeline.format_result", return_value="ok"), \
+             _patch("agents.pipeline._persist_results"):
+
+            mock_ctx.return_value = ("context", fake_state_record, None)
+            mock_classify.return_value = first_class
+            mock_process.return_value = fake_result
+
+            classify_and_process(email_text, "msg123", "thread123")
+
+            assert mock_classify.call_count == 1, \
+                f"run_classification called {mock_classify.call_count} times, expected 1"
+            assert mock_ctx.call_count == 1, \
+                f"build_classifier_context called {mock_ctx.call_count} times, expected 1"
+
+    def test_new_order_in_awaiting_payment_gets_auto_order_id(self):
+        """New order in awaiting_payment thread must NOT reuse old order_id."""
+        from agents.pipeline import classify_and_process
+        from agents.models import EmailClassification
+        from unittest.mock import patch as _patch
+
+        email_text = (
+            "From: client@example.com\n"
+            "Subject: Re: Old Order\n"
+            "Body: Send me 3 Silver EU please"
+        )
+
+        fake_state_record = {
+            "state": {
+                "status": "awaiting_payment",
+                "topic": "new_order",
+                "facts": {"order_id": "OLD-123"},
+                "last_exchange": {},
+                "open_questions": [],
+                "summary": "",
+            }
+        }
+
+        fake_result = {
+            "needs_reply": True,
+            "situation": "new_order",
+            "client_email": "client@example.com",
+            "client_name": None,
+            "client_found": True,
+            "client_data": {"payment_type": "prepay"},
+            "template_used": True,
+            "draft_reply": "(skip-draft)",
+            "needs_routing": False,
+            "stock_issue": None,
+        }
+
+        new_order_class = EmailClassification(
+            needs_reply=True,
+            situation="new_order",
+            client_email="client@example.com",
+            order_id=None,
+        )
+
+        with _patch("agents.pipeline.build_classifier_context") as mock_ctx, \
+             _patch("agents.pipeline.run_classification") as mock_classify, \
+             _patch("agents.pipeline.process_classified_email") as mock_process, \
+             _patch("agents.pipeline._update_inbound_state", return_value={}), \
+             _patch("agents.pipeline.notify_new_client"), \
+             _patch("agents.pipeline.notify_price_alerts"), \
+             _patch("agents.pipeline.notify_reply_ready"), \
+             _patch("agents.pipeline.notify_oos_with_draft", return_value=False), \
+             _patch("agents.pipeline.notify_checker_issues", return_value=False), \
+             _patch("agents.pipeline.format_result", return_value="ok"), \
+             _patch("agents.pipeline._persist_results"):
+
+            mock_ctx.return_value = ("context", fake_state_record, None)
+            mock_classify.return_value = new_order_class
+            mock_process.return_value = fake_result
+
+            classify_and_process(email_text, "msg_abc12345", "thread123")
+
+            # order_id must be AUTO-generated, NOT inherited "OLD-123"
+            assert new_order_class.order_id != "OLD-123"
+            assert new_order_class.order_id.startswith("AUTO-")
