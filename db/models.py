@@ -65,6 +65,7 @@ class EmailHistory(Base):
     gmail_message_id = Column(String, nullable=True, unique=True)
     gmail_thread_id = Column(String, nullable=True, index=True)
     deferred = Column(Boolean, default=False)
+    deferred_reason = Column(String, nullable=True)  # "unknown_client" | "final_confirmation"
     created_at = Column(DateTime, default=datetime.utcnow)
 
     def to_dict(self) -> dict:

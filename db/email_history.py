@@ -34,6 +34,7 @@ def save_email(
     gmail_message_id: str | None = None,
     gmail_thread_id: str | None = None,
     deferred: bool = False,
+    deferred_reason: str | None = None,
 ) -> None:
     """Save an email (inbound or outbound) to the history table.
 
@@ -53,6 +54,7 @@ def save_email(
             if existing:
                 existing.situation = situation
                 existing.deferred = deferred
+                existing.deferred_reason = deferred_reason
                 # body, subject, created_at, direction — preserved
                 session.commit()
                 logger.info(
@@ -71,6 +73,7 @@ def save_email(
             gmail_message_id=gmail_message_id,
             gmail_thread_id=gmail_thread_id,
             deferred=deferred,
+            deferred_reason=deferred_reason,
         )
         session.add(record)
         session.commit()
@@ -237,17 +240,19 @@ def finalize_deferred(gmail_message_id: str) -> None:
         session.close()
 
 
-def get_deferred_client_emails() -> list[str]:
+def get_deferred_client_emails(reason: str = "unknown_client") -> list[str]:
     """Get distinct client emails that have deferred inbound messages.
 
-    Used by the poller to auto-reprocess deferred emails once
-    the operator adds the client to the database.
+    Only returns emails with the specified deferred_reason.
+    Default: "unknown_client" — used by poller to auto-reprocess
+    once the operator adds the client to the database.
+    "final_confirmation" deferred emails are NOT auto-reprocessed.
     """
     session = get_session()
     try:
         rows = (
             session.query(EmailHistory.client_email)
-            .filter_by(deferred=True, direction="inbound")
+            .filter_by(deferred=True, direction="inbound", deferred_reason=reason)
             .distinct()
             .all()
         )
