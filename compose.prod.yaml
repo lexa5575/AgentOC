@@ -56,6 +56,8 @@ services:
       - STOCK_WAREHOUSES=${STOCK_WAREHOUSES:-}
       # Shipping (PirateShip auto-fill)
       - SHIPPING_API_TOKEN=${SHIPPING_API_TOKEN:-}
+      # Gmail auto-poll (set AUTO_POLL=true in .env to enable)
+      - AUTO_POLL=${AUTO_POLL:-false}
     depends_on:
       - agentos-db
     networks:
