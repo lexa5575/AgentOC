@@ -100,12 +100,14 @@ def _send_telegram_result(msg: dict, result: str) -> None:
     send_telegram(text)
 
 
-def process_client_email(client_email: str, account: str = "default") -> str:
+def process_client_email(client_email: str, account: str = "default", auto_mode: bool = False) -> str:
     """Find the next relevant unread email from client_email and process it.
 
     Args:
         client_email: The client's email address.
         account: Gmail account to use ("default" or "tilda").
+        auto_mode: If True, pipeline will hold final confirmations.
+                   Set to True when called from auto-reprocess, False from admin agent.
 
     Returns the formatted result string (same as poll_gmail sends to Telegram).
     """
@@ -269,6 +271,7 @@ def process_client_email(client_email: str, account: str = "default") -> str:
             gmail_message_id=primary["msg_id"],
             gmail_thread_id=primary_thread,
             gmail_account=account,
+            auto_mode=auto_mode,
         )
         _send_telegram_result(primary["msg"], result)
 
@@ -356,7 +359,7 @@ def _reprocess_deferred_with_known_clients() -> int:
             client_email,
         )
         try:
-            result = process_client_email(client_email)
+            result = process_client_email(client_email, auto_mode=True)
             logger.info("Auto-reprocess result for %s: %s", client_email, result[:100])
             reprocessed += 1
         except Exception as e:
