@@ -154,27 +154,32 @@ def get_email_history(client_email: str, max_total: int = 10) -> list[dict]:
 # Gmail state operations
 # ---------------------------------------------------------------------------
 
-def get_gmail_state() -> str | None:
-    """Get last processed Gmail history_id."""
+_ACCOUNT_STATE_IDS = {"default": 1, "tilda": 2}
+
+
+def get_gmail_state(account: str = "default") -> str | None:
+    """Get last processed Gmail history_id for an account."""
+    state_id = _ACCOUNT_STATE_IDS.get(account, 1)
     session = get_session()
     try:
-        state = session.query(GmailState).first()
+        state = session.query(GmailState).filter_by(id=state_id).first()
         return state.last_history_id if state else None
     finally:
         session.close()
 
 
-def set_gmail_state(history_id: str) -> None:
-    """Update last processed Gmail history_id."""
+def set_gmail_state(history_id: str, account: str = "default") -> None:
+    """Update last processed Gmail history_id for an account."""
+    state_id = _ACCOUNT_STATE_IDS.get(account, 1)
     session = get_session()
     try:
-        state = session.query(GmailState).first()
+        state = session.query(GmailState).filter_by(id=state_id).first()
         if state:
             state.last_history_id = history_id
         else:
-            session.add(GmailState(id=1, last_history_id=history_id))
+            session.add(GmailState(id=state_id, last_history_id=history_id))
         session.commit()
-        logger.info("Gmail state updated: history_id=%s", history_id)
+        logger.info("Gmail state updated: account=%s, history_id=%s", account, history_id)
     except Exception as e:
         logger.error("Failed to update Gmail state: %s", e)
         session.rollback()

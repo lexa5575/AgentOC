@@ -304,47 +304,50 @@ def process_client_email(client_email: str, account: str = "default") -> str:
 
 
 def poll_gmail() -> int:
-    """Poll Gmail for new messages, process each, send to Telegram.
+    """Poll Gmail for new messages on all configured accounts.
 
-    Returns number of processed messages.
+    Returns total number of processed messages.
     Thread-safe: only one poll can run at a time.
     """
-    # Check if Gmail is configured
-    if not getenv("GMAIL_REFRESH_TOKEN", ""):
-        logger.debug("Gmail not configured, skipping poll")
-        return 0
-
     # Prevent concurrent runs (background loop + manual trigger)
     if not _poll_lock.acquire(blocking=False):
         logger.info("Gmail poll already running, skipping")
         return 0
 
     try:
-        return _poll_gmail_locked()
+        total = 0
+        # Poll default account
+        if getenv("GMAIL_REFRESH_TOKEN", ""):
+            total += _poll_gmail_locked("default")
+        # Poll tilda account
+        if getenv("GMAIL_REFRESH_TOKEN_TILDA", ""):
+            total += _poll_gmail_locked("tilda")
+        return total
     finally:
         _poll_lock.release()
 
 
-def _poll_gmail_locked() -> int:
-    """Internal poll logic (must be called under _poll_lock)."""
-    client = _get_client()
+def _poll_gmail_locked(account: str = "default") -> int:
+    """Internal poll logic for a single account (must be called under _poll_lock)."""
+    client = _get_client(account=account)
     processed = 0
+    account_label = f"[{account}] " if account != "default" else ""
 
     try:
-        # Get last known history_id
-        history_id = get_gmail_state()
+        # Get last known history_id for this account
+        history_id = get_gmail_state(account)
 
         if not history_id:
             # First run — save position FIRST, then process existing unreads
             current = client.get_current_history_id()
-            set_gmail_state(current)  # Save immediately to prevent re-processing on restart
+            set_gmail_state(current, account)  # Save immediately to prevent re-processing on restart
 
             unread = client.list_unread_inbox(max_results=25)
-            logger.info("Gmail poller first run: %d unread primary messages", len(unread))
+            logger.info("%sGmail poller first run: %d unread primary messages", account_label, len(unread))
 
             if unread:
                 send_telegram(
-                    f"\u2705 <b>Gmail poller запущен!</b>\n\n"
+                    f"\u2705 <b>{account_label}Gmail poller запущен!</b>\n\n"
                     f"Найдено {len(unread)} непрочитанных писем (Primary), обрабатываю..."
                 )
                 for msg_info in unread:
@@ -358,6 +361,7 @@ def _poll_gmail_locked() -> int:
                             email_text,
                             gmail_message_id=msg_id,
                             gmail_thread_id=msg.get("gmail_thread_id"),
+                            gmail_account=account,
                             auto_mode=True,
                         )
                         _send_telegram_result(msg, result)
@@ -366,7 +370,7 @@ def _poll_gmail_locked() -> int:
                         logger.error("Failed to process unread message %s: %s", msg_id, e, exc_info=True)
             else:
                 send_telegram(
-                    "\u2705 <b>Gmail poller запущен!</b>\n\n"
+                    f"\u2705 <b>{account_label}Gmail poller запущен!</b>\n\n"
                     "Непрочитанных писем нет. Отслеживаю новые."
                 )
 
@@ -376,10 +380,10 @@ def _poll_gmail_locked() -> int:
         new_messages = client.get_new_messages(after_history_id=history_id)
 
         if not new_messages:
-            logger.debug("No new Gmail messages")
+            logger.debug("%sNo new Gmail messages", account_label)
             return 0
 
-        logger.info("Found %d new Gmail messages", len(new_messages))
+        logger.info("%sFound %d new Gmail messages", account_label, len(new_messages))
 
         latest_history_id = history_id
 
@@ -407,6 +411,7 @@ def _poll_gmail_locked() -> int:
                     email_text,
                     gmail_message_id=msg_id,
                     gmail_thread_id=msg.get("gmail_thread_id"),
+                    gmail_account=account,
                     auto_mode=True,
                 )
 
@@ -429,10 +434,10 @@ def _poll_gmail_locked() -> int:
 
         # Save latest history_id
         if latest_history_id != history_id:
-            set_gmail_state(latest_history_id)
+            set_gmail_state(latest_history_id, account)
 
         if processed:
-            logger.info("Gmail poll complete: %d messages processed", processed)
+            logger.info("%sGmail poll complete: %d messages processed", account_label, processed)
 
     except Exception as e:
         logger.error("Gmail poll failed: %s", e, exc_info=True)
