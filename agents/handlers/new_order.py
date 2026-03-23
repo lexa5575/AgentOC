@@ -55,36 +55,28 @@ def handle_new_order(
         )
         return result
 
-    # Case 1: Out-of-stock (required items) — use OOS or mixed template
+    # Case 1: Out-of-stock (required items) — use unified OOS template
+    # Both full OOS and mixed availability use the same template style:
+    # "Unfortunately we ran out of X" + alternatives + website link.
     if result.get("stock_issue"):
+        stock_issue = result["stock_issue"]
+        insufficient_items = stock_issue["stock_check"]["insufficient_items"]
+        best_alternatives = stock_issue.get("best_alternatives", {})
+        result["draft_reply"] = fill_out_of_stock_template(
+            insufficient_items=insufficient_items,
+            best_alternatives=best_alternatives,
+        )
         avail = result.get("availability_resolution", {})
         reservable = avail.get("reservable_items", [])
-
         if reservable:
-            # Phase B: mixed availability — decision_required, NOT fulfillment
-            result["draft_reply"] = fill_mixed_availability_template(
-                reservable_items=reservable,
-                unresolved_items=avail.get("unresolved_items", []),
-                alternatives_by_flavor=avail.get("alternatives_by_flavor", {}),
-                reservable_price=avail.get("reservable_price"),
-                client_data=result.get("client_data"),
-            )
             logger.info(
-                "Mixed availability template filled for %s "
+                "OOS template (mixed) filled for %s "
                 "(reservable=%d, unresolved=%d, 0 LLM tokens)",
                 classification.client_email,
                 len(reservable),
                 len(avail.get("unresolved_items", [])),
             )
         else:
-            # Full OOS: all items unavailable
-            stock_issue = result["stock_issue"]
-            insufficient_items = stock_issue["stock_check"]["insufficient_items"]
-            best_alternatives = stock_issue.get("best_alternatives", {})
-            result["draft_reply"] = fill_out_of_stock_template(
-                insufficient_items=insufficient_items,
-                best_alternatives=best_alternatives,
-            )
             logger.info(
                 "OOS hybrid template filled for %s",
                 classification.client_email,
