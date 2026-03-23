@@ -237,6 +237,25 @@ def finalize_deferred(gmail_message_id: str) -> None:
         session.close()
 
 
+def get_deferred_client_emails() -> list[str]:
+    """Get distinct client emails that have deferred inbound messages.
+
+    Used by the poller to auto-reprocess deferred emails once
+    the operator adds the client to the database.
+    """
+    session = get_session()
+    try:
+        rows = (
+            session.query(EmailHistory.client_email)
+            .filter_by(deferred=True, direction="inbound")
+            .distinct()
+            .all()
+        )
+        return [r[0] for r in rows]
+    finally:
+        session.close()
+
+
 # ---------------------------------------------------------------------------
 # Gmail thread history + merged full history
 # ---------------------------------------------------------------------------

@@ -117,6 +117,25 @@ def _predict_hold(
             return False, None       # → oos_agrees template
         return True, "final_confirmation"
 
+    # Case 2c: oos_followup/postpay — customer agrees to alternative
+    # → handler will produce new_order/postpay template with tracking+address.
+    # Hold unless no pending_oos_resolution (nothing to agree to).
+    if _sit == "oos_followup" and _pt == "postpay":
+        _state = (pre_state_record or {}).get("state") or {}
+        _facts = _state.get("facts") or {}
+        if _facts.get("pending_oos_resolution"):
+            return True, "final_confirmation"
+
+    # Case 2d: oos_followup/prepay — customer agrees + confirms payment
+    # → handler may produce oos_agrees/prepay (Zelle) which is NOT final,
+    #   but could also route to new_order/prepay. Only hold if there's
+    #   pending_oos_resolution AND payment already confirmed.
+    if _sit == "oos_followup" and _pt == "prepay":
+        _state = (pre_state_record or {}).get("state") or {}
+        _facts = _state.get("facts") or {}
+        if _facts.get("pending_oos_resolution") and _facts.get("payment_confirmed"):
+            return True, "final_confirmation"
+
     return False, None
 
 

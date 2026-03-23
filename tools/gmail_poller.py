@@ -322,9 +322,50 @@ def poll_gmail() -> int:
         # Poll tilda account
         if getenv("GMAIL_REFRESH_TOKEN_TILDA", ""):
             total += _poll_gmail_locked("tilda")
+        # Auto-reprocess: check if any deferred emails now have clients in DB
+        total += _reprocess_deferred_with_known_clients()
         return total
     finally:
         _poll_lock.release()
+
+
+def _reprocess_deferred_with_known_clients() -> int:
+    """Auto-reprocess deferred emails whose clients are now in the database.
+
+    Called every poll cycle. For each deferred email where the client
+    has been added to the DB since the email was deferred, triggers
+    process_client_email (which handles deferred-aware re-processing).
+
+    Returns number of reprocessed emails.
+    """
+    from db.email_history import get_deferred_client_emails
+    from db.clients import get_client
+
+    deferred_emails = get_deferred_client_emails()
+    if not deferred_emails:
+        return 0
+
+    reprocessed = 0
+    for client_email in deferred_emails:
+        client = get_client(client_email)
+        if not client:
+            continue  # Still unknown — skip
+
+        logger.info(
+            "Auto-reprocess: client %s now in DB, triggering process_client_email",
+            client_email,
+        )
+        try:
+            result = process_client_email(client_email)
+            logger.info("Auto-reprocess result for %s: %s", client_email, result[:100])
+            reprocessed += 1
+        except Exception as e:
+            logger.error("Auto-reprocess failed for %s: %s", client_email, e, exc_info=True)
+
+    if reprocessed:
+        logger.info("Auto-reprocess: %d deferred emails reprocessed", reprocessed)
+
+    return reprocessed
 
 
 def _poll_gmail_locked(account: str = "default") -> int:
