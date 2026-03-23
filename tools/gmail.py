@@ -222,12 +222,10 @@ class GmailClient:
         Uses threads().get() — single API call for entire thread.
         Returns list of dicts matching get_email_history() format, sorted oldest-first.
 
-        Notes:
-        - Gmail threads().get() returns full thread payload.
-        - max_messages limits how many newest messages we parse/return from that payload.
+        Direction is determined by Gmail SENT label (works for all accounts
+        including tilda/iqostilda2). Timestamp uses internalDate (same as
+        get_message) for deterministic cross-method comparison.
         """
-        from email.utils import parsedate_to_datetime
-
         service = self._get_service()
         try:
             thread = service.users().threads().get(
@@ -244,21 +242,23 @@ class GmailClient:
         messages = []
         for msg in raw_messages:
             headers = {h["name"].lower(): h["value"] for h in msg["payload"]["headers"]}
+            label_ids = msg.get("labelIds", [])
 
             from_raw = headers.get("from", "")
             _, from_email = parseaddr(from_raw)
 
-            # Determine direction: our domain = outbound, everything else = inbound
-            is_outbound = any(
-                domain in from_email.lower()
-                for domain in ("shipmecarton.com", "getorderstick")
-            )
+            # Direction: SENT label is authoritative (works for all accounts)
+            is_outbound = "SENT" in label_ids
             direction = "outbound" if is_outbound else "inbound"
 
+            # Timestamp: use internalDate (epoch ms, same as get_message)
             created_at = datetime.now(timezone.utc)
-            if headers.get("date"):
+            internal_ms = msg.get("internalDate")
+            if internal_ms:
                 try:
-                    created_at = parsedate_to_datetime(headers["date"])
+                    created_at = datetime.fromtimestamp(
+                        int(internal_ms) / 1000, tz=timezone.utc,
+                    )
                 except Exception:
                     pass
 
@@ -285,6 +285,53 @@ class GmailClient:
 
         messages.sort(key=lambda m: m["created_at"])
         return messages
+
+    def check_thread_after_message(
+        self,
+        thread_id: str,
+        after_msg_id: str,
+        after_timestamp: "datetime",
+    ) -> dict:
+        """Check thread for newer messages after a given inbound.
+
+        Single Gmail API call via fetch_thread(). Returns:
+            {
+                "has_newer_outbound": bool,
+                "has_newer_inbound": bool,
+                "latest_newer_inbound_msg_id": str | None,
+            }
+
+        Uses Gmail-only data (NOT local DB) for deterministic detection
+        of manual replies the operator sent outside the automation.
+        Direction detected via SENT label (works for all accounts).
+        """
+        thread_msgs = self.fetch_thread(thread_id)
+
+        has_newer_outbound = False
+        has_newer_inbound = False
+        latest_newer_inbound_msg_id = None
+        latest_newer_inbound_ts = None
+
+        for msg in thread_msgs:
+            msg_ts = msg.get("created_at")
+            msg_id = msg.get("gmail_message_id", "")
+            if not msg_ts or msg_ts <= after_timestamp:
+                continue
+            if msg_id == after_msg_id:
+                continue
+            if msg["direction"] == "outbound":
+                has_newer_outbound = True
+            elif msg["direction"] == "inbound":
+                has_newer_inbound = True
+                if latest_newer_inbound_ts is None or msg_ts > latest_newer_inbound_ts:
+                    latest_newer_inbound_ts = msg_ts
+                    latest_newer_inbound_msg_id = msg_id
+
+        return {
+            "has_newer_outbound": has_newer_outbound,
+            "has_newer_inbound": has_newer_inbound,
+            "latest_newer_inbound_msg_id": latest_newer_inbound_msg_id,
+        }
 
     def search_thread_history(self, client_email: str, max_results: int = 10) -> list[dict]:
         """Search Gmail for recent conversation with a client.

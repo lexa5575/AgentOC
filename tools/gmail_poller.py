@@ -20,6 +20,7 @@ from os import getenv
 from agents.email_agent import classify_and_process
 from db.memory import (
     email_already_processed,
+    email_is_deferred,
     get_gmail_state,
     set_gmail_state,
 )
@@ -82,11 +83,16 @@ def _send_telegram_result(msg: dict, result: str) -> None:
     from_addr = (msg.get("from", "") or "").replace("<", "&lt;").replace(">", "&gt;")
     result_escaped = result.replace("<", "&lt;").replace(">", "&gt;")
 
+    # Hold-aware header: detect hold results by prefix
+    is_hold = result.startswith("\u270b HOLD:")
+    header = "\u270b <b>Письмо отложено</b>" if is_hold else "\U0001f4e8 <b>Новое письмо обработано!</b>"
+    label = "Причина:" if is_hold else "Результат обработки:"
+
     text = (
-        f"\U0001f4e8 <b>Новое письмо обработано!</b>\n\n"
+        f"{header}\n\n"
         f"<b>От:</b> {from_addr}\n"
         f"<b>Тема:</b> {subject}\n\n"
-        f"<b>Результат обработки:</b>\n"
+        f"<b>{label}</b>\n"
         f"<pre>{result_escaped}</pre>\n\n"
         f"\u23f0 {now}"
     )
@@ -125,17 +131,20 @@ def process_client_email(client_email: str, account: str = "default") -> str:
     if not unread:
         return f"Нет непрочитанных писем от {client_email}."
 
-    # Build message candidates with timestamps.
+    # Build message candidates with timestamps + deferred detection.
     candidates = []
     for msg_info in unread:
         msg_id = msg_info["msg_id"]
         try:
             msg = client.get_message(msg_id)
+            _is_processed = email_already_processed(msg_id)
+            _is_deferred = email_is_deferred(msg_id) if _is_processed else False
             candidates.append({
                 "msg_id": msg_id,
                 "msg": msg,
                 "created_at": msg.get("created_at"),
-                "processed": email_already_processed(msg_id),
+                "processed": _is_processed and not _is_deferred,
+                "deferred": _is_deferred,
             })
         except Exception as e:
             logger.error("Failed to load unread message %s: %s", msg_id, e, exc_info=True)
@@ -159,6 +168,56 @@ def process_client_email(client_email: str, account: str = "default") -> str:
         return f"Все непрочитанные письма от {client_email} уже обработаны."
 
     _dt_key = lambda c: c["created_at"] or datetime.min.replace(tzinfo=timezone.utc)
+
+    # Pre-reconcile: finalize deferred candidates where operator already replied.
+    # Must run BEFORE primary selection — otherwise finalized deferred
+    # can become primary or leak into same_thread/email_text.
+    _deferred_in_batch = [c for c in unprocessed if c.get("deferred")]
+    _finalized_ids = set()
+
+    if _deferred_in_batch:
+        from db.email_history import finalize_deferred
+
+        # One fetch_thread() per thread (cached), then per-message evaluation
+        _thread_snapshots = {}
+        for dc in _deferred_in_batch:
+            dc_thread = dc["msg"].get("gmail_thread_id")
+            if not dc_thread or not dc["created_at"]:
+                continue
+
+            # Fetch thread snapshot once per thread_id
+            if dc_thread not in _thread_snapshots:
+                _thread_snapshots[dc_thread] = client.fetch_thread(dc_thread)
+
+            # Evaluate THIS specific deferred message against the snapshot
+            snapshot = _thread_snapshots[dc_thread]
+            has_newer_outbound = any(
+                m["direction"] == "outbound"
+                and m.get("created_at")
+                and m["created_at"] > dc["created_at"]
+                for m in snapshot
+            )
+
+            if has_newer_outbound:
+                finalize_deferred(dc["msg_id"])
+                _finalized_ids.add(dc["msg_id"])
+                logger.info(
+                    "Pre-reconcile: finalized deferred %s "
+                    "(manual reply after %s in thread %s)",
+                    dc["msg_id"], dc["created_at"], dc_thread,
+                )
+
+    # Remove finalized from unprocessed before primary selection
+    if _finalized_ids:
+        unprocessed = [c for c in unprocessed if c["msg_id"] not in _finalized_ids]
+
+    if not unprocessed:
+        if _finalized_ids:
+            return (
+                f"Все deferred письма от {client_email} закрыты "
+                f"(оператор уже ответил вручную)."
+            )
+        return f"Все непрочитанные письма от {client_email} уже обработаны."
 
     # Pick the newest unprocessed message as the primary.
     primary = max(unprocessed, key=_dt_key)
@@ -299,6 +358,7 @@ def _poll_gmail_locked() -> int:
                             email_text,
                             gmail_message_id=msg_id,
                             gmail_thread_id=msg.get("gmail_thread_id"),
+                            auto_mode=True,
                         )
                         _send_telegram_result(msg, result)
                         processed += 1
@@ -347,6 +407,7 @@ def _poll_gmail_locked() -> int:
                     email_text,
                     gmail_message_id=msg_id,
                     gmail_thread_id=msg.get("gmail_thread_id"),
+                    auto_mode=True,
                 )
 
                 # Send result to Telegram

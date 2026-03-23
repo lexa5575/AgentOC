@@ -339,3 +339,52 @@ def format_result(result: dict) -> str:
         lines.append(result["draft_reply"])
 
     return "\n".join(lines)
+
+
+def format_hold_result(
+    classification,
+    result: dict,
+    hold_reason: str,
+) -> str:
+    """Format pipeline result for held (deferred) emails.
+
+    Returns a compact string that the poller sends as the sole
+    Telegram notification. Starts with "✋ HOLD:" prefix so poller
+    can detect hold results and adjust the Telegram header.
+    """
+    lines = []
+
+    if hold_reason == "unknown_client":
+        lines.append("✋ HOLD: Клиент не в базе")
+        lines.append(f"Клиент: {classification.client_email}")
+        lines.append(f"Имя: {classification.client_name or 'не указано'}")
+        lines.append(f"Ситуация: {classification.situation}")
+        if classification.order_id:
+            lines.append(f"Заказ: #{classification.order_id}")
+        if classification.items:
+            lines.append(f"Товар: {classification.items}")
+        lines.append("")
+        lines.append("Добавь клиента → пометь непрочитанным")
+        lines.append(f"→ process_email('{classification.client_email}')")
+
+    elif hold_reason == "final_confirmation":
+        _pt = (result.get("client_data") or {}).get("payment_type", "")
+        lines.append(
+            f"✋ HOLD: Финальное подтверждение ({classification.situation}, {_pt})"
+        )
+        lines.append(f"Клиент: {classification.client_email}")
+        if classification.order_id:
+            lines.append(f"Заказ: #{classification.order_id}")
+        if result.get("calculated_price"):
+            lines.append(f"Сумма: ${result['calculated_price']:.2f}")
+        if result.get("order_summary"):
+            lines.append(f"Товары: {result['order_summary'][:200]}")
+        lines.append("")
+        lines.append("Пометь непрочитанным")
+        lines.append(f"→ process_email('{classification.client_email}')")
+
+    else:
+        lines.append(f"✋ HOLD: {hold_reason}")
+        lines.append(f"Клиент: {classification.client_email}")
+
+    return "\n".join(lines)

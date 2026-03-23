@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from agents.checker import check_reply
 from agents.classifier import build_classifier_context, run_classification
 from agents.context import load_policy
-from agents.formatters import format_result
+from agents.formatters import format_hold_result, format_result
 from agents.notifier import (
     build_oos_message,
     notify_checker_issues,
@@ -58,6 +58,66 @@ _ACTIVE_ORDER_STATUSES = {"new", "awaiting_oos_decision", "pending_response"}
 _NO_STALE_RESET_STATUSES = _ACTIVE_ORDER_STATUSES | {"awaiting_payment"}
 
 from db.catalog import _enrich_display_name_with_region
+
+# Templates that are "final confirmations" (tracking URL + delivery address).
+# These are held in auto_mode — operator must trigger manually.
+_FINAL_CONFIRMATION_TEMPLATES = {
+    ("payment_received", "prepay"),
+    ("new_order", "postpay"),
+}
+
+
+def _predict_hold(
+    auto_mode: bool,
+    classification,
+    result: dict,
+    pre_state_record: dict | None,
+) -> tuple[bool, str | None]:
+    """Predict whether this email should be held for manual processing.
+
+    Called AFTER process_classified_email (Step 2), BEFORE any side effects.
+    Uses ONLY data already in result dict — pure function, no DB calls.
+
+    Returns:
+        (hold, reason): hold=True means skip routing/state/persist/draft.
+        reason: "unknown_client" | "final_confirmation" | None
+    """
+    if not auto_mode:
+        return False, None
+
+    # Case 1: Unknown client
+    if not result["client_found"] and result["needs_reply"]:
+        return True, "unknown_client"
+
+    if not result["client_found"] or not result["needs_reply"]:
+        return False, None
+
+    _pt = (result.get("client_data") or {}).get("payment_type", "")
+    _sit = classification.situation
+
+    # Case 2a: new_order/postpay — ONLY if no stock issues
+    # (OOS/mixed templates are NOT final confirmations)
+    if _sit == "new_order" and _pt == "postpay":
+        if result.get("stock_issue"):
+            return False, None       # → OOS or mixed template
+        if result.get("all_oos_optional"):
+            return False, None       # → optional OOS template
+        if result.get("availability_resolution", {}).get("decision_required"):
+            return False, None       # → mixed availability template
+        if result.get("unresolved_context"):
+            return False, None       # → unresolved products → LLM handler
+        return True, "final_confirmation"
+
+    # Case 2b: payment_received/prepay — ONLY if no pending OOS
+    # (pending OOS → oos_agrees template with Zelle, NOT tracking+address)
+    if _sit == "payment_received" and _pt == "prepay":
+        _state = (pre_state_record or {}).get("state") or {}
+        _facts = _state.get("facts") or {}
+        if _facts.get("pending_oos_resolution"):
+            return False, None       # → oos_agrees template
+        return True, "final_confirmation"
+
+    return False, None
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -624,6 +684,7 @@ def _persist_results(
     gmail_message_id: str | None,
     email_text: str,
     gmail_account: str = "default",
+    hold_mode: bool = False,
 ) -> None:
     """Persist emails, order items, address and conversation state to the DB."""
     # Step 5: Extract subject from email text
@@ -633,7 +694,7 @@ def _persist_results(
             subject = line.split(":", 1)[1].strip()
             break
 
-    # Step 5: Save inbound email
+    # Step 5: Save inbound email (ALWAYS — with deferred flag for hold)
     save_email(
         client_email=classification.client_email,
         direction="inbound",
@@ -642,7 +703,11 @@ def _persist_results(
         situation=classification.situation,
         gmail_message_id=gmail_message_id,
         gmail_thread_id=gmail_thread_id,
+        deferred=hold_mode,
     )
+
+    if hold_mode:
+        return  # Skip: outbound, state transitions, order items, address, fulfillment, summary
 
     if result["needs_reply"] and result.get("draft_reply"):
         # Save outbound reply
@@ -944,6 +1009,7 @@ def classify_and_process(
     gmail_message_id: str | None = None,
     gmail_thread_id: str | None = None,
     gmail_account: str = "default",
+    auto_mode: bool = False,
 ) -> str:
     """Classify an incoming email and generate a reply draft.
 
@@ -1098,6 +1164,24 @@ def classify_and_process(
         # Attach gmail_thread_id and gmail_account for downstream context building
         result["gmail_thread_id"] = gmail_thread_id
         result["gmail_account"] = gmail_account
+
+        # Step 2.9: Hold detection — BEFORE any side effects (state, notify, routing)
+        _hold, _hold_reason = _predict_hold(
+            auto_mode, classification, result, pre_state_record,
+        )
+        if _hold:
+            logger.info(
+                "Auto-mode hold: reason=%s, client=%s, situation=%s",
+                _hold_reason, classification.client_email,
+                classification.situation,
+            )
+            formatted = format_hold_result(classification, result, _hold_reason)
+            _persist_results(
+                classification, result, gmail_thread_id, gmail_message_id,
+                email_text, gmail_account=gmail_account,
+                hold_mode=True,
+            )
+            return formatted
 
         # Step 2.5: State Updater — update ConversationState
         result["conversation_state"] = _update_inbound_state(

@@ -30,6 +30,8 @@ from db.clients import (
 )
 from db.email_history import (
     email_already_processed,
+    email_is_deferred,
+    finalize_deferred,
     get_email_history,
     get_full_email_history,
     get_full_thread_history,
@@ -81,6 +83,8 @@ __all__ = [
     "update_client_summary",
     # email
     "email_already_processed",
+    "email_is_deferred",
+    "finalize_deferred",
     "get_email_history",
     "get_full_email_history",
     "get_full_thread_history",

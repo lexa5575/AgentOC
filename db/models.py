@@ -64,6 +64,7 @@ class EmailHistory(Base):
     situation = Column(String, default="other")
     gmail_message_id = Column(String, nullable=True, unique=True)
     gmail_thread_id = Column(String, nullable=True, index=True)
+    deferred = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     def to_dict(self) -> dict:
@@ -75,6 +76,7 @@ class EmailHistory(Base):
             "situation": self.situation,
             "gmail_message_id": self.gmail_message_id,
             "gmail_thread_id": self.gmail_thread_id,
+            "deferred": self.deferred,
             "created_at": self.created_at,
         }
 

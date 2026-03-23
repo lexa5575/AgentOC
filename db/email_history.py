@@ -33,10 +33,35 @@ def save_email(
     situation: str,
     gmail_message_id: str | None = None,
     gmail_thread_id: str | None = None,
+    deferred: bool = False,
 ) -> None:
-    """Save an email (inbound or outbound) to the history table."""
+    """Save an email (inbound or outbound) to the history table.
+
+    UPSERT: if gmail_message_id already exists, updates only processing
+    metadata (situation, deferred). Preserves body, subject, created_at
+    for audit trail integrity.
+    """
     session = get_session()
     try:
+        # UPSERT: if gmail_message_id exists, update only processing metadata
+        if gmail_message_id:
+            existing = (
+                session.query(EmailHistory)
+                .filter_by(gmail_message_id=gmail_message_id)
+                .first()
+            )
+            if existing:
+                existing.situation = situation
+                existing.deferred = deferred
+                # body, subject, created_at, direction — preserved
+                session.commit()
+                logger.info(
+                    "Updated email %s: situation=%s, deferred=%s",
+                    gmail_message_id[:12], situation, deferred,
+                )
+                return
+
+        # Normal INSERT
         record = EmailHistory(
             client_email=client_email.lower().strip(),
             direction=direction,
@@ -45,10 +70,11 @@ def save_email(
             situation=situation,
             gmail_message_id=gmail_message_id,
             gmail_thread_id=gmail_thread_id,
+            deferred=deferred,
         )
         session.add(record)
         session.commit()
-        logger.info("Saved %s email for %s (situation=%s, thread=%s)", direction, client_email, situation, gmail_thread_id)
+        logger.info("Saved %s email for %s (situation=%s, thread=%s, deferred=%s)", direction, client_email, situation, gmail_thread_id, deferred)
     except Exception as e:
         logger.error("Failed to save email history: %s", e)
         session.rollback()
@@ -166,6 +192,42 @@ def email_already_processed(gmail_message_id: str) -> bool:
             .first()
         )
         return exists is not None
+    finally:
+        session.close()
+
+
+def email_is_deferred(gmail_message_id: str) -> bool:
+    """Check if an email is saved as deferred (needs manual processing)."""
+    session = get_session()
+    try:
+        record = (
+            session.query(EmailHistory)
+            .filter_by(gmail_message_id=gmail_message_id, deferred=True)
+            .first()
+        )
+        return record is not None
+    finally:
+        session.close()
+
+
+def finalize_deferred(gmail_message_id: str) -> None:
+    """Mark deferred email as finalized — only flips deferred=False.
+
+    Preserves original body, subject, situation, created_at for audit trail.
+    """
+    session = get_session()
+    try:
+        updated = (
+            session.query(EmailHistory)
+            .filter_by(gmail_message_id=gmail_message_id, deferred=True)
+            .update({"deferred": False})
+        )
+        session.commit()
+        if updated:
+            logger.info("Finalized deferred email: %s", gmail_message_id[:12])
+    except Exception as e:
+        logger.error("Failed to finalize deferred email: %s", e)
+        session.rollback()
     finally:
         session.close()
 
