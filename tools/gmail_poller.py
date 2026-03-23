@@ -339,7 +339,7 @@ def _poll_gmail_locked() -> int:
             current = client.get_current_history_id()
             set_gmail_state(current)  # Save immediately to prevent re-processing on restart
 
-            unread = client.list_unread_inbox(max_results=5)
+            unread = client.list_unread_inbox(max_results=25)
             logger.info("Gmail poller first run: %d unread primary messages", len(unread))
 
             if unread:
