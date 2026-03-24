@@ -86,6 +86,10 @@ def _resolve_fallbacks(classification, items_for_check: list[dict], result: dict
     if not cls_items or len(cls_items) != len(items_for_check):
         return items_for_check
 
+    # Debug: log fallback_for values from classifier
+    fb_values = [(i, getattr(oi, "fallback_for", None)) for i, oi in enumerate(cls_items)]
+    logger.info("Fallback check: items=%d, fallback_for=%s", len(cls_items), fb_values)
+
     # Build fallback map: primary_idx → fallback_idx (v1: one per primary, no chains)
     fallback_map: dict[int, int] = {}
     drop_indices: set[int] = set()  # items to unconditionally remove
