@@ -881,7 +881,6 @@ def run_classification(
     # Parse JSON from LLM response (strip markdown code fences if present)
     json_str = re.sub(r"^```json\s*|\s*```$", "", raw.strip())
     data = json.loads(json_str)
-    logger.debug("Classifier raw JSON: %s", json_str[:500])
 
     # Robust field extraction: try expected names + common LLM variations + nested
     # Parse order_items (structured list) before building classification

@@ -83,17 +83,8 @@ def _resolve_fallbacks(classification, items_for_check: list[dict], result: dict
     Invalid fallback_for → DROP the offending item (never promote to independent).
     """
     cls_items = list(getattr(classification, "order_items", None) or [])
-    logger.info(
-        "Fallback entry: cls_items=%d, items_for_check=%d",
-        len(cls_items), len(items_for_check),
-    )
     if not cls_items or len(cls_items) != len(items_for_check):
-        logger.info("Fallback skip: length mismatch or empty")
         return items_for_check
-
-    # Debug: log fallback_for values from classifier
-    fb_values = [(i, getattr(oi, "fallback_for", None)) for i, oi in enumerate(cls_items)]
-    logger.info("Fallback check: items=%d, fallback_for=%s", len(cls_items), fb_values)
 
     # Build fallback map: primary_idx → fallback_idx (v1: one per primary, no chains)
     fallback_map: dict[int, int] = {}
