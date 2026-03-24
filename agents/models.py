@@ -28,6 +28,32 @@ class OrderItem(BaseModel):
         description="True when customer used conditional language: "
                     "'if you have', 'also if available', 'maybe add'.",
     )
+    fallback_for: int | None = Field(
+        default=None,
+        description="0-based index of the primary item this substitutes. "
+                    "'if not X, Y instead' → Y gets fallback_for=0. null = independent item.",
+    )
+
+    @field_validator("fallback_for", mode="before")
+    @classmethod
+    def validate_fallback_for(cls, v):
+        """Sanitize: must be non-negative int or None. Accept string digits from LLM."""
+        if v is None:
+            return None
+        if isinstance(v, bool):
+            return None
+        if isinstance(v, str):
+            v = v.strip()
+            if v.isdigit():
+                return int(v)
+            return None
+        if isinstance(v, float):
+            if not v.is_integer():
+                return None
+            v = int(v)
+        if isinstance(v, int):
+            return v if v >= 0 else None
+        return None
 
     @field_validator("region_preference", mode="before")
     @classmethod

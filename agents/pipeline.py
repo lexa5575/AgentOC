@@ -67,6 +67,104 @@ _FINAL_CONFIRMATION_TEMPLATES = {
 }
 
 
+def _items_text(order_items) -> str | None:
+    """Rebuild free-text items summary from order_items list."""
+    if not order_items:
+        return None
+    return ", ".join(f"{oi.product_name} x {oi.quantity}" for oi in order_items)
+
+
+def _resolve_fallbacks(classification, items_for_check: list[dict], result: dict) -> list[dict]:
+    """Resolve fallback/substitution items before stock check.
+
+    Primary in stock → drop fallback.
+    Primary OOS, fallback in stock → promote fallback (drop primary).
+    Both OOS → drop fallback, keep primary (standard OOS flow).
+    Invalid fallback_for → DROP the offending item (never promote to independent).
+    """
+    cls_items = list(getattr(classification, "order_items", None) or [])
+    if not cls_items or len(cls_items) != len(items_for_check):
+        return items_for_check
+
+    # Build fallback map: primary_idx → fallback_idx (v1: one per primary, no chains)
+    fallback_map: dict[int, int] = {}
+    drop_indices: set[int] = set()  # items to unconditionally remove
+
+    for idx, oi in enumerate(cls_items):
+        fb = getattr(oi, "fallback_for", None)
+        if fb is None:
+            continue
+        # Validate
+        invalid = False
+        if not isinstance(fb, int) or fb < 0 or fb >= len(cls_items):
+            logger.warning(
+                "fallback_for=%s out of range at index %d, dropping item", fb, idx,
+            )
+            invalid = True
+        elif fb == idx:
+            logger.warning(
+                "Self-referencing fallback_for at index %d, dropping item", idx,
+            )
+            invalid = True
+        elif getattr(cls_items[fb], "fallback_for", None) is not None:
+            logger.warning(
+                "Chain fallback at index %d → %d, dropping item", idx, fb,
+            )
+            invalid = True
+        elif fb in fallback_map:
+            logger.warning(
+                "Duplicate fallback for primary %d (idx %d vs %d), dropping later",
+                fb, fallback_map[fb], idx,
+            )
+            invalid = True
+
+        if invalid:
+            drop_indices.add(idx)
+        else:
+            fallback_map[fb] = idx
+
+    if not fallback_map and not drop_indices:
+        return items_for_check
+
+    # Resolve each valid pair
+    for primary_idx, fallback_idx in fallback_map.items():
+        primary_stock = check_stock_for_order([items_for_check[primary_idx]])
+
+        if primary_stock.get("all_in_stock", False):
+            drop_indices.add(fallback_idx)
+            logger.info(
+                "Fallback: primary[%d] in stock → drop fallback[%d]",
+                primary_idx, fallback_idx,
+            )
+        else:
+            fallback_stock = check_stock_for_order([items_for_check[fallback_idx]])
+            if fallback_stock.get("all_in_stock", False):
+                drop_indices.add(primary_idx)
+                logger.info(
+                    "Fallback: primary[%d] OOS → promote fallback[%d]",
+                    primary_idx, fallback_idx,
+                )
+            else:
+                drop_indices.add(fallback_idx)
+                logger.info(
+                    "Fallback: both OOS → keep primary[%d], OOS flow",
+                    primary_idx,
+                )
+
+    # Filter — preserve original order
+    keep = [i for i in range(len(cls_items)) if i not in drop_indices]
+    classification.order_items = [cls_items[i] for i in keep]
+    # Rebuild items text (used by notifier.py:73, notifier.py:166, formatters.py:364)
+    classification.items = _items_text(classification.order_items)
+
+    result["conditional_fallback"] = {
+        "detected": True,
+        "dropped_indices": sorted(drop_indices),
+    }
+
+    return [items_for_check[i] for i in keep]
+
+
 def _predict_hold(
     auto_mode: bool,
     classification,
@@ -345,6 +443,26 @@ def process_classified_email(
             items_for_check = _apply_thread_hint_if_needed(
                 items_for_check, gmail_thread_id, gmail_account,
             )
+
+            # Resolve fallback/substitution: "if not X, Y instead"
+            items_for_check = _resolve_fallbacks(
+                classification, items_for_check, result,
+            )
+
+            # Fail-safe: if fallback resolution dropped ALL items, route to LLM
+            if not items_for_check:
+                logger.warning(
+                    "All order items dropped after fallback resolution for %s",
+                    classification.client_email,
+                )
+                result["situation"] = "other"
+                result["needs_routing"] = True
+                result["unresolved_context"] = (
+                    "ALL ORDER ITEMS were dropped during fallback resolution "
+                    "(invalid fallback_for indices). "
+                    "Ask the customer to clarify which products they want."
+                )
+                return result
 
             stock_result = check_stock_for_order(items_for_check)
 

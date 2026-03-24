@@ -201,6 +201,22 @@ Set order_items to null for other situations or when no clear product list exist
 - "I want 6 green and 6 blue" → both optional=false (no conditional language).
 - Default is false.
 
+### Fallback / substitution items (new_order ONLY)
+- "if not X, Y instead", "if unavailable, Y is fine", "otherwise Y",
+  "or Y if you don't have it", "if not, Y" → the REPLACEMENT item gets
+  fallback_for set to the 0-based index of the primary item.
+- Fallback inherits primary's quantity unless customer explicitly states different qty.
+- Example: "3 Tropical please. If not, Black is fine." →
+  [{"base_flavor":"Tropical","quantity":3,"fallback_for":null},
+   {"base_flavor":"Black","quantity":3,"fallback_for":0}]
+- DO NOT set optional=true for fallback items.
+  optional = additive ("also add if available").
+  fallback_for = replacement ("instead of primary").
+- Only use for new_order. Other situations → null.
+- One fallback per primary. No chains (fallback_for always points to
+  a primary with fallback_for=null).
+- Default is null.
+
 ## Output format
 
 Return ONLY this JSON (no markdown, no code fences):
@@ -219,7 +235,7 @@ Return ONLY this JSON (no markdown, no code fences):
   "items": "Tera Green made in Middle East x 2",
   "order_items": [
     {"product_name": "Tera Green made in Middle East", "base_flavor": "Green", "quantity": 2,
-     "region_preference": null, "strict_region": false, "optional": false}
+     "region_preference": null, "strict_region": false, "optional": false, "fallback_for": null}
   ]
 }
 
@@ -879,6 +895,8 @@ def run_classification(
                     quantity=item.get("quantity", 1),
                     region_preference=item.get("region_preference"),
                     strict_region=item.get("strict_region", False),
+                    optional=item.get("optional", False),
+                    fallback_for=item.get("fallback_for"),
                 )
                 for item in raw_order_items
                 if item.get("base_flavor")
@@ -909,6 +927,13 @@ def run_classification(
     python_email = _extract_sender_email(email_text)
     if python_email:
         classification.client_email = python_email
+
+    # Strip fallback_for outside new_order — prompt says "ONLY new_order"
+    # but LLM may ignore; enforce in code to protect payment_received path.
+    if classification.situation != "new_order" and classification.order_items:
+        for oi in classification.order_items:
+            if oi.fallback_for is not None:
+                oi.fallback_for = None
 
     # Python region inference from conversation state (fills null region_preference).
     _infer_region_from_state(classification, conversation_state)
